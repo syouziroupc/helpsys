@@ -82,14 +82,14 @@ jobs:
             }
           }
 
-          function Get-HelpSysText {
-            if ($process.HasExited -or $process.MainWindowHandle -eq 0) { return @() }
-            $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
-            if ($null -eq $root) { return @() }
-            $condition = New-Object System.Windows.Automation.PropertyCondition(
-              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-              [System.Windows.Automation.ControlType]::Text)
-            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+          function Get-HelpSysNames {
+            if ($process.HasExited) { return @() }
+            $process.Refresh()
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+              $process.Id)
+            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $processCondition)
             $names = @()
             foreach ($node in $nodes) {
               try {
@@ -114,9 +114,11 @@ jobs:
             Start-Sleep -Seconds 5
             if ($process.HasExited) { throw 'HelpSys exited while producing guidance.' }
 
-            $texts = @(Get-HelpSysText)
-            if (-not ($texts | Where-Object { $_ -like '手順 *' -or $_ -like '手順*' })) {
-              throw "HelpSys stayed alive but did not produce an actionable guidance step. Visible text: $($texts -join ' | ')"
+            $names = @(Get-HelpSysNames)
+            $instruction = '青い枠の場所で、マウスの左ボタンを1回押してください。'
+            if (-not ($names | Where-Object { $_ -like '手順*' -or $_ -eq $instruction })) {
+              Save-DesktopScreenshot 'artifacts/helpsys-guidance-failure.png'
+              throw "HelpSys stayed alive but did not expose an actionable guidance step. UIA names: $($names -join ' | ')"
             }
 
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
