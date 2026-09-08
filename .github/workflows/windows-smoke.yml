@@ -16,10 +16,14 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Check Worker syntax
-        run: node --check worker/index.js
+        run: |
+          node --check worker/index.js
+          node --check worker/entry.js
 
       - name: Test Worker contract
-        run: node worker/selftest.mjs
+        run: |
+          node worker/selftest.mjs
+          node worker/policy-selftest.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
