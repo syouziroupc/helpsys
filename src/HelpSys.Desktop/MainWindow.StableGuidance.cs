@@ -24,9 +24,6 @@ public partial class MainWindow
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
         _liveWatcher.Dispose();
-        // ObserveStableLiveStateAsync can be suspended in a UIA await while WPF is closing.
-        // Disposing this gate here races its finally/Release path. It is process-lifetime state,
-        // so leave final reclamation to process teardown rather than crashing during shutdown.
     }
 
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
@@ -39,9 +36,6 @@ public partial class MainWindow
             catch (ObjectDisposedException) { }
             catch (Exception)
             {
-                // UI Automation providers can disappear between observations. A transient
-                // provider failure must not escape this async dispatcher callback and terminate
-                // the WPF process; the next heartbeat performs a fresh observation.
                 ClearStableLiveChangeCandidate();
             }
         }));
@@ -62,10 +56,11 @@ public partial class MainWindow
         {
             ResetLiveBaseline();
             ClearStableLiveChangeCandidate();
+            _ = _liveWatcher.SetForegroundProcessAsync(0);
             return;
         }
 
-        if (_liveRestartAfterPlanCancel && !_planning)
+        if (_liveRestartAfterPlanCancel && !_sessionState.PlannerInFlight)
         {
             RestartSessionTokenAfterStalePlan();
             _liveReplanPending = true;
@@ -81,6 +76,7 @@ public partial class MainWindow
             try { nowElements = await _scanner.CaptureCandidatesAsync(320, token); }
             catch (OperationCanceledException) { return; }
             var nowSystem = _systemContext.Capture();
+            await _liveWatcher.SetForegroundProcessAsync(nowSystem.ForegroundProcessId, token);
 
             if (_liveSystem is null || _liveElements.Count == 0)
             {
@@ -94,10 +90,6 @@ public partial class MainWindow
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
 
-            // A type_text step is intentionally noisy: every character can mutate the UIA tree,
-            // search suggestions and accessibility values. Ignore only that soft topology noise.
-            // App switches and real browser navigation remain hard boundaries even mid-typing;
-            // otherwise an instruction for an old application can survive after the user leaves it.
             if (!hardChange && !_verifyingAction && _currentDecision is not null &&
                 _currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
             {
@@ -120,9 +112,6 @@ public partial class MainWindow
                 return;
             }
 
-            // App/process or browser navigation is a strong state boundary. UI-tree-only changes
-            // are deliberately required to persist across multiple observations before we revoke
-            // an instruction. This filters typing, animations, suggestions and transient popups.
             if (!hardChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
@@ -148,11 +137,12 @@ public partial class MainWindow
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
-                // The visual instruction and its speech are one commitment. Once the screen
-                // boundary is confirmed, neither may survive into the new state.
+                var plannerWasInFlight = _sessionState.PlannerInFlight;
+                _sessionState.Invalidate(GuidanceSessionState.Idle);
                 _speechOutput.Stop();
                 InvalidateCurrentGuidanceForLiveChange();
-                if (_planning)
+
+                if (plannerWasInFlight)
                 {
                     _liveRestartAfterPlanCancel = true;
                     try { _sessionCts?.Cancel(); } catch { }
