@@ -17,7 +17,7 @@ public sealed class CloudGuideService : IDisposable
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(18) };
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(22) };
     }
 
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)

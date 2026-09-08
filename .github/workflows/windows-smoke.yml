@@ -21,6 +21,7 @@ jobs:
           node --check worker/entry.js
           node --check worker/visible-first.js
           node --check worker/start-state-guard.js
+          node --check worker/deliberation-guard.js
 
       - name: Test Worker contract
         run: |
