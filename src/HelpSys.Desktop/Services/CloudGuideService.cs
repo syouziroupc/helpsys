@@ -18,9 +18,8 @@ public sealed class CloudGuideService : IDisposable
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
 
-        // AdvanceGuideAsync already owns the end-to-end planning deadline. A second, slightly
-        // shorter HttpClient timeout used to turn slow-but-healthy Workers AI inference into a
-        // TaskCanceledException that the UI reported as a network failure.
+        // The guidance session owns the deadline. An independent HttpClient timeout would turn
+        // slow-but-healthy inference into a TaskCanceledException reported as a network failure.
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     }
 
@@ -51,7 +50,17 @@ public sealed class CloudGuideService : IDisposable
             })
         };
 
-        return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
+        try
+        {
+            return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // HttpClient often surfaces cancellation as TaskCanceledException. Normalize it to
+            // plain OperationCanceledException so the UI's legacy network-error filter cannot
+            // misclassify a deliberate stale-plan cancellation as a failed Internet connection.
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
@@ -66,7 +75,14 @@ public sealed class CloudGuideService : IDisposable
             imageHeight = frame.ImageHeight
         };
 
-        return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
+        try
+        {
+            return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)
