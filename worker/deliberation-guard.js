@@ -1,6 +1,6 @@
 import base from './start-state-guard.js';
 
-const MAX_REVIEW_ELEMENTS = 240;
+const MAX_REVIEW_ELEMENTS = 420;
 
 export default {
   async fetch(request, env, ctx) {
@@ -13,11 +13,8 @@ export default {
       if (isStructuredGuide) bodyPromise = request.clone().json();
     } catch { }
 
-    // The previous implementation called Workers AI twice: once to plan, then again to
-    // review the same instruction. The Windows client has a finite request budget, so a
-    // healthy network could still be reported as a communication failure when those two
-    // inference latencies accumulated. Keep the careful reasoning, but do it in the one
-    // planner inference instead of adding a second network/inference round.
+    // Do the careful reasoning in the one planner inference rather than adding a second
+    // Workers AI round trip. This avoids latency-induced false communication failures.
     const response = await base.fetch(request, singlePassReasoningEnv(env, isStructuredGuide), ctx);
     if (!isStructuredGuide || !bodyPromise || response.status !== 200) return response;
 
@@ -32,6 +29,9 @@ export default {
 
     if (!proposed || String(proposed.status || '').toLowerCase() !== 'target') return response;
 
+    // Keep this limit identical to the core planner's MAX_UI_ELEMENTS. A previous 240-item
+    // review cap meant a perfectly valid target ranked 241..420 was treated as nonexistent
+    // after the planner had already selected it, causing needless vision fallback and latency.
     const elements = Array.isArray(body?.elements)
       ? body.elements.slice(0, MAX_REVIEW_ELEMENTS).map(compactElement).filter(Boolean)
       : [];
