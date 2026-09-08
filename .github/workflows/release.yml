@@ -30,6 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
+          $assetName = 'HelpSys-Reliability-v2-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -39,7 +40,7 @@ jobs:
             -p:PublishReadyToRun=false `
             -o $out
           Copy-Item README.md (Join-Path $out 'README.md')
-          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD 'HelpSys-win-x64.zip') -Force
+          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
 
       - name: Update preview release
         shell: pwsh
@@ -48,18 +49,29 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $asset = Join-Path $PWD 'HelpSys-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v2-win-x64.zip'
+          $asset = Join-Path $PWD $assetName
           $notes = @"
           HelpSys Windows Preview
 
           - Windows 10 / 11 (64-bit)
           - Self-contained build
+          - Package: $assetName
           - 操作代行ではなく、画面上で次の操作を案内する開発版です。
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
+            # Do not leave a differently named old HelpSys ZIP next to the current build.
+            $oldAssets = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
+            foreach ($oldAsset in $oldAssets) {
+              if ($oldAsset -like 'HelpSys*.zip' -and $oldAsset -ne $assetName) {
+                gh release delete-asset $tag $oldAsset --yes --repo $env:GITHUB_REPOSITORY
+                if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
+              }
+            }
             gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview asset.' }
             gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
