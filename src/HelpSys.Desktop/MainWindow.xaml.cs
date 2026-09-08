@@ -212,7 +212,7 @@ public partial class MainWindow : Window
         StateText.Text = $"ローカル案内: {DisplayName(target.Name, target.ControlType)}";
     }
 
-    private async void OnObservedLeftClick(object? sender, Point point)
+    private async void OnObservedLeftClick(Point point)
     {
         if (_planning || _currentDecision is null || _guidedBounds is null) return;
         if (!_currentDecision.Action.Equals("left_click", StringComparison.OrdinalIgnoreCase)) return;
@@ -223,7 +223,7 @@ public partial class MainWindow : Window
         await CompleteCurrentStepAsync();
     }
 
-    private async void OnObservedKeyReleased(object? sender, int virtualKey)
+    private async void OnObservedKeyReleased(int virtualKey)
     {
         if (_planning || _currentDecision is null) return;
         if (_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
