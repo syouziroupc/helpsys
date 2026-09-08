@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Interop;
 
 namespace HelpSys;
@@ -16,7 +15,6 @@ public partial class OverlayWindow : Window
     private static readonly nint HwndTopmost = new(-1);
 
     private readonly InstructionWindow _instruction = new();
-    private readonly int _selfProcessId = Environment.ProcessId;
 
     public OverlayWindow()
     {
@@ -24,19 +22,10 @@ public partial class OverlayWindow : Window
         SourceInitialized += (_, _) => MakeClickThrough(new WindowInteropHelper(this).Handle);
     }
 
-    public bool ShowTarget(Rect physicalBounds, string instruction)
+    public void ShowTarget(Rect physicalBounds, string instruction)
     {
-        // Never let HelpSys's own topmost overlay become the element returned by FromPoint.
-        // Hide both windows first, validate the real UI below them, then render the guide.
-        if (IsVisible || _instruction.IsVisible)
-        {
-            _instruction.Hide();
-            base.Hide();
-        }
+        if (!IsVisible) Show();
 
-        if (!HasRealInteractiveTarget(physicalBounds)) return false;
-
-        Show();
         var hwnd = new WindowInteropHelper(this).Handle;
         const int padding = 7;
         var x = (int)Math.Floor(physicalBounds.Left) - padding;
@@ -46,45 +35,7 @@ public partial class OverlayWindow : Window
 
         SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
         _instruction.ShowNear(physicalBounds, instruction);
-        return true;
     }
-
-    private bool HasRealInteractiveTarget(Rect bounds)
-    {
-        if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
-        var center = new Point(bounds.Left + bounds.Width / 2d, bounds.Top + bounds.Height / 2d);
-
-        try
-        {
-            var element = AutomationElement.FromPoint(center);
-            var walker = TreeWalker.ControlViewWalker;
-            for (var i = 0; element is not null && i < 8; i++)
-            {
-                var current = element.Current;
-                if (current.ProcessId != _selfProcessId && current.IsEnabled && !current.IsOffscreen && IsInteractive(current.ControlType))
-                {
-                    var rect = current.BoundingRectangle;
-                    if (!rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
-                    {
-                        var tolerance = bounds;
-                        tolerance.Inflate(Math.Max(12, bounds.Width * 0.25), Math.Max(12, bounds.Height * 0.25));
-                        if (rect.Contains(center) || tolerance.IntersectsWith(rect)) return true;
-                    }
-                }
-                element = walker.GetParent(element);
-            }
-        }
-        catch (ElementNotAvailableException) { }
-        catch (InvalidOperationException) { }
-
-        return false;
-    }
-
-    private static bool IsInteractive(ControlType? type) =>
-        type == ControlType.Button || type == ControlType.ListItem || type == ControlType.MenuItem ||
-        type == ControlType.Hyperlink || type == ControlType.TabItem || type == ControlType.Edit ||
-        type == ControlType.ComboBox || type == ControlType.CheckBox || type == ControlType.RadioButton ||
-        type == ControlType.TreeItem;
 
     public new void Hide()
     {
