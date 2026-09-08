@@ -18,10 +18,12 @@ public partial class MainWindow : Window
     private readonly CloudGuideService _cloudGuide = new();
     private readonly GlobalHotKeyService _hotKey = new();
     private readonly UserActionObserver _actionObserver = new();
+    private readonly SpeechInputService _speechInput = new();
     private readonly OverlayWindow _overlay = new();
     private readonly List<GuideHistoryItem> _history = [];
 
     private CancellationTokenSource? _sessionCts;
+    private CancellationTokenSource? _voiceCts;
     private GuideDecision? _currentDecision;
     private UiElementCandidate? _currentTarget;
     private Rect? _guidedBounds;
@@ -39,7 +41,11 @@ public partial class MainWindow : Window
         _actionObserver.KeyReleased += OnObservedKeyReleased;
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e) => CollapseToLauncher();
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        PositionNearBottomRight();
+        StateText.Text = "やりたいことを入力してください。Ctrl+Alt+Hで現在の画面へ呼び戻せます。";
+    }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
@@ -48,37 +54,24 @@ public partial class MainWindow : Window
         if (!_hotKey.Register(hwnd)) StateText.Text = "Ctrl+Alt+H は他のアプリが使用中です。";
     }
 
-    private void PositionNearBottomRight()
-    {
-        Left = SystemParameters.WorkArea.Right - Width - 18;
-        Top = SystemParameters.WorkArea.Bottom - Height - 18;
-    }
+    private void PositionNearBottomRight() => MonitorPlacementService.MoveWindowToCursorMonitorBottomRight(this);
 
     private void ExpandAssistant()
     {
-        Width = 390;
-        Height = 214;
-        LauncherButton.Visibility = Visibility.Collapsed;
-        AssistantPanel.Visibility = Visibility.Visible;
-        PositionNearBottomRight();
         Show();
         WindowState = WindowState.Normal;
+        PositionNearBottomRight();
         Activate();
         RequestBox.Focus();
-        StateText.Text = "何をしたいですか？";
+        RequestBox.CaretIndex = RequestBox.Text.Length;
     }
 
-    private void CollapseToLauncher()
+    private void DragHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        EndSession();
-        AssistantPanel.Visibility = Visibility.Collapsed;
-        LauncherButton.Visibility = Visibility.Visible;
-        Width = 94;
-        Height = 58;
-        PositionNearBottomRight();
+        if (e.ChangedButton != MouseButton.Left) return;
+        try { DragMove(); } catch (InvalidOperationException) { }
     }
 
-    private void LauncherButton_Click(object sender, RoutedEventArgs e) => ExpandAssistant();
     private async void GuideButton_Click(object sender, RoutedEventArgs e) => await StartNewSessionAsync();
 
     private async void RequestBox_KeyDown(object sender, KeyEventArgs e)
@@ -88,8 +81,54 @@ public partial class MainWindow : Window
         await StartNewSessionAsync();
     }
 
+    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_voiceCts is not null)
+        {
+            _voiceCts.Cancel();
+            return;
+        }
+
+        _voiceCts = new CancellationTokenSource();
+        VoiceButton.Content = "停止";
+        GuideButton.IsEnabled = false;
+        StateText.Text = "音声を聞いています… 話し終わると入力欄に入ります。";
+
+        try
+        {
+            var text = await _speechInput.RecognizeOnceAsync(_voiceCts.Token);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                RequestBox.Text = text;
+                RequestBox.CaretIndex = RequestBox.Text.Length;
+                StateText.Text = "音声を入力しました。必要なら修正して「案内」を押してください。";
+            }
+            else if (!_voiceCts.IsCancellationRequested)
+            {
+                StateText.Text = "音声を認識できませんでした。もう一度試すか、文字で入力してください。";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            StateText.Text = "音声入力を停止しました。";
+        }
+        catch (Exception ex)
+        {
+            StateText.Text = $"音声入力を開始できません: {ex.Message}";
+        }
+        finally
+        {
+            _voiceCts?.Dispose();
+            _voiceCts = null;
+            VoiceButton.Content = "音声";
+            GuideButton.IsEnabled = true;
+            RequestBox.Focus();
+        }
+    }
+
     private async Task StartNewSessionAsync()
     {
+        _voiceCts?.Cancel();
         var request = RequestBox.Text.Trim();
         if (request.Length == 0)
         {
@@ -374,14 +413,18 @@ public partial class MainWindow : Window
     private void ClearButton_Click(object sender, RoutedEventArgs e)
     {
         EndSession();
-        StateText.Text = "何をしたいですか？";
+        StateText.Text = "案内を消しました。次にやりたいことを入力してください。";
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => CollapseToLauncher();
+    private void ExitButton_Click(object sender, RoutedEventArgs e) => Close();
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        _voiceCts?.Cancel();
+        _voiceCts?.Dispose();
+        _voiceCts = null;
         EndSession();
+        _speechInput.Dispose();
         _actionObserver.Dispose();
         _cloudGuide.Dispose();
         _hotKey.Dispose();

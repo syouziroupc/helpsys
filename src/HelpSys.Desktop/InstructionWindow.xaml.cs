@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using HelpSys.Services;
 
 namespace HelpSys;
 
@@ -23,12 +24,16 @@ public partial class InstructionWindow : Window
 
         const int width = 380;
         const int height = 76;
-        var centerX = physicalBounds.Left + physicalBounds.Width / 2;
+        const int gap = 14;
+        var work = MonitorPlacementService.GetWorkAreaForBounds(physicalBounds);
+        var centerX = physicalBounds.Left + physicalBounds.Width / 2d;
         var x = (int)Math.Round(centerX - width / 2d);
-        var preferredY = (int)Math.Floor(physicalBounds.Top) - height - 14;
-        var y = preferredY >= 0
-            ? preferredY
-            : (int)Math.Ceiling(physicalBounds.Bottom) + 14;
+        x = Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - width));
+
+        var above = (int)Math.Floor(physicalBounds.Top) - height - gap;
+        var below = (int)Math.Ceiling(physicalBounds.Bottom) + gap;
+        var y = above >= work.Top ? above : below;
+        y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
 
         SetWindowPos(new WindowInteropHelper(this).Handle, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
     }
