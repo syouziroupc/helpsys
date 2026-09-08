@@ -16,8 +16,8 @@ public sealed class UserActionObserver : IDisposable
     private IntPtr _mouseHook;
     private IntPtr _keyboardHook;
 
-    public event EventHandler<Point>? LeftClick;
-    public event EventHandler<int>? KeyReleased;
+    public event Action<Point>? LeftClick;
+    public event Action<int>? KeyReleased;
 
     public UserActionObserver()
     {
@@ -60,7 +60,7 @@ public sealed class UserActionObserver : IDisposable
         {
             var data = Marshal.PtrToStructure<MsllHookStruct>(lParam);
             var point = new Point(data.Point.X, data.Point.Y);
-            Application.Current?.Dispatcher.BeginInvoke(() => LeftClick?.Invoke(this, point));
+            Application.Current?.Dispatcher.BeginInvoke(() => LeftClick?.Invoke(point));
         }
         return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
     }
@@ -72,7 +72,7 @@ public sealed class UserActionObserver : IDisposable
         {
             var data = Marshal.PtrToStructure<KbdllHookStruct>(lParam);
             var key = unchecked((int)data.VirtualKeyCode);
-            Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(this, key));
+            Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(key));
         }
         return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
     }
