@@ -28,6 +28,9 @@ public sealed class CloudGuideService : IDisposable
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
+        if (relevantElements.Count == 0)
+            throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
+
         var body = new
         {
             request,
@@ -53,14 +56,7 @@ public sealed class CloudGuideService : IDisposable
             })
         };
 
-        try
-        {
-            return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException(cancellationToken);
-        }
+        return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
     }
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
@@ -75,14 +71,7 @@ public sealed class CloudGuideService : IDisposable
             imageHeight = frame.ImageHeight
         };
 
-        try
-        {
-            return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException(cancellationToken);
-        }
+        return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
     }
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
@@ -90,11 +79,7 @@ public sealed class CloudGuideService : IDisposable
         var foregroundName = systemContext.ForegroundProcess ?? string.Empty;
         var foregroundId = systemContext.ForegroundProcessId;
 
-        // When foreground resolution is unavailable there is no defensible process boundary, so
-        // preserve the old list and let the server-side safeguards decide. Normally, send only the
-        // active application plus Windows shell controls that are genuinely useful for launching or
-        // switching tasks. Background document/page text is neither needed nor desirable context.
-        if (foregroundId <= 0 && string.IsNullOrWhiteSpace(foregroundName)) return elements.Take(420).ToArray();
+        if (foregroundId <= 0 && string.IsNullOrWhiteSpace(foregroundName)) return [];
 
         return elements
             .Where(x =>
@@ -114,7 +99,7 @@ public sealed class CloudGuideService : IDisposable
 
     private async Task<T> SendAsync<T>(Func<HttpRequestMessage> createMessage, CancellationToken cancellationToken)
     {
-        Exception? lastTransientError = null;
+        GuideServiceException? lastTransientError = null;
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -128,23 +113,38 @@ public sealed class CloudGuideService : IDisposable
 
                 if (response.IsSuccessStatusCode)
                 {
-                    return JsonSerializer.Deserialize<T>(body, _jsonOptions)
-                           ?? throw new InvalidOperationException("HelpSys APIの応答を解析できませんでした。");
+                    try
+                    {
+                        return JsonSerializer.Deserialize<T>(body, _jsonOptions)
+                               ?? throw new JsonException("empty response");
+                    }
+                    catch (JsonException ex)
+                    {
+                        throw new GuideServiceException(GuideFailureKind.InvalidResponse, "案内サービスの応答形式が不正です。", ex);
+                    }
                 }
 
-                var apiError = new InvalidOperationException($"HelpSys API {((int)response.StatusCode)}: {Short(body)}");
-                if (!IsTransientStatus((int)response.StatusCode) || attempt > 0) throw apiError;
+                var status = (int)response.StatusCode;
+                var kind = IsTransientStatus(status) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
+                var apiError = new GuideServiceException(kind, $"HelpSys API {status}: {Short(body)}");
+                if (!IsTransientStatus(status) || attempt > 0) throw apiError;
                 lastTransientError = apiError;
             }
-            catch (HttpRequestException ex) when (attempt == 0 && !cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                lastTransientError = ex;
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (HttpRequestException ex)
+            {
+                var networkError = new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
+                if (attempt > 0) throw networkError;
+                lastTransientError = networkError;
             }
 
             await Task.Delay(350, cancellationToken);
         }
 
-        throw lastTransientError ?? new HttpRequestException("HelpSys APIへの一時的な通信に失敗しました。");
+        throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
     }
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
