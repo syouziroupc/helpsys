@@ -31,9 +31,6 @@ export default {
 
     if (!proposed || String(proposed.status || '').toLowerCase() !== 'target') return response;
 
-    // Keep this limit identical to the core planner's MAX_UI_ELEMENTS. A previous 240-item
-    // review cap meant a perfectly valid target ranked 241..420 was treated as nonexistent
-    // after the planner had already selected it, causing needless vision fallback and latency.
     const elements = Array.isArray(body?.elements)
       ? body.elements.slice(0, MAX_REVIEW_ELEMENTS).map(compactElement).filter(Boolean)
       : [];
@@ -42,8 +39,6 @@ export default {
     const targetId = String(proposed.targetId || '');
     const target = targetId ? elements.find(x => x.id === targetId) : null;
 
-    // Final review is deliberately deterministic. It adds effectively no latency and
-    // prevents stale/non-operable targets from reaching speech output.
     if (targetId && (!target || !target.interactable || !target.enabled)) {
       return replaceJson(response, rejectedDecision());
     }
@@ -60,16 +55,16 @@ export default {
       return replaceJson(response, rejectedDecision());
     }
 
-    // Older visible-first wrappers used the generic words "search/検索" to identify a browser
-    // address bar. A webpage's own search box can have exactly those labels. Before speech,
-    // require browser Edit controls described as the top/address field to carry a real address-
-    // bar accessibility hint rather than accepting a generic web search field.
+    // Older visible-first layers can mistake a webpage's own search Edit for the browser's
+    // address field. If their instruction explicitly describes the top/address field but the
+    // accessibility metadata has no address-bar identity, recover the canonical Ctrl+L route.
+    // This is safer and cheaper than returning not_found and forcing an unnecessary screenshot.
     const proposedInstruction = String(proposed.instruction || '');
     if (target && BROWSER_PROCESS.test(target.processName) && target.controlType.toLowerCase() === 'edit' &&
         (action === 'left_click' || action === 'type_text') &&
         /(画面上部|アドレス|ホームページのアドレス)/.test(proposedInstruction) &&
         !looksLikeBrowserAddressField(target)) {
-      return replaceJson(response, rejectedDecision());
+      return replaceJson(response, browserAddressShortcut());
     }
 
     return response;
@@ -121,6 +116,18 @@ function compactElement(value) {
 
 function looksLikeBrowserAddressField(target) {
   return ADDRESS_HINT.test(`${target.name} ${target.automationId} ${target.className}`);
+}
+
+function browserAddressShortcut() {
+  return {
+    status: 'target',
+    targetId: null,
+    action: 'press_key',
+    instruction: 'キーボードの「Ctrl」と書かれたキーを押したまま、「L」と書かれたキーを1回押してください。',
+    question: null,
+    key: 'Ctrl+L',
+    confidence: 0.99
+  };
 }
 
 function rejectedDecision() {
