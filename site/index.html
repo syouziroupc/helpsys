@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="HelpSysは、Windows画面を理解して次に操作する場所をオーバーレイで案内するPC操作支援ツールです。">
+  <meta name="theme-color" content="#0b1020">
+  <title>HelpSys — Windows操作を、画面上で案内。</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="HelpSys トップ">
+      <span class="brand-mark" aria-hidden="true">H</span>
+      <span>HelpSys</span>
+    </a>
+    <a class="github-link" href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noreferrer">GitHub</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">WINDOWS 10 / 11 ・ PREVIEW</p>
+        <h1>わからない場所を、<br><span>画面上で教える。</span></h1>
+        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。今の画面を確認し、あなたが次にクリック・入力する場所を矢印と短い説明で案内するWindows向け操作支援ツールです。</p>
+        <div class="actions">
+          <a class="download-button" href="https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-win-x64.zip">Windows版をダウンロード</a>
+          <span class="download-note">64-bit ・ 開発版</span>
+        </div>
+      </div>
+
+      <div class="demo" aria-label="HelpSysの画面案内イメージ">
+        <div class="desktop">
+          <div class="desktop-label">Desktop</div>
+          <div class="browser-icon">
+            <div class="browser-dot"></div>
+            <span>Edge</span>
+          </div>
+          <div class="guide-box"></div>
+          <div class="guide-arrow">↓</div>
+          <div class="guide-message">Microsoft Edgeを<br>クリックしてください。</div>
+          <div class="taskbar"><span></span><span class="taskbar-active"></span><span></span><span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <p class="eyebrow">HOW IT WORKS</p>
+        <h2>必要なときだけ呼び出す。</h2>
+      </div>
+      <div class="steps">
+        <article class="card">
+          <span class="number">01</span>
+          <h3>HelpSysを呼ぶ</h3>
+          <p>画面右下のボタン、または <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で起動します。待機中は画面解析を行いません。</p>
+        </article>
+        <article class="card">
+          <span class="number">02</span>
+          <h3>やりたいことを伝える</h3>
+          <p>「YouTubeを見たい」など、目的を入力します。HelpSysが現在のWindows画面から次の操作対象を確認します。</p>
+        </article>
+        <article class="card">
+          <span class="number">03</span>
+          <h3>自分で操作する</h3>
+          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行います。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-section">
+      <div>
+        <p class="eyebrow">DESIGN</p>
+        <h2>操作代行ではなく、操作支援。</h2>
+      </div>
+      <div class="feature-list">
+        <div><strong>画面構造を優先</strong><span>Windows UI Automationを使い、画像だけの推測に頼りません。</span></div>
+        <div><strong>低確度なら案内しない</strong><span>対象を十分に特定できない場合は、無理に矢印を出さない設計です。</span></div>
+        <div><strong>画像解析は必要時のみ</strong><span>構造情報で判断できない場面だけ画面画像を利用します。</span></div>
+      </div>
+    </section>
+
+    <section class="privacy">
+      <div>
+        <p class="eyebrow">PRIVACY</p>
+        <h2>常時監視しません。</h2>
+      </div>
+      <p>HelpSysは、ユーザーが明示的に案内を開始したときだけ画面情報を取得します。通常はWindowsのUI構造情報を使い、画像が必要な場合のみスクリーンショットを利用します。UI Automationで検出できたパスワード欄は画像送信前にマスクします。</p>
+    </section>
+
+    <section class="download-panel">
+      <div>
+        <p class="eyebrow">DOWNLOAD</p>
+        <h2>HelpSys Preview for Windows</h2>
+        <p>現在は開発版です。Windows 10 / 11、64-bit環境向け。</p>
+      </div>
+      <a class="download-button secondary" href="https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-win-x64.zip">最新版ZIPをダウンロード</a>
+    </section>
+  </main>
+
+  <footer>
+    <span>HelpSys Preview</span>
+    <a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noreferrer">Source on GitHub</a>
+  </footer>
+</body>
+</html>
