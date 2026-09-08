@@ -19,11 +19,14 @@ jobs:
         run: |
           node --check worker/index.js
           node --check worker/entry.js
+          node --check worker/visible-first.js
+          node --check worker/start-state-guard.js
 
       - name: Test Worker contract
         run: |
           node worker/selftest.mjs
           node worker/policy-selftest.mjs
+          node worker/visible-first-selftest.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
