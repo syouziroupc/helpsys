@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -19,9 +20,23 @@ public sealed class ScreenCaptureService
     private const uint Blackness = 0x00000042;
     private const int MaxImageWidth = 1280;
     private const int MaxImageHeight = 720;
+    private readonly int _selfProcessId = Environment.ProcessId;
 
-    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions)
+    public Task<ScreenCaptureFrame> CaptureAsync(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken = default)
+        => Task.Run(() => Capture(redactions, cancellationToken), cancellationToken);
+
+    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions) => Capture(redactions, CancellationToken.None);
+
+    private ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // The ranked guidance candidate list is intentionally finite, so it cannot be the
+        // privacy boundary for screenshots. Discover password fields independently before any
+        // pixels are copied. If that scan itself fails, fail closed and do not create a frame.
+        var passwordRedactions = CapturePasswordBounds(cancellationToken);
+        var allRedactions = redactions.Concat(passwordRedactions).ToArray();
+
         var screenX = GetSystemMetrics(SmXVirtualScreen);
         var screenY = GetSystemMetrics(SmYVirtualScreen);
         var screenWidth = GetSystemMetrics(SmCxVirtualScreen);
@@ -38,6 +53,7 @@ public sealed class ScreenCaptureService
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             memoryDc = CreateCompatibleDC(desktopDc);
             bitmap = CreateCompatibleBitmap(desktopDc, screenWidth, screenHeight);
             if (memoryDc == IntPtr.Zero || bitmap == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャー用バッファーを作成できませんでした。");
@@ -46,7 +62,11 @@ public sealed class ScreenCaptureService
             if (!BitBlt(memoryDc, 0, 0, screenWidth, screenHeight, desktopDc, screenX, screenY, Srccopy | CaptureBlt))
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
-            foreach (var rect in redactions) Redact(memoryDc, rect, screenX, screenY, screenWidth, screenHeight);
+            foreach (var rect in allRedactions)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Redact(memoryDc, rect, screenX, screenY, screenWidth, screenHeight);
+            }
 
             source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
             source.Freeze();
@@ -59,6 +79,7 @@ public sealed class ScreenCaptureService
             ReleaseDC(IntPtr.Zero, desktopDc);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var output = ScaleToLimit(source!);
         using var stream = new MemoryStream();
         var encoder = new PngBitmapEncoder();
@@ -67,6 +88,41 @@ public sealed class ScreenCaptureService
         var dataUri = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
 
         return new ScreenCaptureFrame(dataUri, screenX, screenY, screenWidth, screenHeight, output.PixelWidth, output.PixelHeight);
+    }
+
+    private IReadOnlyList<Rect> CapturePasswordBounds(CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var condition = new PropertyCondition(AutomationElement.IsPasswordProperty, true);
+            var fields = AutomationElement.RootElement.FindAll(TreeScope.Descendants, condition);
+            var result = new List<Rect>(fields.Count);
+
+            foreach (AutomationElement field in fields)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var current = field.Current;
+                    if (current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
+                    var bounds = current.BoundingRectangle;
+                    if (!bounds.IsEmpty && bounds.Width >= 1 && bounds.Height >= 1) result.Add(bounds);
+                }
+                catch (ElementNotAvailableException) { }
+                catch (InvalidOperationException) { }
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("パスワード欄を安全に確認できないため、画面画像は送信しません。", ex);
+        }
     }
 
     private static BitmapSource ScaleToLimit(BitmapSource source)
