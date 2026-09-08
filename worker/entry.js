@@ -38,9 +38,12 @@ function beginnerBranchOverride(body) {
 
   // If the user has already answered a choice question, respect the answer instead of
   // asking the same question forever. Only select a visible, interactable exact/near match.
-  const latestAnswer = [...history].reverse().find(x => String(x?.action || '').toLowerCase() === 'clarification_answer');
+  const latestAnswer = [...history].reverse().find(x => String(x?.action ?? x?.Action ?? '').toLowerCase() === 'clarification_answer');
   if (latestAnswer) {
-    const answer = String(latestAnswer?.target || latestAnswer?.Target || '').trim();
+    const answer = String(
+      latestAnswer?.targetName ?? latestAnswer?.TargetName ??
+      latestAnswer?.target ?? latestAnswer?.Target ?? ''
+    ).trim();
     if (answer) {
       const matching = relevant
         .filter(x => x?.interactable !== false && x?.enabled !== false)
