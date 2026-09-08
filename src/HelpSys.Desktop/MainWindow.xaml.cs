@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Net.Http;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -24,6 +23,7 @@ public partial class MainWindow : Window
     private readonly OverlayWindow _overlay = new();
     private readonly KeyHintWindow _keyHint = new();
     private readonly List<GuideHistoryItem> _history = [];
+    private readonly GuidanceSessionController _sessionState = new();
 
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _voiceCts;
@@ -40,10 +40,11 @@ public partial class MainWindow : Window
     private int _doubleClickCount;
     private int _consecutiveFailures;
     private DateTime _lastGuidedClickUtc = DateTime.MinValue;
-    private bool _planning;
-    private bool _verifyingAction;
-    private bool _awaitingClarification;
     private bool _forceVisionNext;
+
+    private bool _planning => _sessionState.State is GuidanceSessionState.Capturing or GuidanceSessionState.Planning or GuidanceSessionState.Presenting;
+    private bool _verifyingAction => _sessionState.State == GuidanceSessionState.Verifying;
+    private bool _awaitingClarification => _sessionState.State == GuidanceSessionState.Clarifying;
 
     public MainWindow()
     {
@@ -51,8 +52,8 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
-        _actionObserver.LeftClick += OnObservedLeftClick;
-        _actionObserver.KeyReleased += OnObservedKeyReleased;
+        _actionObserver.LeftClick += OnObservedLeftClickV3;
+        _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -149,8 +150,6 @@ public partial class MainWindow : Window
 
     private async Task StartOrContinueSessionAsync()
     {
-        // Do not let Enter or another UI path start a second session while the previous async
-        // planner is still unwinding. This prevents an old cancellation from killing a new goal.
         if (_planning || _verifyingAction) return;
 
         _voiceCts?.Cancel();
@@ -165,7 +164,6 @@ public partial class MainWindow : Window
         {
             _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", text, _clarificationQuestion ?? "確認質問"));
             _activeRequest += $"\n利用者からの追加回答: {text}";
-            _awaitingClarification = false;
             _clarificationQuestion = null;
             GuideButton.Content = "案内";
             RequestBox.Text = _originalRequest ?? _activeRequest;
@@ -196,7 +194,7 @@ public partial class MainWindow : Window
     private async Task AdvanceGuideAsync()
     {
         if (_planning || _activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
-        _planning = true;
+        var generation = _sessionState.BeginOperation(GuidanceSessionState.Capturing);
         _currentDecision = null;
         _currentTarget = null;
         _stepBaseline = [];
@@ -208,29 +206,44 @@ public partial class MainWindow : Window
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        // A structured inference can legitimately be followed by a vision fallback. The former
-        // 24-second end-to-end budget could expire during that second phase even on a healthy
-        // connection. Keep a finite bound, but leave enough room for both phases.
         planningCts.CancelAfter(TimeSpan.FromSeconds(40));
         var cancellationToken = planningCts.Token;
 
         try
         {
             SetState("今の画面と、開いているアプリを確認しています…", speak: false);
-            var candidates = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             var systemContext = _systemContext.Capture();
+            if (!HasUsableForeground(systemContext))
+            {
+                await Task.Delay(180, cancellationToken);
+                if (!_sessionState.IsCurrent(generation)) return;
+                systemContext = _systemContext.Capture();
+            }
+
+            if (!HasUsableForeground(systemContext))
+            {
+                if (_sessionState.IsCurrent(generation))
+                    StopWithMessage("今操作しているアプリを確認できないため、背景画面を推測せず案内を停止しました。もう一度「案内」を押してください。");
+                return;
+            }
+
+            await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
+            var candidates = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            if (!_sessionState.IsCurrent(generation)) return;
+
+            if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
 
             if (_forceVisionNext)
             {
                 _forceVisionNext = false;
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
-                    WaitForClarification("操作のあとで画面を確認できませんでした。今、画面に何が表示されているか短く教えてください。");
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
+                    WaitForClarification("操作のあとで画面を確認できませんでした。今、画面に何が表示されているか短く教えてください。", generation);
                 return;
             }
 
             if (candidates.Count == 0)
             {
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
                     StopWithMessage("今の画面から次の操作を安全に決められませんでした。");
                 return;
             }
@@ -245,16 +258,13 @@ public partial class MainWindow : Window
             {
                 throw;
             }
-            catch (HttpRequestException)
+            catch (GuideServiceException error)
             {
-                StopWithMessage("案内サーバーとの通信に失敗しました。間違った場所を案内しないため、ここで止めます。");
+                if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
                 return;
             }
-            catch (InvalidOperationException)
-            {
-                StopWithMessage("案内サービスから正常な応答を受け取れませんでした。間違った場所を案内しないため、ここで止めます。");
-                return;
-            }
+
+            if (!_sessionState.IsCurrent(generation)) return;
 
             if (decision.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
             {
@@ -264,26 +274,26 @@ public partial class MainWindow : Window
 
             if (decision.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
             {
-                WaitForClarification(decision.Question ?? "どれを使いたいか教えてください。");
+                WaitForClarification(decision.Question ?? "どれを使いたいか教えてください。", generation);
                 return;
             }
 
             if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumTargetConfidence)
             {
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
                     StopWithMessage("今の画面では、次にすることを安全に決められませんでした。");
                 return;
             }
 
             if (decision.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                ShowKeyboardGuide(decision, candidates, systemContext);
+                ShowKeyboardGuide(decision, candidates, systemContext, generation);
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
                     StopWithMessage("案内する場所を確認できませんでした。");
                 return;
             }
@@ -291,39 +301,43 @@ public partial class MainWindow : Window
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
             if (target is null || !target.Interactable || target.Bounds.IsEmpty)
             {
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
                     StopWithMessage("案内する場所を今の画面で確認できませんでした。");
                 return;
             }
 
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, cancellationToken);
+            if (!_sessionState.IsCurrent(generation)) return;
             if (freshTarget is null)
             {
-                if (!await TryVisionFallbackAsync(candidates, systemContext, cancellationToken))
+                if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
                     StopWithMessage("画面が動いたため、押す場所をもう一度確認できませんでした。");
                 return;
             }
 
-            ShowStructuredTarget(decision, freshTarget, candidates, systemContext);
+            ShowStructuredTarget(decision, freshTarget, candidates, systemContext, generation);
         }
         catch (OperationCanceledException)
         {
-            if (_sessionCts is { IsCancellationRequested: false })
-                StopWithMessage("画面の確認に時間がかかりすぎました。もう一度「案内」を押してください。");
+            if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
+                StopWithMessage("案内処理が規定時間内に完了しませんでした。通信障害とは断定せず、現在の画面からやり直します。もう一度「案内」を押してください。");
         }
         catch (Exception ex)
         {
-            StopWithMessage($"画面を確認できませんでした: {ex.Message}");
+            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面を確認できませんでした: {ex.Message}");
         }
         finally
         {
-            _planning = false;
-            GuideButton.IsEnabled = true;
+            GuideButton.IsEnabled = !_planning;
         }
     }
 
-    private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext)
+    private static bool HasUsableForeground(SystemContextSnapshot context) =>
+        context.ForegroundProcessId > 0 && !string.IsNullOrWhiteSpace(context.ForegroundProcess);
+
+    private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
@@ -331,11 +345,17 @@ public partial class MainWindow : Window
         _guidedBounds = target.Bounds;
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? DefaultInstruction(decision.Action) : decision.Instruction;
         _overlay.ShowTarget(target.Bounds, instruction);
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction))
+        {
+            _overlay.Hide();
+            return;
+        }
         ShowInstruction(instruction);
     }
 
-    private void ShowKeyboardGuide(GuideDecision decision, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext)
+    private void ShowKeyboardGuide(GuideDecision decision, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _currentDecision = decision;
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -344,12 +364,17 @@ public partial class MainWindow : Window
         _overlay.Hide();
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? DefaultInstruction("press_key") : decision.Instruction;
         _keyHint.ShowKeys(decision.Key, instruction);
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction))
+        {
+            _keyHint.Hide();
+            return;
+        }
         ShowInstruction(instruction);
     }
 
-    private async Task<bool> TryVisionFallbackAsync(IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, CancellationToken cancellationToken)
+    private async Task<bool> TryVisionFallbackAsync(IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation, CancellationToken cancellationToken)
     {
-        if (_activeRequest is null) return false;
+        if (_activeRequest is null || !_sessionState.IsCurrent(generation)) return false;
         SetState("画面の文字だけでは分からないため、見た目も確認しています…", speak: false);
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
 
@@ -369,13 +394,14 @@ public partial class MainWindow : Window
         }
         catch (InvalidOperationException)
         {
-            // Screenshot privacy validation failed. Do not send a partially protected image.
             return false;
         }
         finally
         {
             Opacity = previousOpacity;
         }
+
+        if (!_sessionState.IsCurrent(generation)) return false;
 
         VisionGuideDecision decision;
         try
@@ -386,10 +412,12 @@ public partial class MainWindow : Window
         {
             throw;
         }
-        catch (Exception error) when (error is HttpRequestException or InvalidOperationException)
+        catch (GuideServiceException)
         {
             return false;
         }
+
+        if (!_sessionState.IsCurrent(generation)) return false;
 
         if (decision.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
         {
@@ -399,7 +427,7 @@ public partial class MainWindow : Window
 
         if (decision.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
         {
-            WaitForClarification(decision.Question ?? "どれを使いたいか教えてください。");
+            WaitForClarification(decision.Question ?? "どれを使いたいか教えてください。", generation);
             return true;
         }
 
@@ -408,9 +436,8 @@ public partial class MainWindow : Window
         var bounds = frame.MapNormalizedBounds(decision.X, decision.Y, decision.Width, decision.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
         var snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken);
+        if (!_sessionState.IsCurrent(generation)) return false;
 
-        // Never speak or draw a raw vision coordinate. It must reconcile with a current,
-        // actually interactable Windows accessibility element before it can become guidance.
         if (snapped is not { } accessible || accessible.IsEmpty)
         {
             _history.Add(new GuideHistoryItem(_stepNumber, "vision_target_rejected", "画像候補", "画像AIの座標に現在押せるWindows要素が無いため、発話前に破棄した。"));
@@ -422,6 +449,7 @@ public partial class MainWindow : Window
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
             ? "青い枠で囲まれた場所を、マウスの左ボタンで1回押してください。"
             : decision.Instruction;
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return false;
         _currentDecision = new GuideDecision("target", "vision-target", "left_click", instruction, null, null, decision.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -429,6 +457,11 @@ public partial class MainWindow : Window
         _guidedBounds = bounds;
         _validatedVisionInstruction = null;
         _overlay.ShowTarget(bounds, instruction);
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction))
+        {
+            _overlay.Hide();
+            return false;
+        }
         ShowInstruction(instruction);
         return true;
     }
@@ -473,70 +506,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CompleteCurrentStepAsync()
-    {
-        if (_verifyingAction || _currentDecision is null || _activeRequest is null || _sessionCts is null) return;
-        _verifyingAction = true;
-        var decision = _currentDecision;
-        var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
-
-        try
-        {
-            SetState("操作の結果を確認しています…", speak: false);
-            var changed = await WaitForStateTransitionAsync(decision.Action, _stepBaseline, _stepSystemBaseline, _sessionCts.Token);
-            if (!changed)
-            {
-                _consecutiveFailures++;
-                _doubleClickCount = 0;
-                if (_consecutiveFailures == 1)
-                {
-                    var retry = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
-                        ? "まだ画面が変わっていません。同じ場所で、マウスの左ボタンを間をあけずに2回押してください。"
-                        : $"まだ画面が変わっていません。もう一度、同じ操作をしてください。{decision.Instruction}";
-                    SetState(retry, speak: true);
-                    return;
-                }
-
-                _history.Add(new GuideHistoryItem(_stepNumber, $"failed_{decision.Action}", targetName, decision.Instruction));
-                _currentDecision = null;
-                _currentTarget = null;
-                _guidedBounds = null;
-                _overlay.Hide();
-                _keyHint.Hide();
-                if (_consecutiveFailures == 2)
-                {
-                    _forceVisionNext = true;
-                    await AdvanceGuideAsync();
-                    return;
-                }
-
-                WaitForClarification("同じ操作をしても画面が変わりませんでした。今、画面に何が表示されているか短く教えてください。");
-                return;
-            }
-
-            _consecutiveFailures = 0;
-            _history.Add(new GuideHistoryItem(++_stepNumber, decision.Action, targetName, decision.Instruction));
-            if (_history.Count > 12) _history.RemoveAt(0);
-            _currentDecision = null;
-            _currentTarget = null;
-            _stepBaseline = [];
-            _stepSystemBaseline = null;
-            _guidedBounds = null;
-            _doubleClickCount = 0;
-            _validatedVisionInstruction = null;
-            _rejectedVisionTargets = 0;
-            _overlay.Hide();
-            _keyHint.Hide();
-            SetState("画面が変わったことを確認しました。次を確認しています…", speak: false);
-            await Task.Delay(250, _sessionCts.Token);
-            await AdvanceGuideAsync();
-        }
-        catch (OperationCanceledException) { }
-        finally
-        {
-            _verifyingAction = false;
-        }
-    }
+    private Task CompleteCurrentStepAsync() => CompleteCurrentStepV3Async();
 
     private async Task<bool> WaitForStateTransitionAsync(string action, IReadOnlyList<UiElementCandidate> before, SystemContextSnapshot? systemBefore, CancellationToken cancellationToken)
     {
@@ -668,15 +638,23 @@ public partial class MainWindow : Window
         _speechOutput.Speak(instruction);
     }
 
-    private void WaitForClarification(string question)
+    private void WaitForClarification(string question, long? generation = null)
     {
+        if (generation.HasValue)
+        {
+            if (!_sessionState.TryTransition(generation.Value, GuidanceSessionState.Clarifying)) return;
+        }
+        else
+        {
+            _sessionState.Invalidate(GuidanceSessionState.Clarifying);
+        }
+
         _overlay.Hide();
         _keyHint.Hide();
         _actionObserver.Stop();
         _currentDecision = null;
         _currentTarget = null;
         _guidedBounds = null;
-        _awaitingClarification = true;
         _clarificationQuestion = question;
         GuideButton.Content = "答える";
         RequestBox.Clear();
@@ -696,8 +674,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private void StopWithGuideFailure(GuideServiceException error)
+    {
+        var message = error.Kind switch
+        {
+            GuideFailureKind.Network => "ネットワークへの接続を確認できませんでした。画面認識の失敗とは区別して、案内を停止します。",
+            GuideFailureKind.ServiceUnavailable => "案内サービスが一時的に応答できませんでした。通信回線が切れているとは断定せず、案内を停止します。",
+            GuideFailureKind.Rejected => "案内サービスがこの要求を受け付けませんでした。現在の画面を推測せず、案内を停止します。",
+            GuideFailureKind.InvalidResponse => "案内サービスから利用できる形式の応答を受け取れませんでした。現在の画面を推測せず、案内を停止します。",
+            _ => "案内サービスを利用できませんでした。"
+        };
+        StopWithMessage(message);
+    }
+
     private void StopWithMessage(string message)
     {
+        _sessionState.Invalidate(GuidanceSessionState.Stopped);
         _overlay.Hide();
         _keyHint.Hide();
         _currentDecision = null;
@@ -706,11 +698,9 @@ public partial class MainWindow : Window
         _stepSystemBaseline = null;
         _guidedBounds = null;
         _doubleClickCount = 0;
-        _verifyingAction = false;
         _actionObserver.Stop();
         _sessionCts?.Cancel();
         _activeRequest = null;
-        _awaitingClarification = false;
         _clarificationQuestion = null;
         GuideButton.Content = "案内";
         _lastInstruction = message;
@@ -720,6 +710,7 @@ public partial class MainWindow : Window
 
     private void EndSession()
     {
+        _sessionState.Invalidate(GuidanceSessionState.Idle);
         _overlay.Hide();
         _keyHint.Hide();
         _speechOutput.Stop();
@@ -730,9 +721,7 @@ public partial class MainWindow : Window
         _guidedBounds = null;
         _doubleClickCount = 0;
         _consecutiveFailures = 0;
-        _verifyingAction = false;
         _forceVisionNext = false;
-        _awaitingClarification = false;
         _clarificationQuestion = null;
         _actionObserver.Stop();
         _sessionCts?.Cancel();
@@ -741,8 +730,6 @@ public partial class MainWindow : Window
         _activeRequest = null;
         _originalRequest = null;
         _history.Clear();
-        // Do not force _planning=false here. If an old async planner is still unwinding after
-        // Clear/close, keeping this guard true prevents a new session from overlapping it.
         GuideButton.Content = "案内";
     }
 
