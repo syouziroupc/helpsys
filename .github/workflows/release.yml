@@ -30,7 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v2-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v3-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -49,7 +49,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v2-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v3-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $notes = @"
           HelpSys Windows Preview
