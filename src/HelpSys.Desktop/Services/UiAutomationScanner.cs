@@ -15,6 +15,76 @@ public sealed class UiAutomationScanner
     public Task<UiTarget?> FindBestTargetAsync(IReadOnlyList<string> hints, CancellationToken cancellationToken = default)
         => Task.Run(() => FindBestTarget(hints, cancellationToken), cancellationToken);
 
+    public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, CancellationToken cancellationToken = default)
+        => Task.Run(() => RevalidateCandidate(candidate, cancellationToken), cancellationToken);
+
+    public Task<Rect?> SnapToAccessibleBoundsAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
+        => Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
+
+    private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, CancellationToken cancellationToken)
+    {
+        var current = CaptureCandidates(500, cancellationToken).Where(x => x.Interactable).ToArray();
+        UiElementCandidate? best = null;
+        var bestScore = double.NegativeInfinity;
+        var oldCenterX = candidate.X + candidate.Width / 2d;
+        var oldCenterY = candidate.Y + candidate.Height / 2d;
+
+        foreach (var item in current)
+        {
+            var score = 0d;
+            if (candidate.ProcessId > 0 && item.ProcessId == candidate.ProcessId) score += 120;
+            else if (!string.IsNullOrWhiteSpace(candidate.ProcessName) && item.ProcessName.Equals(candidate.ProcessName, StringComparison.OrdinalIgnoreCase)) score += 45;
+            if (!string.IsNullOrWhiteSpace(candidate.AutomationId) && item.AutomationId.Equals(candidate.AutomationId, StringComparison.Ordinal)) score += 120;
+            if (!string.IsNullOrWhiteSpace(candidate.Name) && item.Name.Equals(candidate.Name, StringComparison.OrdinalIgnoreCase)) score += 95;
+            if (!string.IsNullOrWhiteSpace(candidate.ClassName) && item.ClassName.Equals(candidate.ClassName, StringComparison.Ordinal)) score += 35;
+            if (item.ControlType.Equals(candidate.ControlType, StringComparison.OrdinalIgnoreCase)) score += 45;
+
+            var centerX = item.X + item.Width / 2d;
+            var centerY = item.Y + item.Height / 2d;
+            var distance = Math.Sqrt(Math.Pow(centerX - oldCenterX, 2) + Math.Pow(centerY - oldCenterY, 2));
+            score -= Math.Min(90, distance / 18d);
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = item;
+            }
+        }
+
+        return bestScore >= 100 ? best : null;
+    }
+
+    private Rect? SnapToAccessibleBounds(Rect approximateBounds, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (approximateBounds.IsEmpty) return null;
+        var point = new Point(approximateBounds.Left + approximateBounds.Width / 2d, approximateBounds.Top + approximateBounds.Height / 2d);
+
+        try
+        {
+            var element = AutomationElement.FromPoint(point);
+            var walker = TreeWalker.ControlViewWalker;
+            for (var i = 0; element is not null && i < 7; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var current = element.Current;
+                var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
+                var rect = current.BoundingRectangle;
+                if (current.ProcessId != _selfProcessId && current.IsEnabled && !current.IsOffscreen && IsInteractiveType(typeName) &&
+                    !rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
+                {
+                    var inflated = approximateBounds;
+                    inflated.Inflate(Math.Max(25, approximateBounds.Width * 0.45), Math.Max(25, approximateBounds.Height * 0.45));
+                    if (inflated.IntersectsWith(rect) || rect.Contains(point)) return rect;
+                }
+                element = walker.GetParent(element);
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+        return null;
+    }
+
     private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken)
     {
         var root = AutomationElement.RootElement;

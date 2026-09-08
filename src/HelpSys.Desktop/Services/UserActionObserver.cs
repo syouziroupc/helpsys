@@ -3,6 +3,8 @@ using System.Windows;
 
 namespace HelpSys.Services;
 
+public sealed record KeyObservation(int VirtualKey, bool Control, bool Shift, bool Alt, bool Windows);
+
 public sealed class UserActionObserver : IDisposable
 {
     private const int WhMouseLl = 14;
@@ -10,6 +12,11 @@ public sealed class UserActionObserver : IDisposable
     private const int WmLButtonUp = 0x0202;
     private const int WmKeyUp = 0x0101;
     private const int WmSysKeyUp = 0x0105;
+    private const int VkControl = 0x11;
+    private const int VkShift = 0x10;
+    private const int VkMenu = 0x12;
+    private const int VkLWin = 0x5B;
+    private const int VkRWin = 0x5C;
 
     private readonly HookProc _mouseProc;
     private readonly HookProc _keyboardProc;
@@ -17,7 +24,7 @@ public sealed class UserActionObserver : IDisposable
     private IntPtr _keyboardHook;
 
     public event Action<Point>? LeftClick;
-    public event Action<int>? KeyReleased;
+    public event Action<KeyObservation>? KeyReleased;
 
     public UserActionObserver()
     {
@@ -72,10 +79,18 @@ public sealed class UserActionObserver : IDisposable
         {
             var data = Marshal.PtrToStructure<KbdllHookStruct>(lParam);
             var key = unchecked((int)data.VirtualKeyCode);
-            Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(key));
+            var observation = new KeyObservation(
+                key,
+                IsDown(VkControl) || key == VkControl,
+                IsDown(VkShift) || key == VkShift,
+                IsDown(VkMenu) || key == VkMenu,
+                IsDown(VkLWin) || IsDown(VkRWin) || key == VkLWin || key == VkRWin);
+            Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(observation));
         }
         return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
     }
+
+    private static bool IsDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
     public void Dispose() => Stop();
 
@@ -112,4 +127,7 @@ public sealed class UserActionObserver : IDisposable
 
     [DllImport("user32.dll")]
     private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 }
