@@ -24,34 +24,51 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        PositionNearBottomRight();
-        RequestBox.Focus();
+        CollapseToLauncher();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        _hotKey.Activated += (_, _) => ActivateHelp();
+        _hotKey.Activated += (_, _) => ExpandAssistant();
         if (!_hotKey.Register(hwnd))
         {
-            StateText.Text = "待機中。Ctrl+Alt+H は他のアプリが使用中です。";
+            StateText.Text = "Ctrl+Alt+H は他のアプリが使用中です。";
         }
     }
 
     private void PositionNearBottomRight()
     {
-        Left = SystemParameters.WorkArea.Right - Width - 20;
-        Top = SystemParameters.WorkArea.Bottom - Height - 20;
+        Left = SystemParameters.WorkArea.Right - Width - 18;
+        Top = SystemParameters.WorkArea.Bottom - Height - 18;
     }
 
-    private void ActivateHelp()
+    private void ExpandAssistant()
     {
+        Width = 390;
+        Height = 214;
+        LauncherButton.Visibility = Visibility.Collapsed;
+        AssistantPanel.Visibility = Visibility.Visible;
+        PositionNearBottomRight();
         Show();
         WindowState = WindowState.Normal;
         Activate();
         RequestBox.Focus();
         StateText.Text = "何をしたいですか？";
     }
+
+    private void CollapseToLauncher()
+    {
+        _scanCts?.Cancel();
+        _overlay.Hide();
+        AssistantPanel.Visibility = Visibility.Collapsed;
+        LauncherButton.Visibility = Visibility.Visible;
+        Width = 94;
+        Height = 58;
+        PositionNearBottomRight();
+    }
+
+    private void LauncherButton_Click(object sender, RoutedEventArgs e) => ExpandAssistant();
 
     private async void GuideButton_Click(object sender, RoutedEventArgs e) => await StartGuideAsync();
 
@@ -85,7 +102,7 @@ public partial class MainWindow : Window
             if (target is null)
             {
                 _overlay.Hide();
-                StateText.Text = "対象を特定できませんでした。画面画像による確認は次の実装段階です。";
+                StateText.Text = "対象を特定できませんでした。画像認識へのフォールバックは次の段階で追加します。";
                 return;
             }
 
@@ -113,14 +130,10 @@ public partial class MainWindow : Window
     private void ClearButton_Click(object sender, RoutedEventArgs e)
     {
         _overlay.Hide();
-        StateText.Text = "待機中。必要なときだけ起動します。";
+        StateText.Text = "何をしたいですか？";
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e)
-    {
-        Hide();
-        _overlay.Hide();
-    }
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => CollapseToLauncher();
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {

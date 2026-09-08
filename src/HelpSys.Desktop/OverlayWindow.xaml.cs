@@ -10,38 +10,51 @@ public partial class OverlayWindow : Window
     private const long WsExTransparent = 0x00000020L;
     private const long WsExNoActivate = 0x08000000L;
     private const long WsExToolWindow = 0x00000080L;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
+    private static readonly nint HwndTopmost = new(-1);
+
+    private readonly InstructionWindow _instruction = new();
 
     public OverlayWindow()
     {
         InitializeComponent();
-        SourceInitialized += OnSourceInitialized;
+        SourceInitialized += (_, _) => MakeClickThrough(new WindowInteropHelper(this).Handle);
     }
 
     public void ShowTarget(Rect physicalBounds, string instruction)
     {
-        InstructionText.Text = instruction;
-        Show();
+        if (!IsVisible) Show();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var padding = 18;
+        const int padding = 7;
         var x = (int)Math.Floor(physicalBounds.Left) - padding;
-        var y = (int)Math.Floor(physicalBounds.Top) - padding - 70;
-        var width = Math.Max(240, (int)Math.Ceiling(physicalBounds.Width) + padding * 2);
-        var height = Math.Max(120, (int)Math.Ceiling(physicalBounds.Height) + padding * 2 + 70);
+        var y = (int)Math.Floor(physicalBounds.Top) - padding;
+        var width = Math.Max(18, (int)Math.Ceiling(physicalBounds.Width) + padding * 2);
+        var height = Math.Max(18, (int)Math.Ceiling(physicalBounds.Height) + padding * 2);
 
-        SetWindowPos(hwnd, new nint(-1), x, y, width, height, SwpNoActivate | SwpShowWindow);
+        SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        _instruction.ShowNear(physicalBounds, instruction);
     }
 
-    private void OnSourceInitialized(object? sender, EventArgs e)
+    public new void Hide()
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
+        _instruction.Hide();
+        base.Hide();
+    }
+
+    public new void Close()
+    {
+        _instruction.Close();
+        base.Close();
+    }
+
+    internal static void MakeClickThrough(nint hwnd)
+    {
         var style = GetWindowLongPtr(hwnd, GwlExStyle).ToInt64();
         style |= WsExTransparent | WsExNoActivate | WsExToolWindow;
         SetWindowLongPtr(hwnd, GwlExStyle, new nint(style));
     }
-
-    private const uint SwpNoActivate = 0x0010;
-    private const uint SwpShowWindow = 0x0040;
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr64(nint hWnd, int nIndex);

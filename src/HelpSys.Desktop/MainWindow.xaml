@@ -2,32 +2,39 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="HelpSys"
-        Width="390" Height="214"
+        Width="94" Height="58"
         WindowStyle="None"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"
         Background="Transparent"
         AllowsTransparency="True">
-  <Border Margin="10" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#22000000" BorderThickness="1" Padding="16">
+  <Border Margin="6" CornerRadius="14" Background="#F7FFFFFF" BorderBrush="#33000000" BorderThickness="1" Padding="8">
     <Grid>
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto" />
-        <RowDefinition Height="Auto" />
-        <RowDefinition Height="Auto" />
-        <RowDefinition Height="Auto" />
-      </Grid.RowDefinitions>
-      <DockPanel>
-        <TextBlock Text="HelpSys" FontWeight="Bold" FontSize="18" VerticalAlignment="Center" />
-        <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="×" Width="32" Height="28" Click="CloseButton_Click" />
-      </DockPanel>
-      <TextBlock Grid.Row="1" x:Name="StateText" Margin="0,8,0,8" Text="待機中。必要なときだけ起動します。" Foreground="#FF444444" />
-      <TextBox Grid.Row="2" x:Name="RequestBox" Height="40" FontSize="16" Padding="10,7" VerticalContentAlignment="Center" KeyDown="RequestBox_KeyDown" ToolTip="例: YouTubeを見たい" />
-      <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0">
-        <Button x:Name="GuideButton" Content="案内する" Width="104" Height="34" Click="GuideButton_Click" />
-        <Button x:Name="ClearButton" Content="矢印を消す" Width="104" Height="34" Margin="8,0,0,0" Click="ClearButton_Click" />
-        <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF666666" Text="Ctrl+Alt+H" />
-      </StackPanel>
+      <Button x:Name="LauncherButton"
+              Content="HelpSys"
+              FontWeight="SemiBold"
+              Click="LauncherButton_Click" />
+
+      <Grid x:Name="AssistantPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel>
+          <TextBlock Text="HelpSys" FontWeight="Bold" FontSize="18" VerticalAlignment="Center" />
+          <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="×" Width="32" Height="28" Click="CloseButton_Click" />
+        </DockPanel>
+        <TextBlock Grid.Row="1" x:Name="StateText" Margin="0,8,0,8" Text="何をしたいですか？" Foreground="#FF444444" />
+        <TextBox Grid.Row="2" x:Name="RequestBox" Height="40" FontSize="16" Padding="10,7" VerticalContentAlignment="Center" KeyDown="RequestBox_KeyDown" ToolTip="例: YouTubeを見たい" />
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0">
+          <Button x:Name="GuideButton" Content="案内する" Width="104" Height="34" Click="GuideButton_Click" />
+          <Button x:Name="ClearButton" Content="矢印を消す" Width="104" Height="34" Margin="8,0,0,0" Click="ClearButton_Click" />
+          <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#FF666666" Text="Ctrl+Alt+H" />
+        </StackPanel>
+      </Grid>
     </Grid>
   </Border>
 </Window>

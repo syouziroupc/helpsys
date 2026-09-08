@@ -21,8 +21,7 @@ public sealed class UiAutomationScanner
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
         var queue = new Queue<(AutomationElement Element, int Depth)>();
-        var first = walker.GetFirstChild(root);
-        if (first is not null) queue.Enqueue((first, 0));
+        EnqueueChildren(walker, root, 0, queue);
 
         UiTarget? best = null;
         var visited = 0;
@@ -42,13 +41,14 @@ public sealed class UiAutomationScanner
                     var rect = current.BoundingRectangle;
                     if (!rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
                     {
-                        var score = Score(current.Name, current.AutomationId, current.ClassName, current.ControlType.ProgrammaticName, hints);
+                        var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
+                        var score = Score(current.Name, current.AutomationId, current.ClassName, typeName, rect, hints);
                         if (score > 0 && (best is null || score > best.Score))
                         {
                             best = new UiTarget(
                                 current.Name ?? string.Empty,
                                 current.AutomationId ?? string.Empty,
-                                current.ControlType?.ProgrammaticName ?? string.Empty,
+                                typeName,
                                 rect,
                                 current.ProcessId,
                                 score);
@@ -58,48 +58,39 @@ public sealed class UiAutomationScanner
             }
             catch (ElementNotAvailableException)
             {
-                // UI changed while it was being inspected. Skip the stale element.
             }
             catch (InvalidOperationException)
             {
-                // Some providers disappear or reject property access. Continue scanning.
             }
 
             if (depth < 9)
             {
-                try
-                {
-                    var child = walker.GetFirstChild(element);
-                    while (child is not null)
-                    {
-                        queue.Enqueue((child, depth + 1));
-                        child = walker.GetNextSibling(child);
-                    }
-                }
-                catch (ElementNotAvailableException)
-                {
-                }
-            }
-
-            if (queue.Count == 0)
-            {
-                try
-                {
-                    var sibling = walker.GetNextSibling(element);
-                    if (sibling is not null) queue.Enqueue((sibling, depth));
-                }
-                catch (ElementNotAvailableException)
-                {
-                }
+                EnqueueChildren(walker, element, depth + 1, queue);
             }
         }
 
         return best;
     }
 
-    private static double Score(string? name, string? automationId, string? className, string? controlType, IReadOnlyList<string> hints)
+    private static void EnqueueChildren(TreeWalker walker, AutomationElement parent, int depth, Queue<(AutomationElement Element, int Depth)> queue)
     {
-        var fields = new[] { name ?? string.Empty, automationId ?? string.Empty, className ?? string.Empty, controlType ?? string.Empty };
+        try
+        {
+            var child = walker.GetFirstChild(parent);
+            while (child is not null)
+            {
+                queue.Enqueue((child, depth));
+                child = walker.GetNextSibling(child);
+            }
+        }
+        catch (ElementNotAvailableException)
+        {
+        }
+    }
+
+    private static double Score(string? name, string? automationId, string? className, string controlType, Rect rect, IReadOnlyList<string> hints)
+    {
+        var fields = new[] { name ?? string.Empty, automationId ?? string.Empty, className ?? string.Empty, controlType };
         double score = 0;
 
         for (var i = 0; i < hints.Count; i++)
@@ -115,6 +106,16 @@ public sealed class UiAutomationScanner
             }
         }
 
+        if (controlType.EndsWith("Button", StringComparison.Ordinal) ||
+            controlType.EndsWith("ListItem", StringComparison.Ordinal) ||
+            controlType.EndsWith("MenuItem", StringComparison.Ordinal) ||
+            controlType.EndsWith("Hyperlink", StringComparison.Ordinal) ||
+            controlType.EndsWith("TabItem", StringComparison.Ordinal))
+        {
+            score += 25;
+        }
+
+        if (rect.Width > 1400 || rect.Height > 900) score -= 15;
         return score;
     }
 }

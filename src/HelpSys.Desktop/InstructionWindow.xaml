@@ -1,0 +1,22 @@
+<Window x:Class="HelpSys.InstructionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ShowActivated="False"
+        Focusable="False">
+  <Grid IsHitTestVisible="False">
+    <Border Background="#F4FFFFFF" BorderBrush="#33000000" BorderThickness="1" CornerRadius="8" Padding="12,8">
+      <TextBlock x:Name="InstructionText"
+                 FontSize="16"
+                 FontWeight="SemiBold"
+                 Foreground="#FF111111"
+                 TextWrapping="Wrap"
+                 TextAlignment="Center" />
+    </Border>
+  </Grid>
+</Window>
