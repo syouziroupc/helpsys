@@ -173,6 +173,11 @@ public partial class MainWindow
         if (string.Equals(_validatedVisionInstruction, _currentDecision.Instruction, StringComparison.Ordinal)) return;
 
         var bounds = _guidedBounds.Value;
+        // The guide overlay is topmost. Hide it before FromPoint-based validation so the
+        // scanner sees the real application underneath rather than HelpSys itself.
+        _overlay.Hide();
+        await Task.Delay(35, cancellationToken);
+
         Rect? accessible;
         try { accessible = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { return; }
@@ -182,7 +187,6 @@ public partial class MainWindow
             _rejectedVisionTargets++;
             _history.Add(new GuideHistoryItem(_stepNumber, "vision_target_rejected", "空白または押せない場所", "画像AIの座標に実際の押せるWindows要素が無かったため、この案内は破棄した。"));
             if (_history.Count > 12) _history.RemoveAt(0);
-            _overlay.Hide();
             _currentDecision = null;
             _currentTarget = null;
             _guidedBounds = null;
