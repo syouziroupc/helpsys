@@ -2,23 +2,30 @@ const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const MAX_UI_ELEMENTS = 420;
 const MAX_HISTORY = 12;
 
-const decisionSchema = {
-  type: 'object',
-  properties: {
-    status: { type: 'string', enum: ['target', 'clarify', 'done', 'not_found'] },
-    targetId: { type: ['string', 'null'] },
-    action: { type: 'string', enum: ['left_click', 'type_text', 'press_key', 'none'] },
-    instruction: { type: 'string' },
-    question: { type: ['string', 'null'] },
-    key: { type: ['string', 'null'] },
-    confidence: { type: 'number', minimum: 0, maximum: 1 }
-  },
-  required: ['status', 'targetId', 'action', 'instruction', 'question', 'key', 'confidence'],
-  additionalProperties: false
+const decisionProperties = {
+  status: { type: 'string', enum: ['target', 'clarify', 'done', 'not_found'] },
+  targetId: { type: ['string', 'null'] },
+  action: { type: 'string', enum: ['left_click', 'type_text', 'press_key', 'none'] },
+  instruction: { type: 'string' },
+  question: { type: ['string', 'null'] },
+  key: { type: ['string', 'null'] },
+  confidence: { type: 'number', minimum: 0, maximum: 1 }
+};
+
+const guidanceTool = {
+  name: 'return_guidance',
+  description: 'Return exactly one HelpSys guidance decision for the current Windows screen.',
+  parameters: {
+    type: 'object',
+    properties: decisionProperties,
+    required: ['status', 'targetId', 'action', 'instruction', 'question', 'key', 'confidence'],
+    additionalProperties: false
+  }
 };
 
 const systemPrompt = `You are the planning component of HelpSys, a Windows learning-assistance application.
 The human operates the computer. You NEVER operate it and NEVER claim that an action has already been performed.
+You MUST call return_guidance exactly once. Do not answer with prose outside that function call.
 Your job is to choose exactly one next human action from a supplied Windows UI Automation snapshot.
 
 Rules:
@@ -82,12 +89,18 @@ export default {
           { role: 'user', content: userPayload }
         ],
         temperature: 0,
-        max_tokens: 360,
-        response_format: { type: 'json_schema', json_schema: decisionSchema }
+        max_completion_tokens: 360,
+        tools: [guidanceTool],
+        tool_choice: 'required',
+        parallel_tool_calls: false,
+        chat_template_kwargs: { enable_thinking: false }
       });
 
-      const raw = result?.response ?? result;
-      const decision = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const decision = extractGuidanceCall(result);
+      if (!decision) {
+        console.error('guide inference returned no usable tool call');
+        return json({ error: 'invalid_model_output' }, 502);
+      }
       return json(validateDecision(decision, elements));
     } catch (error) {
       console.error('guide inference failed', error);
@@ -95,6 +108,36 @@ export default {
     }
   }
 };
+
+function extractGuidanceCall(result) {
+  const directCalls = Array.isArray(result?.tool_calls) ? result.tool_calls : [];
+  const messageCalls = Array.isArray(result?.choices?.[0]?.message?.tool_calls)
+    ? result.choices[0].message.tool_calls
+    : [];
+
+  for (const call of [...directCalls, ...messageCalls]) {
+    const name = call?.name ?? call?.function?.name;
+    if (name !== 'return_guidance') continue;
+    const rawArgs = call?.arguments ?? call?.function?.arguments;
+    if (rawArgs && typeof rawArgs === 'object') return rawArgs;
+    if (typeof rawArgs === 'string') {
+      try { return JSON.parse(rawArgs); }
+      catch { return null; }
+    }
+  }
+
+  // Defensive fallback for providers that return the tool payload as assistant text.
+  const rawText = result?.response ?? result?.choices?.[0]?.message?.content;
+  if (typeof rawText !== 'string') return null;
+  try { return JSON.parse(stripCodeFence(rawText)); }
+  catch { return null; }
+}
+
+function stripCodeFence(value) {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+}
 
 function compactElement(value) {
   if (!value || typeof value !== 'object') return null;
