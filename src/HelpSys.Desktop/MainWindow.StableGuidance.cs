@@ -37,6 +37,13 @@ public partial class MainWindow
             try { await ObserveStableLiveStateAsync(); }
             catch (OperationCanceledException) { }
             catch (ObjectDisposedException) { }
+            catch (Exception)
+            {
+                // UI Automation providers can disappear between observations. A transient
+                // provider failure must not escape this async dispatcher callback and terminate
+                // the WPF process; the next heartbeat performs a fresh observation.
+                ClearStableLiveChangeCandidate();
+            }
         }));
     }
 
