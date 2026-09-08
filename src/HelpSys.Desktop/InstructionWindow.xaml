@@ -10,7 +10,7 @@
         ShowActivated="False"
         Focusable="False">
   <Grid IsHitTestVisible="False">
-    <Border Background="#F4FFFFFF" BorderBrush="#33000000" BorderThickness="1" CornerRadius="8" Padding="12,8">
+    <Border Background="#FFFFFFFF" BorderBrush="#33000000" BorderThickness="1" CornerRadius="8" Padding="12,8">
       <TextBlock x:Name="InstructionText"
                  FontSize="16"
                  FontWeight="SemiBold"
