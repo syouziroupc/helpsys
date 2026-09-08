@@ -3,6 +3,15 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+def field(obj, name, default=None):
+    if not isinstance(obj, dict):
+        return default
+    if name in obj:
+        return obj[name]
+    pascal = name[:1].upper() + name[1:]
+    return obj.get(pascal, default)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, _format, *_args):
         pass
@@ -30,30 +39,32 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/v1/guide":
-            elements = payload.get("elements") or []
-            system_context = payload.get("systemContext") or {}
-            foreground = (system_context.get("foregroundProcess") or "").lower()
+            elements = field(payload, "elements", []) or []
+            system_context = field(payload, "systemContext", {}) or {}
+            foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
 
             eligible = [
                 item
                 for item in elements
-                if item.get("interactable") is not False
-                and item.get("enabled") is not False
-                and float(item.get("width") or 0) >= 8
-                and float(item.get("height") or 0) >= 8
-                and item.get("id")
+                if field(item, "interactable", True) is not False
+                and field(item, "enabled", True) is not False
+                and float(field(item, "width", 0) or 0) >= 8
+                and float(field(item, "height", 0) or 0) >= 8
+                and field(item, "id")
             ]
 
             diagnostics = {
+                "payloadKeys": list(payload.keys()) if isinstance(payload, dict) else [],
+                "systemContextKeys": list(system_context.keys()) if isinstance(system_context, dict) else [],
                 "foreground": foreground,
-                "foregroundProcessId": system_context.get("foregroundProcessId"),
+                "foregroundProcessId": field(system_context, "foregroundProcessId"),
                 "eligible": [
                     {
-                        "id": item.get("id"),
-                        "name": item.get("name"),
-                        "automationId": item.get("automationId"),
-                        "controlType": item.get("controlType"),
-                        "processName": item.get("processName"),
+                        "id": field(item, "id"),
+                        "name": field(item, "name"),
+                        "automationId": field(item, "automationId"),
+                        "controlType": field(item, "controlType"),
+                        "processName": field(item, "processName"),
                     }
                     for item in eligible[:80]
                 ],
@@ -63,21 +74,22 @@ class Handler(BaseHTTPRequestHandler):
                 json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
-            # The smoke target deliberately exposes this one button. Prefer it so the test covers
-            # structured target selection + local revalidation + overlay presentation instead of
-            # depending on incidental shell controls in the hosted runner.
             target = next(
                 (
                     item
                     for item in eligible
-                    if str(item.get("automationId") or "").lower() == "smokebutton"
-                    or str(item.get("name") or "").lower() == "open test target"
+                    if str(field(item, "automationId", "") or "").lower() == "smokebutton"
+                    or str(field(item, "name", "") or "").lower() == "open test target"
                 ),
                 None,
             )
             if target is None:
                 target = next(
-                    (item for item in eligible if str(item.get("processName") or "").lower() == foreground),
+                    (
+                        item
+                        for item in eligible
+                        if str(field(item, "processName", "") or "").lower() == foreground
+                    ),
                     eligible[0] if eligible else None,
                 )
 
@@ -98,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(
                 {
                     "status": "target",
-                    "targetId": str(target["id"]),
+                    "targetId": str(field(target, "id")),
                     "action": "left_click",
                     "instruction": "青い枠の場所で、マウスの左ボタンを1回押してください。",
                     "question": None,
