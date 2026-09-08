@@ -11,28 +11,14 @@ public partial class MainWindow
 {
     private GuideDecision? _v3TrackedDecision;
     private bool _v3TypeActivityObserved;
-    private bool _v3HandlersAttached;
 
     private void MainWindow_ReliabilityV3Loaded(object sender, RoutedEventArgs e)
     {
         MainWindow_StableLoaded(sender, e);
-        if (_v3HandlersAttached) return;
-
-        _actionObserver.LeftClick -= OnObservedLeftClick;
-        _actionObserver.KeyReleased -= OnObservedKeyReleased;
-        _actionObserver.LeftClick += OnObservedLeftClickV3;
-        _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
-        _v3HandlersAttached = true;
     }
 
     private void MainWindow_ReliabilityV3Closing(object? sender, CancelEventArgs e)
     {
-        if (_v3HandlersAttached)
-        {
-            _actionObserver.LeftClick -= OnObservedLeftClickV3;
-            _actionObserver.KeyReleased -= OnObservedKeyReleasedV3;
-            _v3HandlersAttached = false;
-        }
         MainWindow_StableClosing(sender, e);
     }
 
@@ -43,7 +29,7 @@ public partial class MainWindow
 
     private async void OnObservedLeftClickV3(Point point)
     {
-        if (_planning || _verifyingAction || _currentDecision is null || _guidedBounds is null) return;
+        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction || _currentDecision is null || _guidedBounds is null) return;
         var action = _currentDecision.Action;
         if (!action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("double_click", StringComparison.OrdinalIgnoreCase)) return;
@@ -70,7 +56,7 @@ public partial class MainWindow
 
     private async void OnObservedKeyReleasedV3(KeyObservation observation)
     {
-        if (_planning || _verifyingAction || _currentDecision is null) return;
+        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction || _currentDecision is null) return;
 
         if (!ReferenceEquals(_v3TrackedDecision, _currentDecision))
         {
@@ -108,8 +94,9 @@ public partial class MainWindow
 
     private async Task CompleteCurrentStepV3Async()
     {
-        if (_verifyingAction || _currentDecision is null || _activeRequest is null || _sessionCts is null) return;
-        _verifyingAction = true;
+        if (_currentDecision is null || _activeRequest is null || _sessionCts is null) return;
+        var generation = _sessionState.Generation;
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Verifying)) return;
 
         var decision = _currentDecision;
         var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
@@ -123,6 +110,8 @@ public partial class MainWindow
         {
             SetState("操作の結果を確認しています…", speak: false);
             var changed = await WaitForStableStateTransitionV3Async(decision.Action, _stepBaseline, _stepSystemBaseline, _sessionCts.Token);
+            if (!_sessionState.IsCurrent(generation)) return;
+
             if (!changed)
             {
                 _consecutiveFailures++;
@@ -131,6 +120,7 @@ public partial class MainWindow
                 if (_consecutiveFailures == 1)
                 {
                     var stillValid = await RevalidateCurrentTargetV3Async(_sessionCts.Token);
+                    if (!_sessionState.IsCurrent(generation)) return;
                     if (!stillValid)
                     {
                         _history.Add(new GuideHistoryItem(_stepNumber, $"stale_{decision.Action}", targetName, "再試行前に対象が消えたため、同じ操作を繰り返さず現在画面から再計画する。"));
@@ -141,6 +131,7 @@ public partial class MainWindow
                     else
                     {
                         _stepBaseline = await _scanner.CaptureCandidatesAsync(420, _sessionCts.Token);
+                        if (!_sessionState.IsCurrent(generation)) return;
                         _stepSystemBaseline = _systemContext.Capture();
 
                         if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
@@ -177,23 +168,23 @@ public partial class MainWindow
                 advance = true;
             }
         }
-        catch (OperationCanceledException) { }
-        finally
+        catch (OperationCanceledException)
         {
-            _verifyingAction = false;
+            return;
         }
 
-        if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
+        if (!_sessionState.IsCurrent(generation) || _sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
 
         if (retryMessage is not null)
         {
+            if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction)) return;
             SetState(retryMessage, speak: true);
             return;
         }
 
         if (clarification is not null)
         {
-            WaitForClarification(clarification);
+            WaitForClarification(clarification, generation);
             return;
         }
 
@@ -214,7 +205,7 @@ public partial class MainWindow
         {
             SetState("画面が変わったことを確認しました。次を確認しています…", speak: false);
             await Task.Delay(250, _sessionCts.Token);
-            await AdvanceGuideAsync();
+            if (_sessionState.IsCurrent(generation)) await AdvanceGuideAsync();
         }
     }
 
@@ -273,6 +264,7 @@ public partial class MainWindow
         var allowFocusOnly = action.Equals("press_key", StringComparison.OrdinalIgnoreCase) ||
                              (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
                               _currentTarget?.ControlType is "Edit" or "ComboBox");
+        var targetBefore = _currentTarget;
 
         await Task.Delay(action.Equals("double_click", StringComparison.OrdinalIgnoreCase) ? 900 : 450, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
@@ -282,7 +274,7 @@ public partial class MainWindow
             cancellationToken.ThrowIfCancellationRequested();
             var first = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             var firstSystem = _systemContext.Capture();
-            if (!HasStableTransitionV3(before, systemBefore, first, firstSystem, strong, allowFocusOnly))
+            if (!HasStableTransitionV3(before, systemBefore, first, firstSystem, strong, allowFocusOnly, targetBefore, action))
             {
                 await Task.Delay(350, cancellationToken);
                 continue;
@@ -291,7 +283,7 @@ public partial class MainWindow
             await Task.Delay(strong ? 650 : 400, cancellationToken);
             var second = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             var secondSystem = _systemContext.Capture();
-            if (HasStableTransitionV3(before, systemBefore, second, secondSystem, strong, allowFocusOnly)) return true;
+            if (HasStableTransitionV3(before, systemBefore, second, secondSystem, strong, allowFocusOnly, targetBefore, action)) return true;
         }
 
         return false;
@@ -303,9 +295,12 @@ public partial class MainWindow
         IReadOnlyList<UiElementCandidate> after,
         SystemContextSnapshot systemAfter,
         bool strong,
-        bool allowFocusOnly)
+        bool allowFocusOnly,
+        UiElementCandidate? targetBefore,
+        string action)
     {
         if (HasSystemTransitionV3(systemBefore, systemAfter)) return true;
+        if (HasActionSpecificTransitionV3(targetBefore, after, action, systemBefore)) return true;
 
         var foreground = systemBefore?.ForegroundProcess ?? systemAfter.ForegroundProcess;
         if (HasWindowSetTransitionV3(before, after, foreground)) return true;
@@ -329,6 +324,78 @@ public partial class MainWindow
         var overlap = beforeKeys.Count(x => afterKeys.Contains(x));
         var similarity = overlap / (double)Math.Max(beforeKeys.Count, afterKeys.Count);
         return similarity < (strong ? 0.72 : 0.82);
+    }
+
+    private static bool HasActionSpecificTransitionV3(
+        UiElementCandidate? beforeTarget,
+        IReadOnlyList<UiElementCandidate> after,
+        string action,
+        SystemContextSnapshot? systemBefore)
+    {
+        if (beforeTarget is null) return false;
+        var current = FindMatchingTargetV3(beforeTarget, after);
+        if (current is null) return false;
+
+        var type = beforeTarget.ControlType;
+        if (type is "CheckBox" or "RadioButton")
+        {
+            if (!string.Equals(beforeTarget.ToggleState, current.ToggleState, StringComparison.Ordinal) &&
+                (beforeTarget.ToggleState is not null || current.ToggleState is not null)) return true;
+            if (beforeTarget.Selected != current.Selected && (beforeTarget.Selected.HasValue || current.Selected.HasValue)) return true;
+        }
+
+        if (type is "ListItem" or "TabItem" or "TreeItem")
+        {
+            if (beforeTarget.Selected != current.Selected && (beforeTarget.Selected.HasValue || current.Selected.HasValue)) return true;
+            if (!string.Equals(beforeTarget.ExpandCollapseState, current.ExpandCollapseState, StringComparison.Ordinal) &&
+                (beforeTarget.ExpandCollapseState is not null || current.ExpandCollapseState is not null)) return true;
+        }
+
+        if (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) && type is "Edit" or "ComboBox")
+        {
+            if (!beforeTarget.Focused && current.Focused) return true;
+        }
+
+        if (action.Equals("type_text", StringComparison.OrdinalIgnoreCase) && systemBefore?.Browser is null && type is "Edit" or "ComboBox")
+        {
+            if (!string.Equals(beforeTarget.Value, current.Value, StringComparison.Ordinal) && current.Value is not null) return true;
+        }
+
+        return false;
+    }
+
+    private static UiElementCandidate? FindMatchingTargetV3(UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates)
+    {
+        var sameProcess = candidates.Where(x => x.ProcessId == target.ProcessId &&
+                                                x.ControlType.Equals(target.ControlType, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(target.AutomationId))
+        {
+            var byId = sameProcess.Where(x => x.AutomationId.Equals(target.AutomationId, StringComparison.Ordinal)).ToArray();
+            if (byId.Length == 1) return byId[0];
+            if (byId.Length > 1)
+                return byId.OrderBy(x => CenterDistanceV3(target, x)).FirstOrDefault();
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.Name))
+        {
+            var byName = sameProcess.Where(x => x.Name.Equals(target.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (byName.Length > 0) return byName.OrderBy(x => CenterDistanceV3(target, x)).FirstOrDefault();
+        }
+
+        return sameProcess
+            .Where(x => x.ClassName.Equals(target.ClassName, StringComparison.Ordinal))
+            .OrderBy(x => CenterDistanceV3(target, x))
+            .FirstOrDefault(x => CenterDistanceV3(target, x) <= 80);
+    }
+
+    private static double CenterDistanceV3(UiElementCandidate a, UiElementCandidate b)
+    {
+        var ax = a.X + a.Width / 2d;
+        var ay = a.Y + a.Height / 2d;
+        var bx = b.X + b.Width / 2d;
+        var by = b.Y + b.Height / 2d;
+        return Math.Sqrt(Math.Pow(ax - bx, 2) + Math.Pow(ay - by, 2));
     }
 
     private static bool HasSystemTransitionV3(SystemContextSnapshot? before, SystemContextSnapshot after)
