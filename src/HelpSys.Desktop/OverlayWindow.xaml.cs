@@ -26,14 +26,17 @@ public partial class OverlayWindow : Window
 
     public bool ShowTarget(Rect physicalBounds, string instruction)
     {
-        if (!HasRealInteractiveTarget(physicalBounds))
+        // Never let HelpSys's own topmost overlay become the element returned by FromPoint.
+        // Hide both windows first, validate the real UI below them, then render the guide.
+        if (IsVisible || _instruction.IsVisible)
         {
-            Hide();
-            return false;
+            _instruction.Hide();
+            base.Hide();
         }
 
-        if (!IsVisible) Show();
+        if (!HasRealInteractiveTarget(physicalBounds)) return false;
 
+        Show();
         var hwnd = new WindowInteropHelper(this).Handle;
         const int padding = 7;
         var x = (int)Math.Floor(physicalBounds.Left) - padding;
