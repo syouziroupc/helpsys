@@ -5,8 +5,15 @@ namespace HelpSys.Services;
 
 public sealed class SpeechOutputService : IDisposable
 {
+    private static readonly TimeSpan SpeechCommitDelay = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan DuplicateSuppressionWindow = TimeSpan.FromSeconds(4);
+
     private readonly SpeechSynthesizer _synthesizer = new();
     private readonly object _gate = new();
+    private CancellationTokenSource? _pendingSpeechCts;
+    private string? _lastSpokenText;
+    private DateTime _lastSpokenUtc = DateTime.MinValue;
+    private bool _disposed;
 
     public SpeechOutputService()
     {
@@ -19,23 +26,69 @@ public sealed class SpeechOutputService : IDisposable
     {
         var value = Prepare(text);
         if (string.IsNullOrWhiteSpace(value)) return;
+
+        CancellationTokenSource? previous;
+        CancellationTokenSource current;
         lock (_gate)
         {
-            try
+            if (_disposed) return;
+            previous = _pendingSpeechCts;
+            current = new CancellationTokenSource();
+            _pendingSpeechCts = current;
+        }
+
+        try { previous?.Cancel(); } catch { }
+        _ = CommitSpeechAsync(value, current);
+    }
+
+    private async Task CommitSpeechAsync(string value, CancellationTokenSource source)
+    {
+        try
+        {
+            await Task.Delay(SpeechCommitDelay, source.Token).ConfigureAwait(false);
+
+            lock (_gate)
             {
-                _synthesizer.SpeakAsyncCancelAll();
-                _synthesizer.SpeakAsync(value);
+                if (_disposed || source.IsCancellationRequested || !ReferenceEquals(_pendingSpeechCts, source)) return;
+                _pendingSpeechCts = null;
+
+                if (string.Equals(_lastSpokenText, value, StringComparison.Ordinal) &&
+                    DateTime.UtcNow - _lastSpokenUtc < DuplicateSuppressionWindow)
+                {
+                    return;
+                }
+
+                try
+                {
+                    _synthesizer.SpeakAsyncCancelAll();
+                    _synthesizer.SpeakAsync(value);
+                    _lastSpokenText = value;
+                    _lastSpokenUtc = DateTime.UtcNow;
+                }
+                catch { }
             }
-            catch { }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_pendingSpeechCts, source)) _pendingSpeechCts = null;
+            }
+            source.Dispose();
         }
     }
 
     public void Stop()
     {
+        CancellationTokenSource? pending;
         lock (_gate)
         {
+            pending = _pendingSpeechCts;
+            _pendingSpeechCts = null;
             try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
         }
+        try { pending?.Cancel(); } catch { }
     }
 
     private void TrySelectJapaneseVoice()
@@ -65,7 +118,16 @@ public sealed class SpeechOutputService : IDisposable
 
     public void Dispose()
     {
-        Stop();
+        CancellationTokenSource? pending;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            pending = _pendingSpeechCts;
+            _pendingSpeechCts = null;
+            try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
+        }
+        try { pending?.Cancel(); } catch { }
         _synthesizer.Dispose();
     }
 }
