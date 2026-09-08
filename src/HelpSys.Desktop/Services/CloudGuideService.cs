@@ -17,12 +17,16 @@ public sealed class CloudGuideService : IDisposable
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(22) };
+
+        // AdvanceGuideAsync already owns the end-to-end planning deadline. A second, slightly
+        // shorter HttpClient timeout used to turn slow-but-healthy Workers AI inference into a
+        // TaskCanceledException that the UI reported as a network failure.
+        _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     }
 
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
-        using var message = CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", new
+        var body = new
         {
             request,
             history,
@@ -45,14 +49,14 @@ public sealed class CloudGuideService : IDisposable
                 width = x.Width,
                 height = x.Height
             })
-        });
+        };
 
-        return await SendAsync<GuideDecision>(message, cancellationToken);
+        return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
     }
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
-        using var message = CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", new
+        var body = new
         {
             request,
             history,
@@ -60,9 +64,9 @@ public sealed class CloudGuideService : IDisposable
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
             imageHeight = frame.ImageHeight
-        });
+        };
 
-        return await SendAsync<VisionGuideDecision>(message, cancellationToken);
+        return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
     }
 
     private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)
@@ -72,14 +76,42 @@ public sealed class CloudGuideService : IDisposable
         return message;
     }
 
-    private async Task<T> SendAsync<T>(HttpRequestMessage message, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(Func<HttpRequestMessage> createMessage, CancellationToken cancellationToken)
     {
-        using var response = await _http.SendAsync(message, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"HelpSys API {((int)response.StatusCode)}: {Short(body)}");
-        return JsonSerializer.Deserialize<T>(body, _jsonOptions) ?? throw new InvalidOperationException("HelpSys APIの応答を解析できませんでした。");
+        Exception? lastTransientError = null;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                using var message = createMessage();
+                using var response = await _http.SendAsync(message, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return JsonSerializer.Deserialize<T>(body, _jsonOptions)
+                           ?? throw new InvalidOperationException("HelpSys APIの応答を解析できませんでした。");
+                }
+
+                var apiError = new InvalidOperationException($"HelpSys API {((int)response.StatusCode)}: {Short(body)}");
+                if (!IsTransientStatus((int)response.StatusCode) || attempt > 0) throw apiError;
+                lastTransientError = apiError;
+            }
+            catch (HttpRequestException ex) when (attempt == 0 && !cancellationToken.IsCancellationRequested)
+            {
+                lastTransientError = ex;
+            }
+
+            await Task.Delay(350, cancellationToken);
+        }
+
+        throw lastTransientError ?? new HttpRequestException("HelpSys APIへの一時的な通信に失敗しました。");
     }
 
+    private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
     private static string Short(string value) => value.Length <= 180 ? value : value[..180];
     public void Dispose() => _http.Dispose();
 }
