@@ -3,7 +3,7 @@ import worker from './index.js';
 const requestBody = {
   request: 'YouTubeを見たい',
   history: [],
-  elements: [{ id: 'u1', name: 'Google Chrome', automationId: 'Chrome', className: 'Chrome_WidgetWin_1', controlType: 'Button', processName: 'explorer', enabled: true, keyboardFocusable: true, focused: false, password: false }]
+  elements: [{ id: 'u1', name: 'Google Chrome', automationId: 'Chrome', className: 'Chrome_WidgetWin_1', controlType: 'Button', processName: 'explorer', interactable: true, enabled: true, keyboardFocusable: true, focused: false, password: false, x: 100, y: 100, width: 64, height: 64 }]
 };
 
 const expected = { status: 'target', targetId: 'u1', action: 'left_click', instruction: 'ここを左クリックしてください。', question: null, key: null, confidence: 0.93 };
@@ -12,6 +12,8 @@ await runCase('traditional root tool_calls', { tool_calls: [{ name: 'return_guid
 await runCase('chat completions tool_calls', { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'return_guidance', arguments: JSON.stringify(expected) } }] } }] });
 await runCase('defensive text JSON', { choices: [{ message: { content: JSON.stringify(expected) } }] });
 await runInvalidTargetCase();
+await runContextTargetRejectionCase();
+await runDoubleClickNormalizationCase();
 await runVisionCase();
 console.log('HelpSys Worker self-test passed.');
 
@@ -28,6 +30,21 @@ async function runInvalidTargetCase() {
   const json = await response.json();
   assert(json.status === 'not_found', 'invented target must be rejected');
   assert(json.targetId === null, 'invented target id must not escape validation');
+}
+
+async function runContextTargetRejectionCase() {
+  const body = { ...requestBody, elements: [...requestBody.elements, { id: 'c1', name: 'Chrome はどなたが使用しますか？', controlType: 'Text', processName: 'chrome', interactable: false, enabled: true }] };
+  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: { ...expected, targetId: 'c1', confidence: 0.99 } }] });
+  const json = await response.json();
+  assert(json.status === 'not_found', 'context-only UI text must never become a click target');
+}
+
+async function runDoubleClickNormalizationCase() {
+  const body = { ...requestBody, elements: [{ ...requestBody.elements[0], controlType: 'ListItem' }] };
+  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: { ...expected, instruction: 'Google Chromeをダブルクリックしてください。', action: 'left_click' } }] });
+  const json = await response.json();
+  assert(json.action === 'double_click', 'desktop-like double-click wording must normalize to double_click');
+  assert(json.instruction.includes('2回クリック'), 'double-click instruction must be beginner readable');
 }
 
 async function runVisionCase() {

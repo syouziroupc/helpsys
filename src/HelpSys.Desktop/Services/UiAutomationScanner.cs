@@ -22,12 +22,14 @@ public sealed class UiAutomationScanner
         var queue = new Queue<(AutomationElement Element, int Depth)>();
         EnqueueChildren(walker, root, 0, queue);
 
-        var output = new List<UiElementCandidate>(Math.Min(maxCandidates, 400));
+        var interactive = new List<UiElementCandidate>(Math.Min(maxCandidates, 360));
+        var context = new List<UiElementCandidate>(Math.Min(110, Math.Max(30, maxCandidates / 3)));
+        var contextLimit = Math.Min(110, Math.Max(30, maxCandidates / 3));
         var processNames = new Dictionary<int, string>();
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        while (queue.Count > 0 && output.Count < maxCandidates && visited < 6000 && stopwatch.ElapsedMilliseconds < 2200)
+        while (queue.Count > 0 && visited < 6500 && stopwatch.ElapsedMilliseconds < 2400)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth) = queue.Dequeue();
@@ -44,13 +46,23 @@ public sealed class UiAutomationScanner
                     var name = isPassword ? "[password field]" : current.Name ?? string.Empty;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
+                    var isInteractive = IsInteractiveType(typeName);
+                    var isContext = !isInteractive && IsContextType(typeName, name, rect);
 
-                    if (ShouldInclude(typeName, name, automationId, className, rect))
+                    if (isInteractive && interactive.Count < maxCandidates && ShouldKeep(name, automationId, className, rect))
                     {
-                        output.Add(new UiElementCandidate(
-                            $"u{output.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
+                        interactive.Add(new UiElementCandidate(
+                            $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
-                            current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
+                            true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
+                            rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
+                    }
+                    else if (isContext && context.Count < contextLimit)
+                    {
+                        context.Add(new UiElementCandidate(
+                            $"c{context.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
+                            Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
+                            false, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
                     }
                 }
@@ -61,7 +73,8 @@ public sealed class UiAutomationScanner
             if (depth < 10) EnqueueChildren(walker, element, depth + 1, queue);
         }
 
-        return output;
+        if (interactive.Count >= maxCandidates) return interactive.Take(maxCandidates).ToArray();
+        return interactive.Concat(context.Take(maxCandidates - interactive.Count)).ToArray();
     }
 
     private UiTarget? FindBestTarget(IReadOnlyList<string> hints, CancellationToken cancellationToken)
@@ -83,12 +96,12 @@ public sealed class UiAutomationScanner
             try
             {
                 var current = element.Current;
-                if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
+                var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
+                if (current.ProcessId != _selfProcessId && !current.IsOffscreen && IsInteractiveType(typeName))
                 {
                     var rect = current.BoundingRectangle;
                     if (!rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
                     {
-                        var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                         var score = Score(current.Name, current.AutomationId, current.ClassName, typeName, rect, hints);
                         if (score > 0 && (best is null || score > best.Score))
                             best = new UiTarget(current.Name ?? string.Empty, current.AutomationId ?? string.Empty, typeName, rect, current.ProcessId, score);
@@ -102,16 +115,25 @@ public sealed class UiAutomationScanner
         return best;
     }
 
-    private static bool ShouldInclude(string typeName, string name, string automationId, string className, Rect rect)
+    private static bool IsInteractiveType(string typeName) =>
+        typeName.EndsWith("Button", StringComparison.Ordinal) || typeName.EndsWith("ListItem", StringComparison.Ordinal) ||
+        typeName.EndsWith("MenuItem", StringComparison.Ordinal) || typeName.EndsWith("Hyperlink", StringComparison.Ordinal) ||
+        typeName.EndsWith("TabItem", StringComparison.Ordinal) || typeName.EndsWith("Edit", StringComparison.Ordinal) ||
+        typeName.EndsWith("ComboBox", StringComparison.Ordinal) || typeName.EndsWith("CheckBox", StringComparison.Ordinal) ||
+        typeName.EndsWith("RadioButton", StringComparison.Ordinal) || typeName.EndsWith("TreeItem", StringComparison.Ordinal);
+
+    private static bool IsContextType(string typeName, string name, Rect rect)
+    {
+        if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8 || string.IsNullOrWhiteSpace(name)) return false;
+        return typeName.EndsWith("Text", StringComparison.Ordinal) || typeName.EndsWith("Window", StringComparison.Ordinal) ||
+               typeName.EndsWith("Pane", StringComparison.Ordinal) || typeName.EndsWith("Group", StringComparison.Ordinal) ||
+               typeName.EndsWith("TitleBar", StringComparison.Ordinal) || typeName.EndsWith("Document", StringComparison.Ordinal);
+    }
+
+    private static bool ShouldKeep(string name, string automationId, string className, Rect rect)
     {
         if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8) return false;
-        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(automationId) && string.IsNullOrWhiteSpace(className)) return false;
-        return typeName.EndsWith("Button", StringComparison.Ordinal) || typeName.EndsWith("ListItem", StringComparison.Ordinal) ||
-               typeName.EndsWith("MenuItem", StringComparison.Ordinal) || typeName.EndsWith("Hyperlink", StringComparison.Ordinal) ||
-               typeName.EndsWith("TabItem", StringComparison.Ordinal) || typeName.EndsWith("Edit", StringComparison.Ordinal) ||
-               typeName.EndsWith("ComboBox", StringComparison.Ordinal) || typeName.EndsWith("CheckBox", StringComparison.Ordinal) ||
-               typeName.EndsWith("RadioButton", StringComparison.Ordinal) || typeName.EndsWith("TreeItem", StringComparison.Ordinal) ||
-               typeName.EndsWith("Window", StringComparison.Ordinal) || typeName.EndsWith("Pane", StringComparison.Ordinal);
+        return !string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(automationId) || !string.IsNullOrWhiteSpace(className);
     }
 
     private static string GetProcessName(int processId, Dictionary<int, string> cache)

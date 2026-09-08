@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Input;
@@ -26,10 +27,14 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _voiceCts;
     private GuideDecision? _currentDecision;
     private UiElementCandidate? _currentTarget;
+    private IReadOnlyList<UiElementCandidate> _stepBaseline = [];
     private Rect? _guidedBounds;
     private string? _activeRequest;
     private int _stepNumber;
+    private int _doubleClickCount;
+    private DateTime _lastGuidedClickUtc = DateTime.MinValue;
     private bool _planning;
+    private bool _verifyingAction;
 
     public MainWindow()
     {
@@ -145,7 +150,7 @@ public partial class MainWindow : Window
         try { _actionObserver.Start(); }
         catch (Exception ex)
         {
-            StateText.Text = $"操作観測を開始できません: {ex.Message}";
+            StateText.Text = $"操作の確認を開始できません: {ex.Message}";
             EndSession();
             return;
         }
@@ -159,7 +164,9 @@ public partial class MainWindow : Window
         _planning = true;
         _currentDecision = null;
         _currentTarget = null;
+        _stepBaseline = [];
         _guidedBounds = null;
+        _doubleClickCount = 0;
         _overlay.Hide();
         GuideButton.IsEnabled = false;
 
@@ -169,15 +176,15 @@ public partial class MainWindow : Window
 
         try
         {
-            StateText.Text = "現在の画面を確認しています…";
-            var candidates = await _scanner.CaptureCandidatesAsync(360, cancellationToken);
+            StateText.Text = "今の画面を確認しています…";
+            var candidates = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             if (candidates.Count == 0)
             {
-                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("操作対象を特定できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("今の画面から、次に押す場所を確認できませんでした。");
                 return;
             }
 
-            StateText.Text = $"{candidates.Count}個の画面要素から次の操作を判断しています…";
+            StateText.Text = "次にすることを考えています…";
             GuideDecision decision;
             try
             {
@@ -185,44 +192,44 @@ public partial class MainWindow : Window
             }
             catch (Exception cloudError) when (cloudError is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
-                await RunConservativeFallbackAsync(_activeRequest, cancellationToken);
+                await RunConservativeFallbackAsync(_activeRequest, candidates, cancellationToken);
                 return;
             }
 
             if (decision.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
             {
-                StopWithMessage(string.IsNullOrWhiteSpace(decision.Instruction) ? "この作業は完了しています。" : decision.Instruction);
+                StopWithMessage(string.IsNullOrWhiteSpace(decision.Instruction) ? "目的の画面まで進めました。" : decision.Instruction);
                 return;
             }
 
             if (decision.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
             {
-                StopWithMessage(decision.Question ?? "やりたい操作をもう少し具体的に教えてください。");
+                StopWithMessage(decision.Question ?? "どれを使いたいか、もう少し教えてください。");
                 return;
             }
 
             if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumTargetConfidence || string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("今の画面では、次の操作を十分な確度で特定できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("今の画面では、次に押す場所をはっきり確認できませんでした。");
                 return;
             }
 
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
-            if (target is null || target.Bounds.IsEmpty)
+            if (target is null || !target.Interactable || target.Bounds.IsEmpty)
             {
-                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("AIが選んだ対象を現在画面で再確認できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("案内する場所を今の画面で確認できませんでした。");
                 return;
             }
 
-            ShowStructuredTarget(decision, target);
+            ShowStructuredTarget(decision, target, candidates);
         }
         catch (OperationCanceledException)
         {
-            if (_sessionCts is { IsCancellationRequested: false }) StopWithMessage("画面確認がタイムアウトしました。");
+            if (_sessionCts is { IsCancellationRequested: false }) StopWithMessage("画面の確認に時間がかかりすぎました。もう一度「案内」を押してください。");
         }
         catch (Exception ex)
         {
-            StopWithMessage($"画面確認エラー: {ex.Message}");
+            StopWithMessage($"画面を確認できませんでした: {ex.Message}");
         }
         finally
         {
@@ -231,20 +238,21 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target)
+    private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates)
     {
         _currentDecision = decision;
         _currentTarget = target;
+        _stepBaseline = candidates;
         _guidedBounds = target.Bounds;
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? DefaultInstruction(decision.Action) : decision.Instruction;
         _overlay.ShowTarget(target.Bounds, instruction);
-        StateText.Text = $"手順 {_stepNumber + 1}: {DisplayName(target.Name, target.ControlType)}　確度 {decision.Confidence:P0}";
+        StateText.Text = $"手順 {_stepNumber + 1}：{instruction}";
     }
 
     private async Task<bool> TryVisionFallbackAsync(IReadOnlyList<UiElementCandidate> candidates, CancellationToken cancellationToken)
     {
         if (_activeRequest is null) return false;
-        StateText.Text = "構造情報だけでは特定できないため、画面画像を確認しています…";
+        StateText.Text = "画面の文字だけでは分からないため、見た目も確認しています…";
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
 
         var previousOpacity = Opacity;
@@ -272,13 +280,13 @@ public partial class MainWindow : Window
 
         if (decision.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
         {
-            StopWithMessage(string.IsNullOrWhiteSpace(decision.Instruction) ? "この作業は完了しています。" : decision.Instruction);
+            StopWithMessage(string.IsNullOrWhiteSpace(decision.Instruction) ? "目的の画面まで進めました。" : decision.Instruction);
             return true;
         }
 
         if (decision.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
         {
-            StopWithMessage(decision.Question ?? "どの操作をしたいか、もう少し具体的に教えてください。");
+            StopWithMessage(decision.Question ?? "どれを使いたいか教えてください。");
             return true;
         }
 
@@ -287,16 +295,19 @@ public partial class MainWindow : Window
         var bounds = frame.MapNormalizedBounds(decision.X, decision.Y, decision.Width, decision.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
 
-        var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? "ここを左クリックしてください。" : decision.Instruction;
+        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
+            ? "青い枠で囲まれた場所を、マウスの左ボタンで1回クリックしてください。"
+            : decision.Instruction;
         _currentDecision = new GuideDecision("target", "vision-target", "left_click", instruction, null, null, decision.Confidence);
         _currentTarget = null;
+        _stepBaseline = candidates;
         _guidedBounds = bounds;
         _overlay.ShowTarget(bounds, instruction);
-        StateText.Text = $"手順 {_stepNumber + 1}: {decision.Label ?? "画像上の対象"}　画像確度 {decision.Confidence:P0}";
+        StateText.Text = $"手順 {_stepNumber + 1}：{instruction}";
         return true;
     }
 
-    private async Task RunConservativeFallbackAsync(string request, CancellationToken cancellationToken)
+    private async Task RunConservativeFallbackAsync(string request, IReadOnlyList<UiElementCandidate> baseline, CancellationToken cancellationToken)
     {
         var plan = _fallbackPlanner.CreateFirstStep(request);
         if (plan.TargetHints.Count == 0)
@@ -308,30 +319,48 @@ public partial class MainWindow : Window
         var target = await _scanner.FindBestTargetAsync(plan.TargetHints, cancellationToken);
         if (target is null || target.Score < 30)
         {
-            StopWithMessage("判断APIに接続できず、安全に案内できる対象も特定できませんでした。");
+            StopWithMessage("通信できず、押す場所も安全に確認できませんでした。");
             return;
         }
 
-        _currentDecision = new GuideDecision("target", "local-fallback", "left_click", plan.Instruction, null, null, 0.70);
+        var instruction = "青い枠で囲まれた場所を、マウスの左ボタンで1回クリックしてください。";
+        _currentDecision = new GuideDecision("target", "local-fallback", "left_click", instruction, null, null, 0.70);
         _currentTarget = null;
+        _stepBaseline = baseline;
         _guidedBounds = target.Bounds;
-        _overlay.ShowTarget(target.Bounds, plan.Instruction);
-        StateText.Text = $"ローカル案内: {DisplayName(target.Name, target.ControlType)}";
+        _overlay.ShowTarget(target.Bounds, instruction);
+        StateText.Text = $"手順 {_stepNumber + 1}：{instruction}";
     }
 
     private async void OnObservedLeftClick(Point point)
     {
-        if (_planning || _currentDecision is null || _guidedBounds is null) return;
-        if (!_currentDecision.Action.Equals("left_click", StringComparison.OrdinalIgnoreCase)) return;
+        if (_planning || _verifyingAction || _currentDecision is null || _guidedBounds is null) return;
+        var action = _currentDecision.Action;
+        if (!action.Equals("left_click", StringComparison.OrdinalIgnoreCase) && !action.Equals("double_click", StringComparison.OrdinalIgnoreCase)) return;
+
         var bounds = _guidedBounds.Value;
-        bounds.Inflate(5, 5);
+        bounds.Inflate(7, 7);
         if (!bounds.Contains(point)) return;
+
+        if (action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
+        {
+            var now = DateTime.UtcNow;
+            if ((now - _lastGuidedClickUtc).TotalMilliseconds > 1100) _doubleClickCount = 0;
+            _lastGuidedClickUtc = now;
+            _doubleClickCount++;
+            if (_doubleClickCount < 2)
+            {
+                StateText.Text = "同じ青い枠の場所を、もう1回すばやく左クリックしてください。";
+                return;
+            }
+        }
+
         await CompleteCurrentStepAsync();
     }
 
     private async void OnObservedKeyReleased(int virtualKey)
     {
-        if (_planning || _currentDecision is null) return;
+        if (_planning || _verifyingAction || _currentDecision is null) return;
         if (_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
         {
             var expected = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
@@ -345,19 +374,109 @@ public partial class MainWindow : Window
 
     private async Task CompleteCurrentStepAsync()
     {
-        if (_currentDecision is null || _activeRequest is null) return;
+        if (_verifyingAction || _currentDecision is null || _activeRequest is null || _sessionCts is null) return;
+        _verifyingAction = true;
         var decision = _currentDecision;
-        var targetName = _currentTarget is null ? "visual/local target" : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
-        _history.Add(new GuideHistoryItem(++_stepNumber, decision.Action, targetName, decision.Instruction));
-        if (_history.Count > 12) _history.RemoveAt(0);
-        _currentDecision = null;
-        _currentTarget = null;
-        _guidedBounds = null;
-        _overlay.Hide();
-        StateText.Text = "操作を確認しました。次の手順を確認しています…";
-        await Task.Delay(550);
-        await AdvanceGuideAsync();
+        var targetName = _currentTarget is null ? "画面上の案内場所" : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
+
+        try
+        {
+            StateText.Text = "操作の結果で画面が変わったか確認しています…";
+            var changed = await WaitForStateTransitionAsync(decision.Action, _stepBaseline, _sessionCts.Token);
+            if (!changed)
+            {
+                _doubleClickCount = 0;
+                StateText.Text = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+                    ? "まだ画面が変わっていません。青い枠の場所を、左ボタンですばやく2回クリックしてください。"
+                    : "まだ画面が変わっていません。青い枠の場所を、もう一度ゆっくり操作してください。";
+                return;
+            }
+
+            _history.Add(new GuideHistoryItem(++_stepNumber, decision.Action, targetName, decision.Instruction));
+            if (_history.Count > 12) _history.RemoveAt(0);
+            _currentDecision = null;
+            _currentTarget = null;
+            _stepBaseline = [];
+            _guidedBounds = null;
+            _doubleClickCount = 0;
+            _overlay.Hide();
+            StateText.Text = "画面が変わったことを確認しました。次を確認しています…";
+            await Task.Delay(250, _sessionCts.Token);
+            await AdvanceGuideAsync();
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            _verifyingAction = false;
+        }
     }
+
+    private async Task<bool> WaitForStateTransitionAsync(string action, IReadOnlyList<UiElementCandidate> before, CancellationToken cancellationToken)
+    {
+        var needsStrongChange = action.Equals("double_click", StringComparison.OrdinalIgnoreCase);
+        await Task.Delay(needsStrongChange ? 1400 : 450, cancellationToken);
+
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < TimeSpan.FromSeconds(6.5))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var after = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            var changed = needsStrongChange ? HasStrongContentChange(before, after) : HasMeaningfulChange(before, after);
+            if (changed)
+            {
+                await Task.Delay(needsStrongChange ? 750 : 450, cancellationToken);
+                return true;
+            }
+            await Task.Delay(350, cancellationToken);
+        }
+        return false;
+    }
+
+    private static bool HasMeaningfulChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
+    {
+        if (before.Count == 0) return after.Count > 0;
+        if (HasWindowSetChange(before, after)) return true;
+
+        var beforeFocus = before.FirstOrDefault(x => x.Focused);
+        var afterFocus = after.FirstOrDefault(x => x.Focused);
+        if (beforeFocus is not null && afterFocus is not null && !StableKey(beforeFocus).Equals(StableKey(afterFocus), StringComparison.Ordinal)) return true;
+
+        return HasLargeContentChange(before, after);
+    }
+
+    private static bool HasStrongContentChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
+    {
+        if (before.Count == 0) return after.Count > 0;
+        if (HasWindowSetChange(before, after)) return true;
+
+        var beforeFocusedProcess = before.FirstOrDefault(x => x.Focused)?.ProcessName ?? string.Empty;
+        var afterFocusedProcess = after.FirstOrDefault(x => x.Focused)?.ProcessName ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(afterFocusedProcess) && !beforeFocusedProcess.Equals(afterFocusedProcess, StringComparison.OrdinalIgnoreCase)) return true;
+
+        return HasLargeContentChange(before, after);
+    }
+
+    private static bool HasWindowSetChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
+    {
+        var beforeWindows = before.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase)).Select(StableKey).ToHashSet(StringComparer.Ordinal);
+        var afterWindows = after.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase)).Select(StableKey).ToHashSet(StringComparer.Ordinal);
+        return !beforeWindows.SetEquals(afterWindows);
+    }
+
+    private static bool HasLargeContentChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
+    {
+        var beforeKeys = before.Select(StateKey).ToHashSet(StringComparer.Ordinal);
+        var afterKeys = after.Select(StateKey).ToHashSet(StringComparer.Ordinal);
+        if (Math.Abs(beforeKeys.Count - afterKeys.Count) >= 10) return true;
+        if (beforeKeys.Count == 0 || afterKeys.Count == 0) return beforeKeys.Count != afterKeys.Count;
+
+        var overlap = beforeKeys.Count(x => afterKeys.Contains(x));
+        var similarity = overlap / (double)Math.Max(beforeKeys.Count, afterKeys.Count);
+        return similarity < 0.82;
+    }
+
+    private static string StableKey(UiElementCandidate x) => $"{x.ProcessName}|{x.ControlType}|{x.ClassName}|{x.Name}";
+    private static string StateKey(UiElementCandidate x) => $"{x.ProcessName}|{x.ControlType}|{x.Name}|{x.AutomationId}|{x.ClassName}";
 
     private static bool MatchesVirtualKey(string? key, int virtualKey)
     {
@@ -376,9 +495,10 @@ public partial class MainWindow : Window
 
     private static string DefaultInstruction(string action) => action.ToLowerInvariant() switch
     {
-        "type_text" => "この欄に入力して、Enterキーを押してください。",
-        "press_key" => "指定されたキーを押してください。",
-        _ => "ここを左クリックしてください。"
+        "double_click" => "青い枠で囲まれた場所を、マウスの左ボタンですばやく2回クリックしてください。",
+        "type_text" => "青い枠の入力欄に文字を入力し、キーボードの Enter（エンター）キーを1回押してください。",
+        "press_key" => "案内されたキーボードのキーを1回押してください。",
+        _ => "青い枠で囲まれた場所を、マウスの左ボタンで1回クリックしてください。"
     };
 
     private static string DisplayName(string name, string controlType) => string.IsNullOrWhiteSpace(name) ? controlType.Replace("ControlType.", string.Empty) : name;
@@ -388,7 +508,10 @@ public partial class MainWindow : Window
         _overlay.Hide();
         _currentDecision = null;
         _currentTarget = null;
+        _stepBaseline = [];
         _guidedBounds = null;
+        _doubleClickCount = 0;
+        _verifyingAction = false;
         _actionObserver.Stop();
         _sessionCts?.Cancel();
         _activeRequest = null;
@@ -400,7 +523,10 @@ public partial class MainWindow : Window
         _overlay.Hide();
         _currentDecision = null;
         _currentTarget = null;
+        _stepBaseline = [];
         _guidedBounds = null;
+        _doubleClickCount = 0;
+        _verifyingAction = false;
         _actionObserver.Stop();
         _sessionCts?.Cancel();
         _sessionCts?.Dispose();

@@ -10,6 +10,7 @@ public sealed record UiElementCandidate(
     string ClassName,
     string ControlType,
     string ProcessName,
+    bool Interactable,
     bool Enabled,
     bool KeyboardFocusable,
     bool Focused,

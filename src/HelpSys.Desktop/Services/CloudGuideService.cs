@@ -34,10 +34,15 @@ public sealed class CloudGuideService : IDisposable
                 className = x.ClassName,
                 controlType = x.ControlType,
                 processName = x.ProcessName,
+                interactable = x.Interactable,
                 enabled = x.Enabled,
                 keyboardFocusable = x.KeyboardFocusable,
                 focused = x.Focused,
-                password = x.Password
+                password = x.Password,
+                x = Math.Round(x.X),
+                y = Math.Round(x.Y),
+                width = Math.Round(x.Width),
+                height = Math.Round(x.Height)
             })
         });
 
