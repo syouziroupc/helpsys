@@ -24,13 +24,20 @@ public partial class MainWindow
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
         _liveWatcher.Dispose();
-        _liveObserveGate.Dispose();
+        // ObserveStableLiveStateAsync can be suspended in a UIA await while WPF is closing.
+        // Disposing this gate here races its finally/Release path. It is process-lifetime state,
+        // so leave final reclamation to process teardown rather than crashing during shutdown.
     }
 
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        _ = Dispatcher.InvokeAsync(ObserveStableLiveStateAsync);
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try { await ObserveStableLiveStateAsync(); }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+        }));
     }
 
     private async Task ObserveStableLiveStateAsync()
@@ -78,10 +85,13 @@ public partial class MainWindow
                 return;
             }
 
+            var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
+
             // A type_text step is intentionally noisy: every character can mutate the UIA tree,
-            // search suggestions and accessibility values. The step is completed by its finishing
-            // key (normally Enter), so character-by-character UI changes must never invalidate it.
-            if (!_verifyingAction && _currentDecision is not null &&
+            // search suggestions and accessibility values. Ignore only that soft topology noise.
+            // App switches and real browser navigation remain hard boundaries even mid-typing;
+            // otherwise an instruction for an old application can survive after the user leaves it.
+            if (!hardChange && !_verifyingAction && _currentDecision is not null &&
                 _currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
             {
                 _liveElements = nowElements;
@@ -91,7 +101,6 @@ public partial class MainWindow
                 return;
             }
 
-            var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
             var topologyChange = HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
             if (!hardChange && !topologyChange)
