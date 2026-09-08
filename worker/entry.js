@@ -37,7 +37,8 @@ function beginnerBranchOverride(body) {
   if (!PROFILE_SCREEN.test(visibleText)) return null;
 
   // If the user has already answered a choice question, respect the answer instead of
-  // asking the same question forever. Only select a visible, interactable exact/near match.
+  // asking the same question forever. Exact visible labels win. A fuzzy answer is used
+  // only when it resolves to exactly one candidate; otherwise the system asks again.
   const latestAnswer = [...history].reverse().find(x => String(x?.action ?? x?.Action ?? '').toLowerCase() === 'clarification_answer');
   if (latestAnswer) {
     const answer = String(
@@ -45,9 +46,7 @@ function beginnerBranchOverride(body) {
       latestAnswer?.target ?? latestAnswer?.Target ?? ''
     ).trim();
     if (answer) {
-      const matching = relevant
-        .filter(x => x?.interactable !== false && x?.enabled !== false)
-        .find(x => namesMatch(String(x?.name || ''), answer));
+      const matching = resolveAnsweredTarget(relevant, answer);
       if (matching) {
         return {
           status: 'target', targetId: String(matching.id), action: 'left_click',
@@ -83,11 +82,20 @@ function beginnerBranchOverride(body) {
   return null;
 }
 
-function namesMatch(name, answer) {
-  const a = normalize(name);
-  const b = normalize(answer);
-  if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+function resolveAnsweredTarget(elements, answer) {
+  const candidates = elements.filter(x => x?.interactable !== false && x?.enabled !== false && String(x?.name || '').trim());
+  const normalizedAnswer = normalize(answer);
+  if (!normalizedAnswer) return null;
+
+  const exact = candidates.filter(x => normalize(x.name) === normalizedAnswer);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+
+  const fuzzy = candidates.filter(x => {
+    const name = normalize(x.name);
+    return name && (name.includes(normalizedAnswer) || normalizedAnswer.includes(name));
+  });
+  return fuzzy.length === 1 ? fuzzy[0] : null;
 }
 
 function normalize(value) {
