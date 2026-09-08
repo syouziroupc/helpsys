@@ -1,37 +1,6 @@
 import base from './start-state-guard.js';
 
-const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const MAX_REVIEW_ELEMENTS = 240;
-
-const reviewTool = {
-  name: 'return_guidance_review',
-  description: 'Approve or reject the proposed single HelpSys instruction after careful internal reasoning.',
-  parameters: {
-    type: 'object',
-    properties: {
-      approved: { type: 'boolean' },
-      confidence: { type: 'number', minimum: 0, maximum: 1 },
-      reason: { type: 'string' }
-    },
-    required: ['approved', 'confidence', 'reason'],
-    additionalProperties: false
-  }
-};
-
-const reviewPrompt = `You are the final deliberation gate for HelpSys, a Windows guidance application for complete beginners.
-A faster planner has proposed exactly one immediate instruction. Think carefully before approving it.
-You MUST call return_guidance_review exactly once and output no prose outside the tool call.
-
-Approve only when all of these are true:
-- the proposed action is directly supported by the current foreground context and visible UI evidence;
-- targetId, when present, is a current enabled/interactable element and the proposed action fits that control;
-- the proposal is consistent with the user's goal and completed successful steps;
-- it does not repeat a completed step or abruptly switch to an unrelated strategy;
-- it does not rely on a transient typing suggestion, animation, incidental focus movement, or a background window;
-- it is safe to say aloud now without immediately needing to retract it.
-
-Reject if evidence is ambiguous, stale, contradictory, or if another screen transition appears to be in progress.
-Do not invent or propose an alternative step. Do not reveal your reasoning. The reason field must be a short machine-oriented label, not chain-of-thought.`;
 
 export default {
   async fetch(request, env, ctx) {
@@ -44,8 +13,13 @@ export default {
       if (isStructuredGuide) bodyPromise = request.clone().json();
     } catch { }
 
-    const response = await base.fetch(request, env, ctx);
-    if (!isStructuredGuide || !bodyPromise || response.status !== 200 || !env?.AI) return response;
+    // The previous implementation called Workers AI twice: once to plan, then again to
+    // review the same instruction. The Windows client has a finite request budget, so a
+    // healthy network could still be reported as a communication failure when those two
+    // inference latencies accumulated. Keep the careful reasoning, but do it in the one
+    // planner inference instead of adding a second network/inference round.
+    const response = await base.fetch(request, singlePassReasoningEnv(env, isStructuredGuide), ctx);
+    if (!isStructuredGuide || !bodyPromise || response.status !== 200) return response;
 
     let body;
     let proposed;
@@ -62,45 +36,55 @@ export default {
       ? body.elements.slice(0, MAX_REVIEW_ELEMENTS).map(compactElement).filter(Boolean)
       : [];
 
+    const action = String(proposed.action || '').toLowerCase();
     const targetId = String(proposed.targetId || '');
-    if (targetId && !elements.some(x => x.id === targetId && x.interactable && x.enabled)) {
+    const target = targetId ? elements.find(x => x.id === targetId) : null;
+
+    // Final review is deliberately deterministic. It adds effectively no latency and
+    // prevents stale/non-operable targets from reaching speech output.
+    if (targetId && (!target || !target.interactable || !target.enabled)) {
       return replaceJson(response, rejectedDecision());
     }
 
-    const payload = JSON.stringify({
-      goal: String(body?.request || '').slice(0, 1600),
-      completedSteps: Array.isArray(body?.history) ? body.history.slice(-12) : [],
-      systemContext: body?.systemContext ?? null,
-      proposed,
-      uiElements: elements
-    });
-
-    try {
-      const result = await env.AI.run(env.HELPSYS_MODEL || DEFAULT_MODEL, {
-        messages: [
-          { role: 'system', content: reviewPrompt },
-          { role: 'user', content: payload }
-        ],
-        temperature: 0,
-        max_completion_tokens: 650,
-        tools: [reviewTool],
-        tool_choice: 'required',
-        parallel_tool_calls: false,
-        chat_template_kwargs: { enable_thinking: true }
-      });
-
-      const review = extractToolArguments(result, 'return_guidance_review');
-      if (!review) return response;
-
-      const approved = review.approved === true && Number(review.confidence) >= 0.74;
-      return approved ? response : replaceJson(response, rejectedDecision());
-    } catch (error) {
-      console.error('guidance deliberation failed', error);
-      // Keep the already validated base decision if the optional review service itself fails.
-      return response;
+    if (action === 'type_text' && (!target || !target.focused || !target.keyboardFocusable || target.password)) {
+      return replaceJson(response, rejectedDecision());
     }
+
+    if ((action === 'left_click' || action === 'double_click') && !target) {
+      return replaceJson(response, rejectedDecision());
+    }
+
+    if (action === 'press_key' && targetId && !target) {
+      return replaceJson(response, rejectedDecision());
+    }
+
+    return response;
   }
 };
+
+function singlePassReasoningEnv(env, enabled) {
+  if (!enabled || !env?.AI || typeof env.AI.run !== 'function') return env;
+
+  const ai = env.AI;
+  const reasoningAI = {
+    run(model, options = {}) {
+      return ai.run(model, {
+        ...options,
+        chat_template_kwargs: {
+          ...(options.chat_template_kwargs || {}),
+          enable_thinking: true
+        }
+      });
+    }
+  };
+
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === 'AI') return reasoningAI;
+      return Reflect.get(target, property, receiver);
+    }
+  });
+}
 
 function compactElement(value) {
   if (!value || typeof value !== 'object') return null;
@@ -108,20 +92,13 @@ function compactElement(value) {
   if (!id) return null;
   return {
     id,
-    name: text(value.name, 160),
-    automationId: text(value.automationId, 100),
-    className: text(value.className, 100),
     controlType: text(value.controlType, 70),
     processName: text(value.processName, 70),
     interactable: value.interactable !== false,
     enabled: value.enabled !== false,
     keyboardFocusable: value.keyboardFocusable === true,
     focused: value.focused === true,
-    password: value.password === true,
-    x: finite(value.x),
-    y: finite(value.y),
-    width: finite(value.width),
-    height: finite(value.height)
+    password: value.password === true
   };
 }
 
@@ -137,35 +114,6 @@ function rejectedDecision() {
   };
 }
 
-function extractToolArguments(result, toolName) {
-  const directCalls = Array.isArray(result?.tool_calls) ? result.tool_calls : [];
-  const messageCalls = Array.isArray(result?.choices?.[0]?.message?.tool_calls)
-    ? result.choices[0].message.tool_calls
-    : [];
-
-  for (const call of [...directCalls, ...messageCalls]) {
-    const name = call?.name ?? call?.function?.name;
-    if (name !== toolName) continue;
-    const raw = call?.arguments ?? call?.function?.arguments;
-    if (raw && typeof raw === 'object') return raw;
-    if (typeof raw === 'string') {
-      try { return JSON.parse(raw); }
-      catch { return null; }
-    }
-  }
-
-  const rawText = result?.response ?? result?.choices?.[0]?.message?.content;
-  if (typeof rawText !== 'string') return null;
-  try { return JSON.parse(stripCodeFence(rawText)); }
-  catch { return null; }
-}
-
-function stripCodeFence(value) {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('```')) return trimmed;
-  return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-}
-
 function replaceJson(response, value) {
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
@@ -176,9 +124,4 @@ function text(value, limit) {
   if (value === null || value === undefined) return '';
   const out = String(value).trim().replace(/[\r\n\t]+/g, ' ');
   return out.length <= limit ? out : out.slice(0, limit);
-}
-
-function finite(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
 }
