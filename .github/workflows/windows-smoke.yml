@@ -51,12 +51,22 @@ jobs:
           $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
           Start-Sleep -Seconds 1
 
+          # Keep a normal, UIA-accessible application directly behind HelpSys. This makes the
+          # foreground-boundary smoke deterministic and ensures the test exercises a real target
+          # rather than merely proving that the process stayed alive.
+          $notepad = Start-Process notepad -PassThru
+          Start-Sleep -Seconds 2
+          $shell = New-Object -ComObject WScript.Shell
+          $null = $shell.AppActivate($notepad.Id)
+          Start-Sleep -Seconds 1
+
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
           $process = Start-Process $exe -PassThru
           Start-Sleep -Seconds 4
 
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName UIAutomationClient
 
           function Save-DesktopScreenshot([string] $path) {
             $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -72,11 +82,29 @@ jobs:
             }
           }
 
+          function Get-HelpSysText {
+            if ($process.HasExited -or $process.MainWindowHandle -eq 0) { return @() }
+            $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+            if ($null -eq $root) { return @() }
+            $condition = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Text)
+            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+            $names = @()
+            foreach ($node in $nodes) {
+              try {
+                $name = $node.Current.Name
+                if (-not [string]::IsNullOrWhiteSpace($name)) { $names += $name }
+              }
+              catch { }
+            }
+            return $names
+          }
+
           try {
             if ($process.HasExited) { throw 'HelpSys exited before the idle smoke screenshot.' }
             Save-DesktopScreenshot 'artifacts/helpsys-idle.png'
 
-            $shell = New-Object -ComObject WScript.Shell
             $shell.SendKeys('^%h')
             Start-Sleep -Seconds 2
             if ($process.HasExited) { throw 'HelpSys exited after activation.' }
@@ -85,10 +113,17 @@ jobs:
             $shell.SendKeys('youtube{ENTER}')
             Start-Sleep -Seconds 5
             if ($process.HasExited) { throw 'HelpSys exited while producing guidance.' }
+
+            $texts = @(Get-HelpSysText)
+            if (-not ($texts | Where-Object { $_ -like '手順 *' -or $_ -like '手順*' })) {
+              throw "HelpSys stayed alive but did not produce an actionable guidance step. Visible text: $($texts -join ' | ')"
+            }
+
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
           }
           finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            if (-not $notepad.HasExited) { Stop-Process -Id $notepad.Id -Force }
             if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
 
