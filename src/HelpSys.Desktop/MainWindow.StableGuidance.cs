@@ -148,6 +148,9 @@ public partial class MainWindow
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
+                // The visual instruction and its speech are one commitment. Once the screen
+                // boundary is confirmed, neither may survive into the new state.
+                _speechOutput.Stop();
                 InvalidateCurrentGuidanceForLiveChange();
                 if (_planning)
                 {
