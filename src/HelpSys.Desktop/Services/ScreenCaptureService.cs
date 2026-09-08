@@ -31,11 +31,10 @@ public sealed class ScreenCaptureService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // The ranked guidance candidate list is intentionally finite, so it cannot be the
-        // privacy boundary for screenshots. Discover password fields independently before any
-        // pixels are copied. If that scan itself fails, fail closed and do not create a frame.
-        var passwordRedactions = CapturePasswordBounds(cancellationToken);
-        var allRedactions = redactions.Concat(passwordRedactions).ToArray();
+        // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
+        // Scan independently before pixels are copied and again immediately afterwards. A field
+        // that appears during capture is therefore still redacted from the captured bitmap.
+        var passwordRedactionsBefore = CapturePasswordBounds(cancellationToken);
 
         var screenX = GetSystemMetrics(SmXVirtualScreen);
         var screenY = GetSystemMetrics(SmYVirtualScreen);
@@ -62,10 +61,17 @@ public sealed class ScreenCaptureService
             if (!BitBlt(memoryDc, 0, 0, screenWidth, screenHeight, desktopDc, screenX, screenY, Srccopy | CaptureBlt))
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
+            cancellationToken.ThrowIfCancellationRequested();
+            var passwordRedactionsAfter = CapturePasswordBounds(cancellationToken);
+            var allRedactions = redactions
+                .Concat(passwordRedactionsBefore)
+                .Concat(passwordRedactionsAfter)
+                .ToArray();
+
             foreach (var rect in allRedactions)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Redact(memoryDc, rect, screenX, screenY, screenWidth, screenHeight);
+                RedactOrThrow(memoryDc, rect, screenX, screenY, screenWidth, screenHeight);
             }
 
             source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
@@ -80,7 +86,8 @@ public sealed class ScreenCaptureService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var output = ScaleToLimit(source!);
+        if (source is null) throw new InvalidOperationException("安全な画面画像を作成できませんでした。");
+        var output = ScaleToLimit(source);
         using var stream = new MemoryStream();
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(output));
@@ -135,15 +142,21 @@ public sealed class ScreenCaptureService
         return resized;
     }
 
-    private static void Redact(IntPtr dc, Rect rect, int screenX, int screenY, int screenWidth, int screenHeight)
+    private static void RedactOrThrow(IntPtr dc, Rect rect, int screenX, int screenY, int screenWidth, int screenHeight)
     {
         if (rect.IsEmpty) return;
-        var left = Math.Clamp((int)Math.Floor(rect.Left - screenX), 0, screenWidth);
-        var top = Math.Clamp((int)Math.Floor(rect.Top - screenY), 0, screenHeight);
-        var right = Math.Clamp((int)Math.Ceiling(rect.Right - screenX), 0, screenWidth);
-        var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom - screenY), 0, screenHeight);
+
+        // Include a small guard band so glyph antialiasing or provider bounds that are a few
+        // pixels tight cannot leave secret text visible at the edge of the reported field.
+        const int guard = 4;
+        var left = Math.Clamp((int)Math.Floor(rect.Left - screenX) - guard, 0, screenWidth);
+        var top = Math.Clamp((int)Math.Floor(rect.Top - screenY) - guard, 0, screenHeight);
+        var right = Math.Clamp((int)Math.Ceiling(rect.Right - screenX) + guard, 0, screenWidth);
+        var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom - screenY) + guard, 0, screenHeight);
         if (right <= left || bottom <= top) return;
-        PatBlt(dc, left, top, right - left, bottom - top, Blackness);
+
+        if (!PatBlt(dc, left, top, right - left, bottom - top, Blackness))
+            throw new InvalidOperationException("パスワード欄を安全に黒塗りできないため、画面画像は送信しません。");
     }
 
     [DllImport("user32.dll")]
