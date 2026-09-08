@@ -22,12 +22,14 @@ jobs:
           node --check worker/visible-first.js
           node --check worker/start-state-guard.js
           node --check worker/deliberation-guard.js
+          node --check worker/deliberation-selftest.mjs
 
       - name: Test Worker contract
         run: |
           node worker/selftest.mjs
           node worker/policy-selftest.mjs
           node worker/visible-first-selftest.mjs
+          node worker/deliberation-selftest.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
