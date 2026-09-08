@@ -1,4 +1,4 @@
-import worker from './visible-first.js';
+import worker from './start-state-guard.js';
 
 await desktopChromeBeatsWindows();
 await startChromeBeatsSearch();
