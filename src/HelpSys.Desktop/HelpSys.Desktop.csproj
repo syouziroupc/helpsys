@@ -10,8 +10,6 @@
     <RootNamespace>HelpSys</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="UIAutomationClient" />
-    <Reference Include="UIAutomationTypes" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
   </ItemGroup>
 </Project>
