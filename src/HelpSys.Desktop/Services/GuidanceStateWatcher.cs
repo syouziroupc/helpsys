@@ -4,12 +4,16 @@ namespace HelpSys.Services;
 
 public sealed class GuidanceStateWatcher : IDisposable
 {
+    private static readonly TimeSpan QuietPeriod = TimeSpan.FromMilliseconds(650);
+    private static readonly TimeSpan HeartbeatPeriod = TimeSpan.FromMilliseconds(1400);
+
     private readonly SemaphoreSlim _signal = new(0, 1);
     private readonly AutomationFocusChangedEventHandler _focusHandler;
     private readonly StructureChangedEventHandler _structureHandler;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
     private int _queued;
+    private long _lastSignalTicks;
     private bool _subscribed;
 
     public event EventHandler? Pulse;
@@ -41,6 +45,7 @@ public sealed class GuidanceStateWatcher : IDisposable
 
     private void Signal()
     {
+        Interlocked.Exchange(ref _lastSignalTicks, DateTime.UtcNow.Ticks);
         if (Interlocked.Exchange(ref _queued, 1) != 0) return;
         try { _signal.Release(); } catch (SemaphoreFullException) { }
     }
@@ -52,14 +57,13 @@ public sealed class GuidanceStateWatcher : IDisposable
             try
             {
                 var signalTask = _signal.WaitAsync(cancellationToken);
-                var heartbeatTask = Task.Delay(TimeSpan.FromMilliseconds(900), cancellationToken);
+                var heartbeatTask = Task.Delay(HeartbeatPeriod, cancellationToken);
                 var completed = await Task.WhenAny(signalTask, heartbeatTask).ConfigureAwait(false);
 
                 if (completed == signalTask)
                 {
+                    await WaitUntilQuietAsync(cancellationToken).ConfigureAwait(false);
                     Interlocked.Exchange(ref _queued, 0);
-                    await Task.Delay(180, cancellationToken).ConfigureAwait(false);
-                    while (_signal.Wait(0)) Interlocked.Exchange(ref _queued, 0);
                 }
 
                 Pulse?.Invoke(this, EventArgs.Empty);
@@ -70,8 +74,26 @@ public sealed class GuidanceStateWatcher : IDisposable
             }
             catch
             {
-                await Task.Delay(900, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(HeartbeatPeriod, cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    private async Task WaitUntilQuietAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var ticks = Volatile.Read(ref _lastSignalTicks);
+            if (ticks <= 0) return;
+
+            var lastSignalUtc = new DateTime(ticks, DateTimeKind.Utc);
+            var quietFor = DateTime.UtcNow - lastSignalUtc;
+            if (quietFor >= QuietPeriod) return;
+
+            var remaining = QuietPeriod - quietFor;
+            var delay = remaining < TimeSpan.FromMilliseconds(120) ? remaining : TimeSpan.FromMilliseconds(120);
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
         }
     }
 
