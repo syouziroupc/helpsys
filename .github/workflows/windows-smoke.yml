@@ -51,9 +51,6 @@ jobs:
           $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
           Start-Sleep -Seconds 1
 
-          # Use a classic WinForms process with deterministic accessible controls. Modern inbox
-          # apps such as Notepad can expose their editor only as a Document on hosted runners,
-          # which is unsuitable for an actionable-target smoke test.
           $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
           Start-Sleep -Seconds 3
           $shell = New-Object -ComObject WScript.Shell
@@ -138,6 +135,10 @@ jobs:
             $instruction = '青い枠の場所で、マウスの左ボタンを1回押してください。'
             if (-not ($names | Where-Object { $_ -like '手順*' -or $_ -eq $instruction })) {
               Save-DesktopScreenshot 'artifacts/helpsys-guidance-failure.png'
+              if (Test-Path 'artifacts/mock-last-request.json') {
+                Write-Host '--- mock candidate diagnostics ---'
+                Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
+              }
               throw "HelpSys did not expose an actionable guidance step. UIA names: $($names -join ' | ')"
             }
 
@@ -149,10 +150,12 @@ jobs:
             if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
 
-      - name: Upload smoke screenshots
+      - name: Upload smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: helpsys-windows-smoke
-          path: artifacts/*.png
+          path: |
+            artifacts/*.png
+            artifacts/*.json
           if-no-files-found: warn
