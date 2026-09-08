@@ -102,6 +102,8 @@ public partial class MainWindow : Window
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_planning || _verifyingAction) return;
+
         if (_voiceCts is not null)
         {
             _voiceCts.Cancel();
@@ -140,13 +142,17 @@ public partial class MainWindow : Window
             _voiceCts?.Dispose();
             _voiceCts = null;
             VoiceButton.Content = "音声";
-            GuideButton.IsEnabled = true;
+            GuideButton.IsEnabled = !_planning;
             RequestBox.Focus();
         }
     }
 
     private async Task StartOrContinueSessionAsync()
     {
+        // Do not let Enter or another UI path start a second session while the previous async
+        // planner is still unwinding. This prevents an old cancellation from killing a new goal.
+        if (_planning || _verifyingAction) return;
+
         _voiceCts?.Cancel();
         var text = RequestBox.Text.Trim();
         if (text.Length == 0)
@@ -202,7 +208,10 @@ public partial class MainWindow : Window
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(24));
+        // A structured inference can legitimately be followed by a vision fallback. The former
+        // 24-second end-to-end budget could expire during that second phase even on a healthy
+        // connection. Keep a finite bound, but leave enough room for both phases.
+        planningCts.CancelAfter(TimeSpan.FromSeconds(40));
         var cancellationToken = planningCts.Token;
 
         try
@@ -232,9 +241,18 @@ public partial class MainWindow : Window
             {
                 decision = await _cloudGuide.PlanAsync(_activeRequest, candidates, _history, systemContext, cancellationToken);
             }
-            catch (Exception cloudError) when (cloudError is HttpRequestException or TaskCanceledException or InvalidOperationException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                StopWithMessage("案内用の通信ができませんでした。間違った場所を案内しないため、ここで止めます。");
+                throw;
+            }
+            catch (HttpRequestException)
+            {
+                StopWithMessage("案内サーバーとの通信に失敗しました。間違った場所を案内しないため、ここで止めます。");
+                return;
+            }
+            catch (InvalidOperationException)
+            {
+                StopWithMessage("案内サービスから正常な応答を受け取れませんでした。間違った場所を案内しないため、ここで止めます。");
                 return;
             }
 
@@ -290,7 +308,8 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            if (_sessionCts is { IsCancellationRequested: false }) StopWithMessage("画面の確認に時間がかかりすぎました。もう一度「案内」を押してください。");
+            if (_sessionCts is { IsCancellationRequested: false })
+                StopWithMessage("画面の確認に時間がかかりすぎました。もう一度「案内」を押してください。");
         }
         catch (Exception ex)
         {
@@ -342,7 +361,16 @@ public partial class MainWindow : Window
         {
             Opacity = 0;
             await Task.Delay(100, cancellationToken);
-            frame = _screenCapture.Capture(passwordBounds);
+            frame = await _screenCapture.CaptureAsync(passwordBounds, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (InvalidOperationException)
+        {
+            // Screenshot privacy validation failed. Do not send a partially protected image.
+            return false;
         }
         finally
         {
@@ -354,7 +382,11 @@ public partial class MainWindow : Window
         {
             decision = await _cloudGuide.PlanVisionAsync(_activeRequest, frame, _history, systemContext, cancellationToken);
         }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error) when (error is HttpRequestException or InvalidOperationException)
         {
             return false;
         }
@@ -376,7 +408,16 @@ public partial class MainWindow : Window
         var bounds = frame.MapNormalizedBounds(decision.X, decision.Y, decision.Width, decision.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
         var snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken);
-        if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
+
+        // Never speak or draw a raw vision coordinate. It must reconcile with a current,
+        // actually interactable Windows accessibility element before it can become guidance.
+        if (snapped is not { } accessible || accessible.IsEmpty)
+        {
+            _history.Add(new GuideHistoryItem(_stepNumber, "vision_target_rejected", "画像候補", "画像AIの座標に現在押せるWindows要素が無いため、発話前に破棄した。"));
+            if (_history.Count > 12) _history.RemoveAt(0);
+            return false;
+        }
+        bounds = accessible;
 
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
             ? "青い枠で囲まれた場所を、マウスの左ボタンで1回押してください。"
@@ -386,6 +427,7 @@ public partial class MainWindow : Window
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;
         _guidedBounds = bounds;
+        _validatedVisionInstruction = null;
         _overlay.ShowTarget(bounds, instruction);
         ShowInstruction(instruction);
         return true;
@@ -481,6 +523,8 @@ public partial class MainWindow : Window
             _stepSystemBaseline = null;
             _guidedBounds = null;
             _doubleClickCount = 0;
+            _validatedVisionInstruction = null;
+            _rejectedVisionTargets = 0;
             _overlay.Hide();
             _keyHint.Hide();
             SetState("画面が変わったことを確認しました。次を確認しています…", speak: false);
@@ -497,6 +541,9 @@ public partial class MainWindow : Window
     private async Task<bool> WaitForStateTransitionAsync(string action, IReadOnlyList<UiElementCandidate> before, SystemContextSnapshot? systemBefore, CancellationToken cancellationToken)
     {
         var needsStrongChange = action.Equals("double_click", StringComparison.OrdinalIgnoreCase);
+        var allowFocusOnly = action.Equals("press_key", StringComparison.OrdinalIgnoreCase) ||
+                             (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
+                              _currentTarget?.ControlType is "Edit" or "ComboBox");
         await Task.Delay(needsStrongChange ? 1400 : 500, cancellationToken);
 
         var stopwatch = Stopwatch.StartNew();
@@ -506,7 +553,7 @@ public partial class MainWindow : Window
             var after = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             var systemAfter = _systemContext.Capture();
             if (HasMeaningfulSystemChange(systemBefore, systemAfter)) return true;
-            var changed = needsStrongChange ? HasStrongContentChange(before, after) : HasMeaningfulChange(before, after);
+            var changed = needsStrongChange ? HasStrongContentChange(before, after) : HasMeaningfulChange(before, after, allowFocusOnly);
             if (changed)
             {
                 await Task.Delay(needsStrongChange ? 700 : 400, cancellationToken);
@@ -521,20 +568,22 @@ public partial class MainWindow : Window
     {
         if (before is null) return false;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
-        if (!before.ForegroundTitle.Equals(after.ForegroundTitle, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(after.ForegroundTitle)) return true;
         var beforeUrl = before.Browser?.Url ?? string.Empty;
         var afterUrl = after.Browser?.Url ?? string.Empty;
         if (!beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(afterUrl)) return true;
         return false;
     }
 
-    private static bool HasMeaningfulChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
+    private static bool HasMeaningfulChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after, bool allowFocusOnly)
     {
         if (before.Count == 0) return after.Count > 0;
         if (HasWindowSetChange(before, after)) return true;
-        var beforeFocus = before.FirstOrDefault(x => x.Focused);
-        var afterFocus = after.FirstOrDefault(x => x.Focused);
-        if (beforeFocus is not null && afterFocus is not null && !StableKey(beforeFocus).Equals(StableKey(afterFocus), StringComparison.Ordinal)) return true;
+        if (allowFocusOnly)
+        {
+            var beforeFocus = before.FirstOrDefault(x => x.Focused);
+            var afterFocus = after.FirstOrDefault(x => x.Focused);
+            if (beforeFocus is not null && afterFocus is not null && !StableKey(beforeFocus).Equals(StableKey(afterFocus), StringComparison.Ordinal)) return true;
+        }
         return HasLargeContentChange(before, after);
     }
 
@@ -692,7 +741,8 @@ public partial class MainWindow : Window
         _activeRequest = null;
         _originalRequest = null;
         _history.Clear();
-        _planning = false;
+        // Do not force _planning=false here. If an old async planner is still unwinding after
+        // Clear/close, keeping this guard true prevents a new session from overlapping it.
         GuideButton.Content = "案内";
     }
 
