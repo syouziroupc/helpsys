@@ -16,6 +16,8 @@ public sealed class GuidanceSessionController
 {
     private readonly object _gate = new();
     private long _generation;
+    private long _plannerOperationGeneration;
+    private bool _plannerInFlight;
     private GuidanceSessionState _state = GuidanceSessionState.Idle;
 
     public GuidanceSessionState State
@@ -28,13 +30,37 @@ public sealed class GuidanceSessionController
         get { lock (_gate) return _generation; }
     }
 
-    public long BeginOperation(GuidanceSessionState initialState = GuidanceSessionState.Capturing)
+    public bool PlannerInFlight
+    {
+        get { lock (_gate) return _plannerInFlight; }
+    }
+
+    public bool TryBeginOperation(out long generation, GuidanceSessionState initialState = GuidanceSessionState.Capturing)
     {
         lock (_gate)
         {
+            if (_plannerInFlight)
+            {
+                generation = _generation;
+                return false;
+            }
+
             _generation++;
+            generation = _generation;
+            _plannerOperationGeneration = generation;
+            _plannerInFlight = true;
             _state = initialState;
-            return _generation;
+            return true;
+        }
+    }
+
+    public void EndOperation(long operationGeneration)
+    {
+        lock (_gate)
+        {
+            if (!_plannerInFlight || _plannerOperationGeneration != operationGeneration) return;
+            _plannerInFlight = false;
+            _plannerOperationGeneration = 0;
         }
     }
 
