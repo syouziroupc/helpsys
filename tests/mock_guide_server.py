@@ -13,6 +13,8 @@ def field(obj, name, default=None):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, _format, *_args):
         pass
 
@@ -24,6 +26,30 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_body(self):
+        transfer_encoding = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in transfer_encoding:
+            chunks = []
+            while True:
+                size_line = self.rfile.readline().strip()
+                if not size_line:
+                    continue
+                size = int(size_line.split(b";", 1)[0], 16)
+                if size == 0:
+                    while True:
+                        trailer = self.rfile.readline()
+                        if trailer in (b"\r\n", b"\n", b""):
+                            break
+                    break
+                chunks.append(self.rfile.read(size))
+                ending = self.rfile.read(2)
+                if ending != b"\r\n":
+                    raise ValueError("invalid chunk terminator")
+            return b"".join(chunks)
+
+        length = int(self.headers.get("Content-Length", "0"))
+        return self.rfile.read(length) if length > 0 else b""
+
     def do_GET(self):
         if self.path == "/health":
             self._json({"ok": True, "service": "helpsys-smoke-mock"})
@@ -32,8 +58,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            raw = self._read_body()
+            payload = json.loads(raw or b"{}")
         except Exception:
             self._json({"error": "invalid_json"}, 400)
             return
