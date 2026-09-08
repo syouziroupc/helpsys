@@ -46,8 +46,6 @@ public sealed class UiAutomationScanner
             var sameProcessName = !string.IsNullOrWhiteSpace(candidate.ProcessName) &&
                                   item.ProcessName.Equals(candidate.ProcessName, StringComparison.OrdinalIgnoreCase);
 
-            // A restarted application is a new UI state even if the executable name is identical.
-            // Never carry a target identity across a known process-id boundary.
             if (candidate.ProcessId > 0)
             {
                 if (!sameProcessId) continue;
@@ -77,12 +75,7 @@ public sealed class UiAutomationScanner
             var overlapRatio = overlapArea / smallerArea;
             var positionalIdentity = exactClass && distance <= 65 && overlapRatio >= 0.35;
 
-            // AutomationId is often reused by list/template instances. A duplicated id is not
-            // identity unless name or position also corroborates it.
             if (exactAutomationId && automationIdMultiplicity > 1 && !exactName && !positionalIdentity) continue;
-
-            // A process id by itself is never control identity. If neither stable textual id is
-            // available, require strong positional/class corroboration.
             if (!exactAutomationId && !exactName && !positionalIdentity) continue;
 
             var score = 0d;
@@ -122,9 +115,6 @@ public sealed class UiAutomationScanner
 
         int visibleProcessId = 0;
 
-        // Vision describes what is actually visible at a desktop coordinate. Check that physical
-        // coordinate first instead of searching the global UIA tree, which may also expose controls
-        // belonging to obscured background windows at the same location.
         foreach (var point in points)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -153,9 +143,6 @@ public sealed class UiAutomationScanner
             catch (InvalidOperationException) { }
         }
 
-        // Some accessibility providers return a non-interactive child from FromPoint even though
-        // a clickable descendant is represented in the UIA tree. Permit a geometric fallback only
-        // inside the process that was physically visible at the sampled coordinate.
         if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
 
         var candidates = CaptureCandidates(700, cancellationToken)
@@ -227,11 +214,13 @@ public sealed class UiAutomationScanner
 
                     if (isInteractive && interactive.Count < interactivePoolLimit && ShouldKeep(name, automationId, className, rect))
                     {
+                        var actionState = ReadActionState(element, typeName, isPassword);
                         interactive.Add(new UiElementCandidate(
                             $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
                             true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
-                            rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
+                            rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId,
+                            actionState.Value, actionState.ToggleState, actionState.Selected, actionState.ExpandCollapseState));
                     }
                     else if (isContext && context.Count < contextPoolLimit)
                     {
@@ -261,6 +250,53 @@ public sealed class UiAutomationScanner
             .ToArray();
 
         return rankedInteractive.Concat(rankedContext).ToArray();
+    }
+
+    private static ActionState ReadActionState(AutomationElement element, string typeName, bool isPassword)
+    {
+        string? value = null;
+        string? toggleState = null;
+        bool? selected = null;
+        string? expandCollapseState = null;
+
+        try
+        {
+            if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
+            {
+                var raw = valueValue.Current.Value ?? string.Empty;
+                value = Trim(raw, 320);
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if ((typeName.EndsWith("CheckBox", StringComparison.Ordinal) || typeName.EndsWith("RadioButton", StringComparison.Ordinal)) &&
+                element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern) && togglePattern is TogglePattern toggleValue)
+                toggleState = toggleValue.Current.ToggleState.ToString();
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selectionPattern) && selectionPattern is SelectionItemPattern selectionValue)
+                selected = selectionValue.Current.IsSelected;
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expandPattern) && expandPattern is ExpandCollapsePattern expandValue)
+                expandCollapseState = expandValue.Current.ExpandCollapseState.ToString();
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        return new ActionState(value, toggleState, selected, expandCollapseState);
     }
 
     private static double CandidatePriority(UiElementCandidate item)
@@ -382,4 +418,6 @@ public sealed class UiAutomationScanner
         if (rect.Width > 1400 || rect.Height > 900) score -= 15;
         return score;
     }
+
+    private readonly record struct ActionState(string? Value, string? ToggleState, bool? Selected, string? ExpandCollapseState);
 }
