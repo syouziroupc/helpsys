@@ -18,6 +18,9 @@ jobs:
       - name: Check Worker syntax
         run: node --check worker/index.js
 
+      - name: Test Worker contract
+        run: node worker/selftest.mjs
+
       - name: Restore
         run: dotnet restore HelpSys.sln
 
