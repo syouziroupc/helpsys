@@ -1,6 +1,8 @@
 import base from './start-state-guard.js';
 
 const MAX_REVIEW_ELEMENTS = 420;
+const BROWSER_PROCESS = /^(chrome|msedge|firefox|brave|opera|vivaldi)$/i;
+const ADDRESS_HINT = /(アドレス|address|location|omnibox|url\s*bar|urlbar|web\s*address)/i;
 
 export default {
   async fetch(request, env, ctx) {
@@ -58,6 +60,18 @@ export default {
       return replaceJson(response, rejectedDecision());
     }
 
+    // Older visible-first wrappers used the generic words "search/検索" to identify a browser
+    // address bar. A webpage's own search box can have exactly those labels. Before speech,
+    // require browser Edit controls described as the top/address field to carry a real address-
+    // bar accessibility hint rather than accepting a generic web search field.
+    const proposedInstruction = String(proposed.instruction || '');
+    if (target && BROWSER_PROCESS.test(target.processName) && target.controlType.toLowerCase() === 'edit' &&
+        (action === 'left_click' || action === 'type_text') &&
+        /(画面上部|アドレス|ホームページのアドレス)/.test(proposedInstruction) &&
+        !looksLikeBrowserAddressField(target)) {
+      return replaceJson(response, rejectedDecision());
+    }
+
     return response;
   }
 };
@@ -92,6 +106,9 @@ function compactElement(value) {
   if (!id) return null;
   return {
     id,
+    name: text(value.name, 180),
+    automationId: text(value.automationId, 120),
+    className: text(value.className, 120),
     controlType: text(value.controlType, 70),
     processName: text(value.processName, 70),
     interactable: value.interactable !== false,
@@ -100,6 +117,10 @@ function compactElement(value) {
     focused: value.focused === true,
     password: value.password === true
   };
+}
+
+function looksLikeBrowserAddressField(target) {
+  return ADDRESS_HINT.test(`${target.name} ${target.automationId} ${target.className}`);
 }
 
 function rejectedDecision() {
