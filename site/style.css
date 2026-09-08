@@ -53,7 +53,7 @@ a { color: inherit; }
 }
 .eyebrow { margin: 0 0 14px; color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .16em; }
 h1, h2, h3, p { text-wrap: pretty; }
-h1 { margin: 0; font-size: clamp(44px, 6vw, 76px); line-height: 1.08; letter-spacing: -.055em; }
+h1 { margin: 0; font-size: clamp(44px, 5vw, 64px); line-height: 1.08; letter-spacing: -.055em; }
 h1 span { color: var(--accent-2); }
 .lead { max-width: 680px; margin: 28px 0 0; color: var(--muted); font-size: 18px; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 34px; }
