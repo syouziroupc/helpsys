@@ -8,6 +8,11 @@ namespace HelpSys.Services;
 public sealed class CloudGuideService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
+    };
+
     private readonly HttpClient _http;
     private readonly string _apiBase;
     private readonly string? _apiKey;
@@ -17,20 +22,18 @@ public sealed class CloudGuideService : IDisposable
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-
-        // The guidance session owns the deadline. An independent HttpClient timeout would turn
-        // slow-but-healthy inference into a TaskCanceledException reported as a network failure.
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     }
 
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
+        var relevantElements = SelectRelevantElements(elements, systemContext);
         var body = new
         {
             request,
             history,
             systemContext,
-            elements = elements.Select(x => new
+            elements = relevantElements.Select(x => new
             {
                 id = x.Id,
                 name = x.Name,
@@ -56,9 +59,6 @@ public sealed class CloudGuideService : IDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // HttpClient often surfaces cancellation as TaskCanceledException. Normalize it to
-            // plain OperationCanceledException so the UI's legacy network-error filter cannot
-            // misclassify a deliberate stale-plan cancellation as a failed Internet connection.
             throw new OperationCanceledException(cancellationToken);
         }
     }
@@ -83,6 +83,26 @@ public sealed class CloudGuideService : IDisposable
         {
             throw new OperationCanceledException(cancellationToken);
         }
+    }
+
+    private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
+    {
+        var foregroundName = systemContext.ForegroundProcess ?? string.Empty;
+        var foregroundId = systemContext.ForegroundProcessId;
+
+        // When foreground resolution is unavailable there is no defensible process boundary, so
+        // preserve the old list and let the server-side safeguards decide. Normally, send only the
+        // active application plus Windows shell controls that are genuinely useful for launching or
+        // switching tasks. Background document/page text is neither needed nor desirable context.
+        if (foregroundId <= 0 && string.IsNullOrWhiteSpace(foregroundName)) return elements.Take(420).ToArray();
+
+        return elements
+            .Where(x =>
+                (foregroundId > 0 && x.ProcessId == foregroundId) ||
+                (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
+                ShellProcesses.Contains(x.ProcessName))
+            .Take(420)
+            .ToArray();
     }
 
     private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)
