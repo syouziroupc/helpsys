@@ -32,23 +32,37 @@ jobs:
 
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
-          $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+
+          function Save-DesktopScreenshot([string] $path) {
+            $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+              $bitmap.Save((Join-Path $PWD $path), [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+            }
+          }
+
           try {
-            $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-            $bitmap.Save((Join-Path $PWD 'artifacts/helpsys-smoke.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+            Save-DesktopScreenshot 'artifacts/helpsys-idle.png'
+
+            $shell = New-Object -ComObject WScript.Shell
+            $shell.SendKeys('^%h')
+            Start-Sleep -Seconds 2
+            Save-DesktopScreenshot 'artifacts/helpsys-activated.png'
           }
           finally {
-            $graphics.Dispose()
-            $bitmap.Dispose()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
 
-      - name: Upload smoke screenshot
+      - name: Upload smoke screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: helpsys-windows-smoke
-          path: artifacts/helpsys-smoke.png
+          path: artifacts/*.png
           if-no-files-found: warn
