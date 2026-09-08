@@ -15,6 +15,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Check Worker syntax
         run: |
           node --check worker/index.js
@@ -42,6 +46,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
+          $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
+          Start-Sleep -Seconds 1
+
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
           $process = Start-Process $exe -PassThru
           Start-Sleep -Seconds 4
@@ -64,19 +73,23 @@ jobs:
           }
 
           try {
+            if ($process.HasExited) { throw 'HelpSys exited before the idle smoke screenshot.' }
             Save-DesktopScreenshot 'artifacts/helpsys-idle.png'
 
             $shell = New-Object -ComObject WScript.Shell
             $shell.SendKeys('^%h')
             Start-Sleep -Seconds 2
+            if ($process.HasExited) { throw 'HelpSys exited after activation.' }
             Save-DesktopScreenshot 'artifacts/helpsys-activated.png'
 
             $shell.SendKeys('youtube{ENTER}')
-            Start-Sleep -Seconds 4
+            Start-Sleep -Seconds 5
+            if ($process.HasExited) { throw 'HelpSys exited while producing guidance.' }
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
           }
           finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
 
       - name: Upload smoke screenshots
