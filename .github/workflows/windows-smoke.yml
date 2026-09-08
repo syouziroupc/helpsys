@@ -51,10 +51,13 @@ jobs:
           $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
           Start-Sleep -Seconds 1
 
-          $notepad = Start-Process notepad -PassThru
-          Start-Sleep -Seconds 2
+          # Use a classic WinForms process with deterministic accessible controls. Modern inbox
+          # apps such as Notepad can expose their editor only as a Document on hosted runners,
+          # which is unsuitable for an actionable-target smoke test.
+          $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+          Start-Sleep -Seconds 3
           $shell = New-Object -ComObject WScript.Shell
-          $null = $shell.AppActivate($notepad.Id)
+          $null = $shell.AppActivate($target.Id)
           Start-Sleep -Seconds 1
 
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
@@ -121,11 +124,9 @@ jobs:
             }
 
             $valuePattern = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-            $valuePattern.SetValue('youtube')
+            $valuePattern.SetValue('open the test target')
 
-            # Keep Notepad as the actual foreground application. HelpSys is allowed to be topmost,
-            # but its system-context resolver must reason about the app beneath it.
-            $null = $shell.AppActivate($notepad.Id)
+            $null = $shell.AppActivate($target.Id)
             Start-Sleep -Milliseconds 300
 
             $invokePattern = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
@@ -144,7 +145,7 @@ jobs:
           }
           finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-            if (-not $notepad.HasExited) { Stop-Process -Id $notepad.Id -Force }
+            if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
             if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
 
