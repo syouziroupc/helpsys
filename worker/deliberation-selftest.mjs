@@ -97,7 +97,7 @@ const browserContext = {
 };
 
 // A page's own search box must never be promoted to the browser address bar merely because
-// its accessible name contains "search/検索".
+// its accessible name contains "search/検索". Recover Ctrl+L rather than forcing Vision.
 const pageSearch = await runCase({
   elements: [element('search1', {
     name: 'サイト内を検索', automationId: 'site-search', className: 'search-input',
@@ -111,7 +111,10 @@ const pageSearch = await runCase({
   goal: 'インターネットでページを開きたい',
   systemContext: browserContext
 });
-assert.equal(pageSearch.result.status, 'not_found', 'generic webpage search must be rejected as an address bar');
+assert.equal(pageSearch.result.status, 'target');
+assert.equal(pageSearch.result.action, 'press_key', 'generic webpage search must recover the keyboard address-bar route');
+assert.equal(pageSearch.result.key, 'Ctrl+L');
+assert.equal(pageSearch.result.targetId, null);
 
 const omnibox = await runCase({
   elements: [element('address1', {
