@@ -18,8 +18,6 @@ public partial class MainWindow
         MainWindow_StableLoaded(sender, e);
         if (_v3HandlersAttached) return;
 
-        // The original handlers remain in source for compatibility, but v3 owns live action
-        // verification. Do not let both handlers advance the same step.
         _actionObserver.LeftClick -= OnObservedLeftClick;
         _actionObserver.KeyReleased -= OnObservedKeyReleased;
         _actionObserver.LeftClick += OnObservedLeftClickV3;
@@ -63,9 +61,6 @@ public partial class MainWindow
             else
                 _doubleClickCount++;
             _lastGuidedClickUtc = now;
-
-            // The first press is intentionally silent. Speaking a new sentence here would arrive
-            // after the OS double-click window and distract the user from making the second press.
             if (_doubleClickCount < 2) return;
         }
 
@@ -143,17 +138,17 @@ public partial class MainWindow
                         ClearCurrentGuidanceV3();
                         replan = true;
                     }
-                    else if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-                    {
-                        retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
-                    }
-                    else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-                    {
-                        retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
-                    }
                     else
                     {
-                        retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
+                        _stepBaseline = await _scanner.CaptureCandidatesAsync(420, _sessionCts.Token);
+                        _stepSystemBaseline = _systemContext.Capture();
+
+                        if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
+                            retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
+                        else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
+                            retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
+                        else
+                            retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
                     }
                 }
                 else
@@ -186,8 +181,6 @@ public partial class MainWindow
         finally
         {
             _verifyingAction = false;
-            _v3TrackedDecision = null;
-            _v3TypeActivityObserved = false;
         }
 
         if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
@@ -250,7 +243,6 @@ public partial class MainWindow
             return true;
         }
 
-        // Keyboard-only instructions have no screen target to revalidate.
         return _currentDecision?.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) == true;
     }
 
@@ -266,6 +258,8 @@ public partial class MainWindow
         _guidedBounds = null;
         _doubleClickCount = 0;
         _validatedVisionInstruction = null;
+        _v3TrackedDecision = null;
+        _v3TypeActivityObserved = false;
     }
 
     private async Task<bool> WaitForStableStateTransitionV3Async(
@@ -294,8 +288,6 @@ public partial class MainWindow
                 continue;
             }
 
-            // One animation frame, autocomplete popup, focus bounce or transient dialog must not
-            // complete a step. Confirm that the change still exists in a second independent sample.
             await Task.Delay(strong ? 650 : 400, cancellationToken);
             var second = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
             var secondSystem = _systemContext.Capture();
@@ -412,8 +404,6 @@ public partial class MainWindow
         var needShift = parts.Contains("shift");
         var needWindows = parts.Any(x => x is "windows" or "win");
 
-        // Extra modifiers change the meaning of many keys (Enter vs Ctrl+Enter, for example).
-        // Match the complete chord, not merely a subset of required modifiers.
         if (observation.Control != needCtrl || observation.Alt != needAlt ||
             observation.Shift != needShift || observation.Windows != needWindows) return false;
 
@@ -425,7 +415,7 @@ public partial class MainWindow
     private static bool LooksLikeTextEntry(KeyObservation observation)
     {
         if (observation.Windows || observation.Alt) return false;
-        if (observation.Control) return observation.VirtualKey == 0x56; // Ctrl+V paste
+        if (observation.Control) return observation.VirtualKey == 0x56;
         var key = observation.VirtualKey;
         return key is >= 0x30 and <= 0x5A or >= 0x60 and <= 0x69 or 0x08 or 0x20 or 0x2E ||
                key is >= 0xBA and <= 0xE2;
