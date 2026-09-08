@@ -1,0 +1,67 @@
+name: Publish Windows preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "HelpSys.sln"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore HelpSys.sln
+
+      - name: Publish self-contained Windows build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'publish\win-x64'
+          dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=false `
+            -o $out
+          Copy-Item README.md (Join-Path $out 'README.md')
+          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD 'HelpSys-win-x64.zip') -Force
+
+      - name: Update preview release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'preview-latest'
+          $asset = Join-Path $PWD 'HelpSys-win-x64.zip'
+          $notes = @"
+          HelpSys Windows Preview
+
+          - Windows 10 / 11 (64-bit)
+          - Self-contained build
+          - 操作代行ではなく、画面上で次の操作を案内する開発版です。
+          "@
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+          }
+          else {
+            gh release create $tag $asset --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+          }
