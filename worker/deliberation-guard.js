@@ -1,6 +1,8 @@
 import base from './start-state-guard.js';
 
-const MAX_REVIEW_ELEMENTS = 240;
+const MAX_REVIEW_ELEMENTS = 420;
+const BROWSER_PROCESS = /^(chrome|msedge|firefox|brave|opera|vivaldi)$/i;
+const ADDRESS_HINT = /(アドレス|address|location|omnibox|url\s*bar|urlbar|web\s*address)/i;
 
 export default {
   async fetch(request, env, ctx) {
@@ -13,11 +15,8 @@ export default {
       if (isStructuredGuide) bodyPromise = request.clone().json();
     } catch { }
 
-    // The previous implementation called Workers AI twice: once to plan, then again to
-    // review the same instruction. The Windows client has a finite request budget, so a
-    // healthy network could still be reported as a communication failure when those two
-    // inference latencies accumulated. Keep the careful reasoning, but do it in the one
-    // planner inference instead of adding a second network/inference round.
+    // Do the careful reasoning in the one planner inference rather than adding a second
+    // Workers AI round trip. This avoids latency-induced false communication failures.
     const response = await base.fetch(request, singlePassReasoningEnv(env, isStructuredGuide), ctx);
     if (!isStructuredGuide || !bodyPromise || response.status !== 200) return response;
 
@@ -40,8 +39,6 @@ export default {
     const targetId = String(proposed.targetId || '');
     const target = targetId ? elements.find(x => x.id === targetId) : null;
 
-    // Final review is deliberately deterministic. It adds effectively no latency and
-    // prevents stale/non-operable targets from reaching speech output.
     if (targetId && (!target || !target.interactable || !target.enabled)) {
       return replaceJson(response, rejectedDecision());
     }
@@ -56,6 +53,18 @@ export default {
 
     if (action === 'press_key' && targetId && !target) {
       return replaceJson(response, rejectedDecision());
+    }
+
+    // Older visible-first layers can mistake a webpage's own search Edit for the browser's
+    // address field. If their instruction explicitly describes the top/address field but the
+    // accessibility metadata has no address-bar identity, recover the canonical Ctrl+L route.
+    // This is safer and cheaper than returning not_found and forcing an unnecessary screenshot.
+    const proposedInstruction = String(proposed.instruction || '');
+    if (target && BROWSER_PROCESS.test(target.processName) && target.controlType.toLowerCase() === 'edit' &&
+        (action === 'left_click' || action === 'type_text') &&
+        /(画面上部|アドレス|ホームページのアドレス)/.test(proposedInstruction) &&
+        !looksLikeBrowserAddressField(target)) {
+      return replaceJson(response, browserAddressShortcut());
     }
 
     return response;
@@ -92,6 +101,9 @@ function compactElement(value) {
   if (!id) return null;
   return {
     id,
+    name: text(value.name, 180),
+    automationId: text(value.automationId, 120),
+    className: text(value.className, 120),
     controlType: text(value.controlType, 70),
     processName: text(value.processName, 70),
     interactable: value.interactable !== false,
@@ -99,6 +111,22 @@ function compactElement(value) {
     keyboardFocusable: value.keyboardFocusable === true,
     focused: value.focused === true,
     password: value.password === true
+  };
+}
+
+function looksLikeBrowserAddressField(target) {
+  return ADDRESS_HINT.test(`${target.name} ${target.automationId} ${target.className}`);
+}
+
+function browserAddressShortcut() {
+  return {
+    status: 'target',
+    targetId: null,
+    action: 'press_key',
+    instruction: 'キーボードの「Ctrl」と書かれたキーを押したまま、「L」と書かれたキーを1回押してください。',
+    question: null,
+    key: 'Ctrl+L',
+    confidence: 0.99
   };
 }
 

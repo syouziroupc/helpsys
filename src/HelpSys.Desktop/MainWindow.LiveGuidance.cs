@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using HelpSys.Models;
@@ -18,109 +17,6 @@ public partial class MainWindow
     private string? _validatedVisionInstruction;
     private int _rejectedVisionTargets;
 
-    private void MainWindow_LiveLoaded(object sender, RoutedEventArgs e)
-    {
-        if (_liveWatcherStarted) return;
-        _liveWatcherStarted = true;
-        _liveWatcher.Pulse += LiveWatcher_Pulse;
-        _liveWatcher.Start();
-    }
-
-    private void MainWindow_LiveClosing(object? sender, CancelEventArgs e)
-    {
-        if (!_liveWatcherStarted) return;
-        _liveWatcherStarted = false;
-        _liveWatcher.Pulse -= LiveWatcher_Pulse;
-        _liveWatcher.Dispose();
-        _liveObserveGate.Dispose();
-    }
-
-    private void LiveWatcher_Pulse(object? sender, EventArgs e)
-    {
-        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        _ = Dispatcher.InvokeAsync(ObserveLiveStateAsync);
-    }
-
-    private async Task ObserveLiveStateAsync()
-    {
-        if (_awaitingClarification) EnsureClarificationUi();
-        else HideClarificationUiIfNeeded();
-
-        if (_activeRequest is null)
-        {
-            ResetLiveBaseline();
-            return;
-        }
-
-        if (_liveRestartAfterPlanCancel && !_planning)
-        {
-            RestartSessionTokenAfterStalePlan();
-            _liveReplanPending = true;
-        }
-
-        if (_sessionCts is null || (_sessionCts.IsCancellationRequested && !_liveRestartAfterPlanCancel)) return;
-        if (!await _liveObserveGate.WaitAsync(0)) return;
-
-        try
-        {
-            var token = _sessionCts.IsCancellationRequested ? CancellationToken.None : _sessionCts.Token;
-            IReadOnlyList<UiElementCandidate> nowElements;
-            try { nowElements = await _scanner.CaptureCandidatesAsync(320, token); }
-            catch (OperationCanceledException) { return; }
-            var nowSystem = _systemContext.Capture();
-
-            if (_liveSystem is null || _liveElements.Count == 0)
-            {
-                _liveElements = nowElements;
-                _liveSystem = nowSystem;
-                await ValidateCurrentVisionTargetAsync(token);
-                await TryRunPendingLiveReplanAsync();
-                return;
-            }
-
-            var changed = HasLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
-            _liveElements = nowElements;
-            _liveSystem = nowSystem;
-
-            if (changed)
-            {
-                _rejectedVisionTargets = 0;
-                _validatedVisionInstruction = null;
-
-                // If the instructed action itself is being verified, CompleteCurrentStepAsync owns
-                // the transition. Otherwise any user/app change invalidates the old instruction.
-                if (!_verifyingAction)
-                {
-                    var hadInstruction = _currentDecision is not null || _awaitingClarification;
-                    if (hadInstruction)
-                    {
-                        _history.Add(new GuideHistoryItem(_stepNumber, "screen_changed", "現在の画面", "利用者またはアプリによって画面が変わったため、古い案内を破棄して現在状態から再計画する。"));
-                        if (_history.Count > 12) _history.RemoveAt(0);
-                    }
-
-                    InvalidateCurrentGuidanceForLiveChange();
-                    if (_planning)
-                    {
-                        // The cloud request is based on an obsolete screen. Cancel the linked
-                        // session token, wait for the stale plan to unwind, then create a fresh
-                        // token without losing the user's goal/history.
-                        _liveRestartAfterPlanCancel = true;
-                        try { _sessionCts?.Cancel(); } catch { }
-                    }
-                    _liveReplanPending = true;
-                    SetState("画面が変わりました。今見えている画面から案内を作り直しています…", speak: false);
-                }
-            }
-
-            await ValidateCurrentVisionTargetAsync(token);
-            await TryRunPendingLiveReplanAsync();
-        }
-        finally
-        {
-            _liveObserveGate.Release();
-        }
-    }
-
     private void InvalidateCurrentGuidanceForLiveChange()
     {
         _overlay.Hide();
@@ -132,18 +28,13 @@ public partial class MainWindow
         _stepSystemBaseline = null;
         _doubleClickCount = 0;
         _consecutiveFailures = 0;
-
-        if (_awaitingClarification)
-        {
-            _awaitingClarification = false;
-            _clarificationQuestion = null;
-            HideClarificationUiIfNeeded(force: true);
-        }
+        _clarificationQuestion = null;
+        HideClarificationUiIfNeeded(force: true);
     }
 
     private void RestartSessionTokenAfterStalePlan()
     {
-        if (!_liveRestartAfterPlanCancel || _planning || _activeRequest is null) return;
+        if (!_liveRestartAfterPlanCancel || _sessionState.PlannerInFlight || _activeRequest is null) return;
         var old = _sessionCts;
         _sessionCts = new CancellationTokenSource();
         _liveRestartAfterPlanCancel = false;
@@ -153,34 +44,34 @@ public partial class MainWindow
 
     private async Task TryRunPendingLiveReplanAsync()
     {
-        if (!_liveReplanPending || _planning || _verifyingAction || _awaitingClarification || _activeRequest is null) return;
-        if (_sessionCts is null) return;
-        if (_sessionCts.IsCancellationRequested)
-        {
-            if (_liveRestartAfterPlanCancel) return;
-            return;
-        }
+        if (!_liveReplanPending || _sessionState.PlannerInFlight || _verifyingAction || _awaitingClarification || _activeRequest is null) return;
+        if (_sessionCts is null || _sessionCts.IsCancellationRequested) return;
+
+        await Task.Delay(220, _sessionCts.Token);
+        if (_sessionState.PlannerInFlight || _verifyingAction || _awaitingClarification ||
+            _sessionCts.IsCancellationRequested || _activeRequest is null) return;
 
         _liveReplanPending = false;
-        await Task.Delay(220, _sessionCts.Token);
         await AdvanceGuideAsync();
     }
 
     private async Task ValidateCurrentVisionTargetAsync(CancellationToken cancellationToken)
     {
-        if (_planning || _verifyingAction || _currentDecision is null || _guidedBounds is null) return;
+        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction ||
+            _currentDecision is null || _guidedBounds is null) return;
         if (!string.Equals(_currentDecision.TargetId, "vision-target", StringComparison.Ordinal)) return;
         if (string.Equals(_validatedVisionInstruction, _currentDecision.Instruction, StringComparison.Ordinal)) return;
 
+        var generation = _sessionState.Generation;
         var bounds = _guidedBounds.Value;
-        // The guide overlay is topmost. Hide it before FromPoint-based validation so the
-        // scanner sees the real application underneath rather than HelpSys itself.
         _overlay.Hide();
         await Task.Delay(35, cancellationToken);
 
         Rect? accessible;
         try { accessible = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { return; }
+
+        if (!_sessionState.IsCurrent(generation)) return;
 
         if (accessible is null || accessible.Value.IsEmpty)
         {
@@ -194,11 +85,12 @@ public partial class MainWindow
 
             if (_rejectedVisionTargets >= 2)
             {
-                WaitForClarification("押せる場所を安全に確認できませんでした。今、画面に何が表示されているか短く教えてください。");
+                WaitForClarification("押せる場所を安全に確認できませんでした。今、画面に何が表示されているか短く教えてください。", generation);
                 EnsureClarificationUi();
                 return;
             }
 
+            _sessionState.Invalidate(GuidanceSessionState.Idle);
             _liveReplanPending = true;
             SetState("青い枠の場所が実際には押せる場所ではなかったため、案内を作り直しています…", speak: false);
             return;
@@ -210,46 +102,6 @@ public partial class MainWindow
         _overlay.ShowTarget(snapped, _currentDecision.Instruction);
     }
 
-    private static bool HasLiveStateChanged(
-        IReadOnlyList<UiElementCandidate> beforeElements,
-        SystemContextSnapshot beforeSystem,
-        IReadOnlyList<UiElementCandidate> afterElements,
-        SystemContextSnapshot afterSystem)
-    {
-        if (!beforeSystem.ForegroundProcess.Equals(afterSystem.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
-        if (!beforeSystem.ForegroundTitle.Equals(afterSystem.ForegroundTitle, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(afterSystem.ForegroundTitle)) return true;
-
-        var beforeUrl = beforeSystem.Browser?.Url ?? string.Empty;
-        var afterUrl = afterSystem.Browser?.Url ?? string.Empty;
-        if (!beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) && (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl))) return true;
-
-        var before = RelevantLiveKeys(beforeElements, beforeSystem.ForegroundProcess);
-        var after = RelevantLiveKeys(afterElements, afterSystem.ForegroundProcess);
-        if (before.Count == 0 || after.Count == 0) return before.Count != after.Count;
-        if (Math.Abs(before.Count - after.Count) >= 5) return true;
-
-        var overlap = before.Count(x => after.Contains(x));
-        var similarity = overlap / (double)Math.Max(before.Count, after.Count);
-        if (similarity < 0.78) return true;
-
-        var beforeFocused = beforeElements.FirstOrDefault(x => x.Focused && IsRelevantProcess(x.ProcessName, beforeSystem.ForegroundProcess));
-        var afterFocused = afterElements.FirstOrDefault(x => x.Focused && IsRelevantProcess(x.ProcessName, afterSystem.ForegroundProcess));
-        if (beforeFocused is not null && afterFocused is not null &&
-            !LiveElementKey(beforeFocused).Equals(LiveElementKey(afterFocused), StringComparison.Ordinal)) return true;
-
-        return false;
-    }
-
-    private static HashSet<string> RelevantLiveKeys(IReadOnlyList<UiElementCandidate> elements, string foregroundProcess)
-    {
-        return elements
-            .Where(x => IsRelevantProcess(x.ProcessName, foregroundProcess))
-            .Where(x => x.Interactable || x.ControlType is "Window" or "Pane" or "Document" or "Text")
-            .Select(LiveElementKey)
-            .Take(180)
-            .ToHashSet(StringComparer.Ordinal);
-    }
-
     private static bool IsRelevantProcess(string processName, string foregroundProcess)
     {
         if (processName.Equals(foregroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
@@ -258,15 +110,6 @@ public partial class MainWindow
         if ((foregroundProcess.Contains("SearchHost", StringComparison.OrdinalIgnoreCase) || foregroundProcess.Contains("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase)) &&
             processName.Equals("explorer", StringComparison.OrdinalIgnoreCase)) return true;
         return false;
-    }
-
-    private static string LiveElementKey(UiElementCandidate x)
-    {
-        var bx = (int)Math.Round(x.X / 24d);
-        var by = (int)Math.Round(x.Y / 24d);
-        var bw = (int)Math.Round(x.Width / 24d);
-        var bh = (int)Math.Round(x.Height / 24d);
-        return $"{x.ProcessName}|{x.ControlType}|{x.Name}|{x.AutomationId}|{bx},{by},{bw},{bh}";
     }
 
     private void ResetLiveBaseline()
@@ -356,7 +199,6 @@ public partial class MainWindow
 
         _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", answer, _clarificationQuestion ?? "確認質問"));
         if (_history.Count > 12) _history.RemoveAt(0);
-        _awaitingClarification = false;
         _clarificationQuestion = null;
         HideClarificationUiIfNeeded(force: true);
         try { _actionObserver.Start(); } catch { }

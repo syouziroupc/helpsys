@@ -100,7 +100,7 @@ public sealed class SystemContextService
 
         string? bestValue = null;
         var bestScore = int.MinValue;
-        var bestFocused = false;
+        var addressFieldFocused = false;
 
         try
         {
@@ -125,20 +125,30 @@ public sealed class SystemContextService
                         var automationId = current.AutomationId ?? string.Empty;
                         var className = current.ClassName ?? string.Empty;
                         var hint = $"{name} {automationId} {className}";
-                        var score = 0;
-                        if (ContainsAddressHint(hint)) score += 80;
-                        if (current.HasKeyboardFocus) score += 12;
+
+                        // A generic web-page search field is not a browser address bar. Treating
+                        // every Edit named "search/検索" as an address field caused text typed into
+                        // websites to look like a URL transition and repeatedly invalidate guidance.
+                        if (!ContainsAddressHint(hint))
+                        {
+                            if (depth < 8) EnqueueChildren(walker, element, depth + 1, queue);
+                            continue;
+                        }
+
+                        if (current.HasKeyboardFocus) addressFieldFocused = true;
 
                         string? value = null;
                         if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
                             value = valuePattern.Current.Value;
 
-                        if (LooksLikeLocationValue(value)) score += 70;
-                        if (!string.IsNullOrWhiteSpace(value) && score > bestScore)
+                        if (LooksLikeLocationValue(value))
                         {
-                            bestScore = score;
-                            bestValue = value.Trim();
-                            bestFocused = current.HasKeyboardFocus;
+                            var score = 80 + (current.HasKeyboardFocus ? 12 : 0) + 70;
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestValue = value!.Trim();
+                            }
                         }
                     }
                 }
@@ -160,16 +170,17 @@ public sealed class SystemContextService
             https = uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
         }
 
-        return new BrowserContextSnapshot(processName, title, normalizedUrl, domain, https, bestFocused);
+        return new BrowserContextSnapshot(processName, title, normalizedUrl, domain, https, addressFieldFocused);
     }
 
     private static bool ContainsAddressHint(string value) =>
         value.Contains("address", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("location", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("アドレス", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("検索", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("search", StringComparison.OrdinalIgnoreCase);
+        value.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("url bar", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("web address", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("アドレス", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeLocationValue(string? value)
     {

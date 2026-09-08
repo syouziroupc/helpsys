@@ -11,8 +11,8 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        Loaded="MainWindow_StableLoaded"
-        Closing="MainWindow_StableClosing">
+        Loaded="MainWindow_ReliabilityV3Loaded"
+        Closing="MainWindow_ReliabilityV3Closing">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
@@ -54,7 +54,7 @@
                  PreviewKeyDown="RequestBox_PreviewKeyDown_Extended"
                  ToolTip="例: YouTubeを見たい" />
         <Button Grid.Column="1" x:Name="VoiceButton" Content="音声" Margin="0,0,6,0" Height="38" Click="VoiceButton_Click" ToolTip="マイクで入力" />
-        <Button Grid.Column="2" x:Name="SpeakButton" Content="読み上げ" Margin="0,0,6,0" Height="38" Click="SpeakButton_Click" ToolTip="今の案内をもう一度読み上げる" />
+        <Button Grid.Column="2" x:Name="SpeakButton" Content="読み上げ" Margin="0,0,6,0" Height="38" Click="SpeakButton_Click_V3" ToolTip="今の案内をもう一度読み上げる" />
         <Button Grid.Column="3" x:Name="ClearButton" Content="消す" Margin="0,0,6,0" Height="38" Click="ClearButton_Click" ToolTip="現在の案内を消す" />
         <Button Grid.Column="4" x:Name="GuideButton" Content="案内" Height="38" FontWeight="SemiBold"
                 PreviewMouseLeftButtonDown="GuideButton_PreviewMouseLeftButtonDown_Extended"

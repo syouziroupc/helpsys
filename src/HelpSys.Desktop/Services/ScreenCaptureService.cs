@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -17,16 +18,26 @@ public sealed class ScreenCaptureService
     private const uint Srccopy = 0x00CC0020;
     private const uint CaptureBlt = 0x40000000;
     private const uint Blackness = 0x00000042;
+    private const uint GwHwndNext = 2;
+    private const uint MonitorDefaultToNearest = 0x00000002;
     private const int MaxImageWidth = 1280;
     private const int MaxImageHeight = 720;
+    private readonly int _selfProcessId = Environment.ProcessId;
 
-    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions)
+    public Task<ScreenCaptureFrame> CaptureAsync(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken = default)
+        => Task.Run(() => Capture(redactions, cancellationToken), cancellationToken);
+
+    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions) => Capture(redactions, CancellationToken.None);
+
+    private ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken)
     {
-        var screenX = GetSystemMetrics(SmXVirtualScreen);
-        var screenY = GetSystemMetrics(SmYVirtualScreen);
-        var screenWidth = GetSystemMetrics(SmCxVirtualScreen);
-        var screenHeight = GetSystemMetrics(SmCyVirtualScreen);
-        if (screenWidth <= 0 || screenHeight <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
+        // Scan independently before pixels are copied and again immediately afterwards.
+        var passwordRedactionsBefore = CapturePasswordBounds(cancellationToken);
+        var captureArea = ResolveCaptureArea();
+        if (captureArea.Width <= 0 || captureArea.Height <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
 
         var desktopDc = GetDC(IntPtr.Zero);
         if (desktopDc == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャーを開始できませんでした。");
@@ -38,15 +49,27 @@ public sealed class ScreenCaptureService
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             memoryDc = CreateCompatibleDC(desktopDc);
-            bitmap = CreateCompatibleBitmap(desktopDc, screenWidth, screenHeight);
+            bitmap = CreateCompatibleBitmap(desktopDc, captureArea.Width, captureArea.Height);
             if (memoryDc == IntPtr.Zero || bitmap == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャー用バッファーを作成できませんでした。");
 
             previous = SelectObject(memoryDc, bitmap);
-            if (!BitBlt(memoryDc, 0, 0, screenWidth, screenHeight, desktopDc, screenX, screenY, Srccopy | CaptureBlt))
+            if (!BitBlt(memoryDc, 0, 0, captureArea.Width, captureArea.Height, desktopDc, captureArea.X, captureArea.Y, Srccopy | CaptureBlt))
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
-            foreach (var rect in redactions) Redact(memoryDc, rect, screenX, screenY, screenWidth, screenHeight);
+            cancellationToken.ThrowIfCancellationRequested();
+            var passwordRedactionsAfter = CapturePasswordBounds(cancellationToken);
+            var allRedactions = redactions
+                .Concat(passwordRedactionsBefore)
+                .Concat(passwordRedactionsAfter)
+                .ToArray();
+
+            foreach (var rect in allRedactions)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RedactOrThrow(memoryDc, rect, captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height);
+            }
 
             source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
             source.Freeze();
@@ -59,14 +82,101 @@ public sealed class ScreenCaptureService
             ReleaseDC(IntPtr.Zero, desktopDc);
         }
 
-        var output = ScaleToLimit(source!);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (source is null) throw new InvalidOperationException("安全な画面画像を作成できませんでした。");
+        var output = ScaleToLimit(source);
         using var stream = new MemoryStream();
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(output));
         encoder.Save(stream);
         var dataUri = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
 
-        return new ScreenCaptureFrame(dataUri, screenX, screenY, screenWidth, screenHeight, output.PixelWidth, output.PixelHeight);
+        return new ScreenCaptureFrame(dataUri, captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height, output.PixelWidth, output.PixelHeight);
+    }
+
+    private CaptureArea ResolveCaptureArea()
+    {
+        // HelpSys itself is topmost while the user asks for guidance. Walk behind it to the first
+        // normal visible application and capture only that monitor. This avoids transmitting an
+        // unrelated second monitor and preserves more pixels for the screen the user is operating.
+        var hwnd = GetForegroundWindow();
+        if (BelongsToSelf(hwnd))
+        {
+            var cursor = hwnd;
+            for (var i = 0; i < 96; i++)
+            {
+                cursor = GetWindow(cursor, GwHwndNext);
+                if (cursor == IntPtr.Zero) break;
+                if (!IsWindowVisible(cursor) || IsIconic(cursor) || BelongsToSelf(cursor)) continue;
+                if (!GetWindowRect(cursor, out var rect)) continue;
+                if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) continue;
+                hwnd = cursor;
+                break;
+            }
+        }
+
+        IntPtr monitor = IntPtr.Zero;
+        if (hwnd != IntPtr.Zero && !BelongsToSelf(hwnd)) monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero && GetCursorPos(out var cursorPoint)) monitor = MonitorFromPoint(cursorPoint, MonitorDefaultToNearest);
+
+        if (monitor != IntPtr.Zero)
+        {
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfo(monitor, ref info))
+            {
+                var width = info.Monitor.Right - info.Monitor.Left;
+                var height = info.Monitor.Bottom - info.Monitor.Top;
+                if (width > 0 && height > 0) return new CaptureArea(info.Monitor.Left, info.Monitor.Top, width, height);
+            }
+        }
+
+        return new CaptureArea(
+            GetSystemMetrics(SmXVirtualScreen),
+            GetSystemMetrics(SmYVirtualScreen),
+            GetSystemMetrics(SmCxVirtualScreen),
+            GetSystemMetrics(SmCyVirtualScreen));
+    }
+
+    private bool BelongsToSelf(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out var pid);
+        return unchecked((int)pid) == _selfProcessId;
+    }
+
+    private IReadOnlyList<Rect> CapturePasswordBounds(CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var condition = new PropertyCondition(AutomationElement.IsPasswordProperty, true);
+            var fields = AutomationElement.RootElement.FindAll(TreeScope.Descendants, condition);
+            var result = new List<Rect>(fields.Count);
+
+            foreach (AutomationElement field in fields)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var current = field.Current;
+                    if (current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
+                    var bounds = current.BoundingRectangle;
+                    if (!bounds.IsEmpty && bounds.Width >= 1 && bounds.Height >= 1) result.Add(bounds);
+                }
+                catch (ElementNotAvailableException) { }
+                catch (InvalidOperationException) { }
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("パスワード欄を安全に確認できないため、画面画像は送信しません。", ex);
+        }
     }
 
     private static BitmapSource ScaleToLimit(BitmapSource source)
@@ -79,15 +189,36 @@ public sealed class ScreenCaptureService
         return resized;
     }
 
-    private static void Redact(IntPtr dc, Rect rect, int screenX, int screenY, int screenWidth, int screenHeight)
+    private static void RedactOrThrow(IntPtr dc, Rect rect, int screenX, int screenY, int screenWidth, int screenHeight)
     {
         if (rect.IsEmpty) return;
-        var left = Math.Clamp((int)Math.Floor(rect.Left - screenX), 0, screenWidth);
-        var top = Math.Clamp((int)Math.Floor(rect.Top - screenY), 0, screenHeight);
-        var right = Math.Clamp((int)Math.Ceiling(rect.Right - screenX), 0, screenWidth);
-        var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom - screenY), 0, screenHeight);
+
+        const int guard = 4;
+        var left = Math.Clamp((int)Math.Floor(rect.Left - screenX) - guard, 0, screenWidth);
+        var top = Math.Clamp((int)Math.Floor(rect.Top - screenY) - guard, 0, screenHeight);
+        var right = Math.Clamp((int)Math.Ceiling(rect.Right - screenX) + guard, 0, screenWidth);
+        var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom - screenY) + guard, 0, screenHeight);
         if (right <= left || bottom <= top) return;
-        PatBlt(dc, left, top, right - left, bottom - top, Blackness);
+
+        if (!PatBlt(dc, left, top, right - left, bottom - top, Blackness))
+            throw new InvalidOperationException("パスワード欄を安全に黒塗りできないため、画面画像は送信しません。");
+    }
+
+    private readonly record struct CaptureArea(int X, int Y, int Width, int Height);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointNative { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RectNative { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public RectNative Monitor;
+        public RectNative Work;
+        public uint Flags;
     }
 
     [DllImport("user32.dll")]
@@ -98,6 +229,41 @@ public sealed class ScreenCaptureService
 
     [DllImport("user32.dll")]
     private static extern int ReleaseDC(IntPtr window, IntPtr dc);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RectNative rect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out PointNative point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(PointNative point, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
 
     [DllImport("gdi32.dll", SetLastError = true)]
     private static extern IntPtr CreateCompatibleDC(IntPtr dc);

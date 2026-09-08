@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using HelpSys.Models;
+using HelpSys.Services;
 
 namespace HelpSys;
 
@@ -24,13 +25,21 @@ public partial class MainWindow
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
         _liveWatcher.Dispose();
-        _liveObserveGate.Dispose();
     }
 
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        _ = Dispatcher.InvokeAsync(ObserveStableLiveStateAsync);
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            try { await ObserveStableLiveStateAsync(); }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (Exception)
+            {
+                ClearStableLiveChangeCandidate();
+            }
+        }));
     }
 
     private async Task ObserveStableLiveStateAsync()
@@ -48,10 +57,11 @@ public partial class MainWindow
         {
             ResetLiveBaseline();
             ClearStableLiveChangeCandidate();
+            _ = _liveWatcher.SetForegroundProcessAsync(0);
             return;
         }
 
-        if (_liveRestartAfterPlanCancel && !_planning)
+        if (_liveRestartAfterPlanCancel && !_sessionState.PlannerInFlight)
         {
             RestartSessionTokenAfterStalePlan();
             _liveReplanPending = true;
@@ -67,6 +77,7 @@ public partial class MainWindow
             try { nowElements = await _scanner.CaptureCandidatesAsync(320, token); }
             catch (OperationCanceledException) { return; }
             var nowSystem = _systemContext.Capture();
+            await _liveWatcher.SetForegroundProcessAsync(nowSystem.ForegroundProcessId, token);
 
             if (_liveSystem is null || _liveElements.Count == 0)
             {
@@ -78,10 +89,9 @@ public partial class MainWindow
                 return;
             }
 
-            // A type_text step is intentionally noisy: every character can mutate the UIA tree,
-            // search suggestions and accessibility values. The step is completed by its finishing
-            // key (normally Enter), so character-by-character UI changes must never invalidate it.
-            if (!_verifyingAction && _currentDecision is not null &&
+            var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
+
+            if (!hardChange && !_verifyingAction && _currentDecision is not null &&
                 _currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
             {
                 _liveElements = nowElements;
@@ -91,7 +101,6 @@ public partial class MainWindow
                 return;
             }
 
-            var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
             var topologyChange = HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
             if (!hardChange && !topologyChange)
@@ -104,9 +113,6 @@ public partial class MainWindow
                 return;
             }
 
-            // App/process or browser navigation is a strong state boundary. UI-tree-only changes
-            // are deliberately required to persist across multiple observations before we revoke
-            // an instruction. This filters typing, animations, suggestions and transient popups.
             if (!hardChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
@@ -132,8 +138,12 @@ public partial class MainWindow
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
+                var plannerWasInFlight = _sessionState.PlannerInFlight;
+                _sessionState.Invalidate(GuidanceSessionState.Idle);
+                _speechOutput.Stop();
                 InvalidateCurrentGuidanceForLiveChange();
-                if (_planning)
+
+                if (plannerWasInFlight)
                 {
                     _liveRestartAfterPlanCancel = true;
                     try { _sessionCts?.Cancel(); } catch { }

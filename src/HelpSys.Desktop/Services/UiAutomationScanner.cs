@@ -29,6 +29,15 @@ public sealed class UiAutomationScanner
         var oldCenterX = candidate.X + candidate.Width / 2d;
         var oldCenterY = candidate.Y + candidate.Height / 2d;
 
+        var automationIdMultiplicity = string.IsNullOrWhiteSpace(candidate.AutomationId)
+            ? 0
+            : current.Count(x =>
+                x.ControlType.Equals(candidate.ControlType, StringComparison.OrdinalIgnoreCase) &&
+                x.AutomationId.Equals(candidate.AutomationId, StringComparison.Ordinal) &&
+                (candidate.ProcessId > 0
+                    ? x.ProcessId == candidate.ProcessId
+                    : x.ProcessName.Equals(candidate.ProcessName, StringComparison.OrdinalIgnoreCase)));
+
         foreach (var item in current)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -36,7 +45,15 @@ public sealed class UiAutomationScanner
             var sameProcessId = candidate.ProcessId > 0 && item.ProcessId == candidate.ProcessId;
             var sameProcessName = !string.IsNullOrWhiteSpace(candidate.ProcessName) &&
                                   item.ProcessName.Equals(candidate.ProcessName, StringComparison.OrdinalIgnoreCase);
-            if (candidate.ProcessId > 0 && !sameProcessId && !sameProcessName) continue;
+
+            if (candidate.ProcessId > 0)
+            {
+                if (!sameProcessId) continue;
+            }
+            else if (!string.IsNullOrWhiteSpace(candidate.ProcessName) && !sameProcessName)
+            {
+                continue;
+            }
 
             var sameType = item.ControlType.Equals(candidate.ControlType, StringComparison.OrdinalIgnoreCase);
             if (!sameType) continue;
@@ -56,25 +73,20 @@ public sealed class UiAutomationScanner
             var overlapArea = overlap.IsEmpty ? 0d : overlap.Width * overlap.Height;
             var smallerArea = Math.Max(1d, Math.Min(oldRect.Width * oldRect.Height, item.Width * item.Height));
             var overlapRatio = overlapArea / smallerArea;
+            var positionalIdentity = exactClass && distance <= 65 && overlapRatio >= 0.35;
 
-            // A process id by itself is never identity. This was the source of false blue boxes:
-            // after a control disappeared, any unrelated control in the same Chrome/Explorer process
-            // could previously clear the revalidation threshold.
-            if (!exactAutomationId && !exactName)
-            {
-                var positionalIdentity = sameProcessName && exactClass && distance <= 65 && overlapRatio >= 0.35;
-                if (!positionalIdentity) continue;
-            }
+            if (exactAutomationId && automationIdMultiplicity > 1 && !exactName && !positionalIdentity) continue;
+            if (!exactAutomationId && !exactName && !positionalIdentity) continue;
 
             var score = 0d;
-            if (sameProcessId) score += 25;
+            if (sameProcessId) score += 35;
             else if (sameProcessName) score += 15;
-            if (exactAutomationId) score += 190;
+            if (exactAutomationId) score += automationIdMultiplicity > 1 ? 95 : 190;
             if (exactName) score += 145;
             if (exactClass) score += 35;
-            score += 45; // same control type, already required above
+            score += 45;
             score += Math.Min(90, overlapRatio * 90);
-            score -= Math.Min(100, distance / 7d);
+            score -= Math.Min(120, distance / 7d);
 
             if (score > bestScore)
             {
@@ -91,59 +103,30 @@ public sealed class UiAutomationScanner
         cancellationToken.ThrowIfCancellationRequested();
         if (approximateBounds.IsEmpty) return null;
 
-        // First reconcile a visual rectangle against the current accessible controls. This is
-        // safer than accepting raw vision coordinates and more robust than checking only one pixel.
-        var candidates = CaptureCandidates(700, cancellationToken).Where(x => x.Interactable && !x.Bounds.IsEmpty).ToArray();
-        var approximateCenter = new Point(approximateBounds.Left + approximateBounds.Width / 2d, approximateBounds.Top + approximateBounds.Height / 2d);
-        UiElementCandidate? best = null;
-        var bestScore = double.NegativeInfinity;
-
-        foreach (var item in candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var rect = item.Bounds;
-            var intersection = approximateBounds.IntersectsWith(rect) ? Rect.Intersect(approximateBounds, rect) : Rect.Empty;
-            var intersectionArea = intersection.IsEmpty ? 0d : intersection.Width * intersection.Height;
-            var smallerArea = Math.Max(1d, Math.Min(approximateBounds.Width * approximateBounds.Height, rect.Width * rect.Height));
-            var overlapRatio = intersectionArea / smallerArea;
-            var center = new Point(rect.Left + rect.Width / 2d, rect.Top + rect.Height / 2d);
-            var distance = Math.Sqrt(Math.Pow(center.X - approximateCenter.X, 2) + Math.Pow(center.Y - approximateCenter.Y, 2));
-
-            if (overlapRatio < 0.10 && distance > Math.Max(55, Math.Min(approximateBounds.Width, approximateBounds.Height) * 0.9)) continue;
-
-            var score = overlapRatio * 180d - Math.Min(120, distance / 4d);
-            if (rect.Contains(approximateCenter)) score += 75;
-            if (item.ControlType is "Button" or "ListItem" or "MenuItem" or "Hyperlink" or "TabItem") score += 20;
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = item;
-            }
-        }
-
-        if (best is not null && bestScore >= 25) return best.Bounds;
-
-        // Fallback to UIA hit testing at several points. Do not return the raw visual rectangle if
-        // no real accessible control can be confirmed.
+        var center = new Point(approximateBounds.Left + approximateBounds.Width / 2d, approximateBounds.Top + approximateBounds.Height / 2d);
         var points = new[]
         {
-            approximateCenter,
+            center,
             new Point(approximateBounds.Left + approximateBounds.Width * 0.25, approximateBounds.Top + approximateBounds.Height * 0.5),
             new Point(approximateBounds.Left + approximateBounds.Width * 0.75, approximateBounds.Top + approximateBounds.Height * 0.5),
             new Point(approximateBounds.Left + approximateBounds.Width * 0.5, approximateBounds.Top + approximateBounds.Height * 0.25),
             new Point(approximateBounds.Left + approximateBounds.Width * 0.5, approximateBounds.Top + approximateBounds.Height * 0.75)
         };
 
+        int visibleProcessId = 0;
+
         foreach (var point in points)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var element = AutomationElement.FromPoint(point);
                 var walker = TreeWalker.ControlViewWalker;
-                for (var i = 0; element is not null && i < 7; i++)
+                for (var i = 0; element is not null && i < 8; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var current = element.Current;
+                    if (visibleProcessId == 0 && current.ProcessId != _selfProcessId) visibleProcessId = current.ProcessId;
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                     var rect = current.BoundingRectangle;
                     if (current.ProcessId != _selfProcessId && current.IsEnabled && !current.IsOffscreen && IsInteractiveType(typeName) &&
@@ -160,7 +143,38 @@ public sealed class UiAutomationScanner
             catch (InvalidOperationException) { }
         }
 
-        return null;
+        if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
+
+        var candidates = CaptureCandidates(700, cancellationToken)
+            .Where(x => x.Interactable && !x.Bounds.IsEmpty && x.ProcessId == visibleProcessId)
+            .ToArray();
+        UiElementCandidate? best = null;
+        var bestScore = double.NegativeInfinity;
+
+        foreach (var item in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rect = item.Bounds;
+            var intersection = approximateBounds.IntersectsWith(rect) ? Rect.Intersect(approximateBounds, rect) : Rect.Empty;
+            var intersectionArea = intersection.IsEmpty ? 0d : intersection.Width * intersection.Height;
+            var smallerArea = Math.Max(1d, Math.Min(approximateBounds.Width * approximateBounds.Height, rect.Width * rect.Height));
+            var overlapRatio = intersectionArea / smallerArea;
+            var itemCenter = new Point(rect.Left + rect.Width / 2d, rect.Top + rect.Height / 2d);
+            var distance = Math.Sqrt(Math.Pow(itemCenter.X - center.X, 2) + Math.Pow(itemCenter.Y - center.Y, 2));
+
+            if (overlapRatio < 0.10 && distance > Math.Max(55, Math.Min(approximateBounds.Width, approximateBounds.Height) * 0.9)) continue;
+
+            var score = overlapRatio * 180d - Math.Min(120, distance / 4d);
+            if (rect.Contains(center)) score += 75;
+            if (item.ControlType is "Button" or "ListItem" or "MenuItem" or "Hyperlink" or "TabItem") score += 20;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = item;
+            }
+        }
+
+        return best is not null && bestScore >= 25 ? best.Bounds : null;
     }
 
     private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken)
@@ -170,9 +184,6 @@ public sealed class UiAutomationScanner
         var queue = new Queue<(AutomationElement Element, int Depth)>();
         EnqueueChildren(walker, root, 0, queue);
 
-        // Do not stop collecting as soon as the global list reaches maxCandidates. Start/Search
-        // controls often appear later in the desktop UIA tree; truncating early made HelpSys miss
-        // the menu that had just opened and tell the user to press Windows again.
         var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
         var contextPoolLimit = Math.Max(180, maxCandidates / 2);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);
@@ -203,11 +214,13 @@ public sealed class UiAutomationScanner
 
                     if (isInteractive && interactive.Count < interactivePoolLimit && ShouldKeep(name, automationId, className, rect))
                     {
+                        var actionState = ReadActionState(element, typeName, isPassword);
                         interactive.Add(new UiElementCandidate(
                             $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
                             true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
-                            rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
+                            rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId,
+                            actionState.Value, actionState.ToggleState, actionState.Selected, actionState.ExpandCollapseState));
                     }
                     else if (isContext && context.Count < contextPoolLimit)
                     {
@@ -237,6 +250,53 @@ public sealed class UiAutomationScanner
             .ToArray();
 
         return rankedInteractive.Concat(rankedContext).ToArray();
+    }
+
+    private static ActionState ReadActionState(AutomationElement element, string typeName, bool isPassword)
+    {
+        string? value = null;
+        string? toggleState = null;
+        bool? selected = null;
+        string? expandCollapseState = null;
+
+        try
+        {
+            if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
+                element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
+            {
+                var raw = valueValue.Current.Value ?? string.Empty;
+                value = Trim(raw, 320);
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if ((typeName.EndsWith("CheckBox", StringComparison.Ordinal) || typeName.EndsWith("RadioButton", StringComparison.Ordinal)) &&
+                element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern) && togglePattern is TogglePattern toggleValue)
+                toggleState = toggleValue.Current.ToggleState.ToString();
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selectionPattern) && selectionPattern is SelectionItemPattern selectionValue)
+                selected = selectionValue.Current.IsSelected;
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        try
+        {
+            if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expandPattern) && expandPattern is ExpandCollapsePattern expandValue)
+                expandCollapseState = expandValue.Current.ExpandCollapseState.ToString();
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        return new ActionState(value, toggleState, selected, expandCollapseState);
     }
 
     private static double CandidatePriority(UiElementCandidate item)
@@ -278,7 +338,7 @@ public sealed class UiAutomationScanner
             {
                 var current = element.Current;
                 var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
-                if (current.ProcessId != _selfProcessId && !current.IsOffscreen && IsInteractiveType(typeName))
+                if (current.ProcessId != _selfProcessId && current.IsEnabled && !current.IsOffscreen && IsInteractiveType(typeName))
                 {
                     var rect = current.BoundingRectangle;
                     if (!rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
@@ -336,6 +396,7 @@ public sealed class UiAutomationScanner
             while (child is not null) { queue.Enqueue((child, depth)); child = walker.GetNextSibling(child); }
         }
         catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
     }
 
     private static double Score(string? name, string? automationId, string? className, string controlType, Rect rect, IReadOnlyList<string> hints)
@@ -357,4 +418,6 @@ public sealed class UiAutomationScanner
         if (rect.Width > 1400 || rect.Height > 900) score -= 15;
         return score;
     }
+
+    private readonly record struct ActionState(string? Value, string? ToggleState, bool? Selected, string? ExpandCollapseState);
 }
