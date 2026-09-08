@@ -12,6 +12,8 @@ public sealed record UiElementCandidate(
     string ProcessName,
     bool Enabled,
     bool KeyboardFocusable,
+    bool Focused,
+    bool Password,
     double X,
     double Y,
     double Width,

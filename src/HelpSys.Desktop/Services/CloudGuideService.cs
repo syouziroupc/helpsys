@@ -22,6 +22,7 @@ public sealed class CloudGuideService : IDisposable
     public async Task<GuideDecision> PlanAsync(
         string request,
         IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
         CancellationToken cancellationToken = default)
     {
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{_apiBase}/v1/guide")
@@ -29,6 +30,7 @@ public sealed class CloudGuideService : IDisposable
             Content = JsonContent.Create(new
             {
                 request,
+                history,
                 elements = elements.Select(x => new
                 {
                     id = x.Id,
@@ -38,28 +40,23 @@ public sealed class CloudGuideService : IDisposable
                     controlType = x.ControlType,
                     processName = x.ProcessName,
                     enabled = x.Enabled,
-                    keyboardFocusable = x.KeyboardFocusable
+                    keyboardFocusable = x.KeyboardFocusable,
+                    focused = x.Focused,
+                    password = x.Password
                 })
             })
         };
 
-        if (!string.IsNullOrWhiteSpace(_apiKey))
-            message.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
+        if (!string.IsNullOrWhiteSpace(_apiKey)) message.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
 
         using var response = await _http.SendAsync(message, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"HelpSys API {((int)response.StatusCode)}: {Short(body)}");
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"HelpSys API {((int)response.StatusCode)}: {Short(body)}");
 
-        var decision = JsonSerializer.Deserialize<GuideDecision>(body, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
-
+        var decision = JsonSerializer.Deserialize<GuideDecision>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         return decision ?? throw new InvalidOperationException("HelpSys APIの応答を解析できませんでした。");
     }
 
     private static string Short(string value) => value.Length <= 180 ? value : value[..180];
-
     public void Dispose() => _http.Dispose();
 }
