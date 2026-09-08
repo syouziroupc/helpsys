@@ -19,7 +19,11 @@ public sealed record UiElementCandidate(
     double Y,
     double Width,
     double Height,
-    int ProcessId)
+    int ProcessId,
+    string? Value = null,
+    string? ToggleState = null,
+    bool? Selected = null,
+    string? ExpandCollapseState = null)
 {
     [JsonIgnore]
     public Rect Bounds => new(X, Y, Width, Height);
