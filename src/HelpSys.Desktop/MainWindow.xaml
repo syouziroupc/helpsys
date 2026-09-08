@@ -9,7 +9,7 @@
         Topmost="True"
         Background="Transparent"
         AllowsTransparency="True">
-  <Border Margin="6" CornerRadius="14" Background="#F7FFFFFF" BorderBrush="#33000000" BorderThickness="1" Padding="8">
+  <Border Margin="6" CornerRadius="14" Background="#FFFFFFFF" BorderBrush="#33000000" BorderThickness="1" Padding="8">
     <Grid>
       <Button x:Name="LauncherButton"
               Content="HelpSys"
