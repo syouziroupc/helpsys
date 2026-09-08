@@ -30,18 +30,22 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/v1/guide":
             elements = payload.get("elements") or []
+            foreground = ((payload.get("systemContext") or {}).get("foregroundProcess") or "").lower()
+
+            eligible = [
+                item
+                for item in elements
+                if item.get("interactable") is not False
+                and item.get("enabled") is not False
+                and float(item.get("width") or 0) >= 8
+                and float(item.get("height") or 0) >= 8
+                and item.get("id")
+            ]
             target = next(
-                (
-                    item
-                    for item in elements
-                    if item.get("interactable") is not False
-                    and item.get("enabled") is not False
-                    and float(item.get("width") or 0) >= 8
-                    and float(item.get("height") or 0) >= 8
-                    and item.get("id")
-                ),
-                None,
+                (item for item in eligible if str(item.get("processName") or "").lower() == foreground),
+                eligible[0] if eligible else None,
             )
+
             if target is None:
                 self._json(
                     {
