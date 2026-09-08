@@ -54,6 +54,10 @@ jobs:
             $shell.SendKeys('^%h')
             Start-Sleep -Seconds 2
             Save-DesktopScreenshot 'artifacts/helpsys-activated.png'
+
+            $shell.SendKeys('youtube{ENTER}')
+            Start-Sleep -Seconds 4
+            Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
           }
           finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
