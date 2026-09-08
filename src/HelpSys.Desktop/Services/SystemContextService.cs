@@ -8,6 +8,9 @@ namespace HelpSys.Services;
 
 public sealed class SystemContextService
 {
+    private const uint GwHwndNext = 2;
+    private readonly int _selfProcessId = Environment.ProcessId;
+
     private static readonly HashSet<string> BrowserProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "chrome", "msedge", "firefox", "brave", "opera", "vivaldi"
@@ -15,7 +18,7 @@ public sealed class SystemContextService
 
     public SystemContextSnapshot Capture()
     {
-        var hwnd = GetForegroundWindow();
+        var hwnd = ResolveEffectiveForegroundWindow();
         var processId = 0;
         var processName = string.Empty;
         var title = string.Empty;
@@ -33,7 +36,7 @@ public sealed class SystemContextService
         }
 
         var running = CaptureRunningWindowProcesses();
-        var taskbarVisible = IsTaskbarVisible();
+        var taskbarVisible = IsTaskbarActuallyVisible();
         var browser = BrowserProcesses.Contains(processName)
             ? TryCaptureBrowser(hwnd, processName, title)
             : null;
@@ -41,7 +44,38 @@ public sealed class SystemContextService
         return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser);
     }
 
-    private static IReadOnlyList<string> CaptureRunningWindowProcesses()
+    private nint ResolveEffectiveForegroundWindow()
+    {
+        var foreground = GetForegroundWindow();
+        if (foreground == nint.Zero) return nint.Zero;
+        if (!BelongsToSelf(foreground)) return foreground;
+
+        // HelpSys is topmost. When its input/button is clicked, GetForegroundWindow returns
+        // HelpSys itself even though the user still needs guidance for the application below it.
+        // Walk down the Z order and use the first visible top-level window that is not HelpSys.
+        var cursor = foreground;
+        for (var i = 0; i < 96; i++)
+        {
+            cursor = GetWindow(cursor, GwHwndNext);
+            if (cursor == nint.Zero) break;
+            if (!IsWindowVisible(cursor) || IsIconic(cursor)) continue;
+            if (BelongsToSelf(cursor)) continue;
+            if (!GetWindowRect(cursor, out var rect)) continue;
+            if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) continue;
+            return cursor;
+        }
+
+        return nint.Zero;
+    }
+
+    private bool BelongsToSelf(nint hwnd)
+    {
+        if (hwnd == nint.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out var pid);
+        return unchecked((int)pid) == _selfProcessId;
+    }
+
+    private IReadOnlyList<string> CaptureRunningWindowProcesses()
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var process in Process.GetProcesses())
@@ -50,6 +84,7 @@ public sealed class SystemContextService
             {
                 try
                 {
+                    if (process.Id == _selfProcessId) continue;
                     if (process.MainWindowHandle != nint.Zero && !string.IsNullOrWhiteSpace(process.ProcessName))
                         names.Add(process.ProcessName);
                 }
@@ -158,12 +193,20 @@ public sealed class SystemContextService
         return $"https://{text}";
     }
 
-    private static bool IsTaskbarVisible()
+    private static bool IsTaskbarActuallyVisible()
     {
-        var primary = FindWindow("Shell_TrayWnd", null);
-        if (primary != nint.Zero && IsWindowVisible(primary)) return true;
-        var secondary = FindWindow("Shell_SecondaryTrayWnd", null);
-        return secondary != nint.Zero && IsWindowVisible(secondary);
+        return TaskbarWindowIsVisible(FindWindow("Shell_TrayWnd", null)) ||
+               TaskbarWindowIsVisible(FindWindow("Shell_SecondaryTrayWnd", null));
+    }
+
+    private static bool TaskbarWindowIsVisible(nint hwnd)
+    {
+        if (hwnd == nint.Zero || !IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var rect)) return false;
+        var width = Math.Max(0, rect.Right - rect.Left);
+        var height = Math.Max(0, rect.Bottom - rect.Top);
+        // Auto-hidden taskbars can leave only a 1-2 px activation strip. Do not describe that
+        // as a visible taskbar to a beginner.
+        return width >= 24 && height >= 24;
     }
 
     private static string ReadWindowText(nint hwnd)
@@ -189,8 +232,20 @@ public sealed class SystemContextService
         catch (ElementNotAvailableException) { }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RectNative
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint hWnd, uint uCmd);
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
@@ -207,4 +262,12 @@ public sealed class SystemContextService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowVisible(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint hWnd, out RectNative rect);
 }
