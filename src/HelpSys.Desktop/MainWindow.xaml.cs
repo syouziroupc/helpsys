@@ -11,7 +11,9 @@ namespace HelpSys;
 public partial class MainWindow : Window
 {
     private const double MinimumTargetConfidence = 0.72;
+    private const double MinimumVisionConfidence = 0.84;
     private readonly UiAutomationScanner _scanner = new();
+    private readonly ScreenCaptureService _screenCapture = new();
     private readonly GuidePlanner _fallbackPlanner = new();
     private readonly CloudGuideService _cloudGuide = new();
     private readonly GlobalHotKeyService _hotKey = new();
@@ -123,7 +125,7 @@ public partial class MainWindow : Window
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(14));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(22));
         var cancellationToken = planningCts.Token;
 
         try
@@ -132,7 +134,7 @@ public partial class MainWindow : Window
             var candidates = await _scanner.CaptureCandidatesAsync(360, cancellationToken);
             if (candidates.Count == 0)
             {
-                StopWithMessage("操作できる画面要素を取得できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("操作対象を特定できませんでした。");
                 return;
             }
 
@@ -162,23 +164,18 @@ public partial class MainWindow : Window
 
             if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumTargetConfidence || string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                StopWithMessage("今の画面では、次の操作を十分な確度で特定できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("今の画面では、次の操作を十分な確度で特定できませんでした。");
                 return;
             }
 
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
             if (target is null || target.Bounds.IsEmpty)
             {
-                StopWithMessage("AIが選んだ対象を現在画面で再確認できませんでした。");
+                if (!await TryVisionFallbackAsync(candidates, cancellationToken)) StopWithMessage("AIが選んだ対象を現在画面で再確認できませんでした。");
                 return;
             }
 
-            _currentDecision = decision;
-            _currentTarget = target;
-            _guidedBounds = target.Bounds;
-            var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? DefaultInstruction(decision.Action) : decision.Instruction;
-            _overlay.ShowTarget(target.Bounds, instruction);
-            StateText.Text = $"手順 {_stepNumber + 1}: {DisplayName(target.Name, target.ControlType)}　確度 {decision.Confidence:P0}";
+            ShowStructuredTarget(decision, target);
         }
         catch (OperationCanceledException)
         {
@@ -195,9 +192,80 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target)
+    {
+        _currentDecision = decision;
+        _currentTarget = target;
+        _guidedBounds = target.Bounds;
+        var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? DefaultInstruction(decision.Action) : decision.Instruction;
+        _overlay.ShowTarget(target.Bounds, instruction);
+        StateText.Text = $"手順 {_stepNumber + 1}: {DisplayName(target.Name, target.ControlType)}　確度 {decision.Confidence:P0}";
+    }
+
+    private async Task<bool> TryVisionFallbackAsync(IReadOnlyList<UiElementCandidate> candidates, CancellationToken cancellationToken)
+    {
+        if (_activeRequest is null) return false;
+        StateText.Text = "構造情報だけでは特定できないため、画面画像を確認しています…";
+        var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
+
+        var previousOpacity = Opacity;
+        ScreenCaptureFrame frame;
+        try
+        {
+            Opacity = 0;
+            await Task.Delay(90, cancellationToken);
+            frame = _screenCapture.Capture(passwordBounds);
+        }
+        finally
+        {
+            Opacity = previousOpacity;
+        }
+
+        VisionGuideDecision decision;
+        try
+        {
+            decision = await _cloudGuide.PlanVisionAsync(_activeRequest, frame, _history, cancellationToken);
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            return false;
+        }
+
+        if (decision.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
+        {
+            StopWithMessage(string.IsNullOrWhiteSpace(decision.Instruction) ? "この作業は完了しています。" : decision.Instruction);
+            return true;
+        }
+
+        if (decision.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
+        {
+            StopWithMessage(decision.Question ?? "どの操作をしたいか、もう少し具体的に教えてください。");
+            return true;
+        }
+
+        if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumVisionConfidence) return false;
+
+        var bounds = frame.MapNormalizedBounds(decision.X, decision.Y, decision.Width, decision.Height);
+        if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
+
+        var instruction = string.IsNullOrWhiteSpace(decision.Instruction) ? "ここを左クリックしてください。" : decision.Instruction;
+        _currentDecision = new GuideDecision("target", "vision-target", "left_click", instruction, null, null, decision.Confidence);
+        _currentTarget = null;
+        _guidedBounds = bounds;
+        _overlay.ShowTarget(bounds, instruction);
+        StateText.Text = $"手順 {_stepNumber + 1}: {decision.Label ?? "画像上の対象"}　画像確度 {decision.Confidence:P0}";
+        return true;
+    }
+
     private async Task RunConservativeFallbackAsync(string request, CancellationToken cancellationToken)
     {
         var plan = _fallbackPlanner.CreateFirstStep(request);
+        if (plan.TargetHints.Count == 0)
+        {
+            StopWithMessage(plan.Instruction);
+            return;
+        }
+
         var target = await _scanner.FindBestTargetAsync(plan.TargetHints, cancellationToken);
         if (target is null || target.Score < 30)
         {
@@ -216,7 +284,6 @@ public partial class MainWindow : Window
     {
         if (_planning || _currentDecision is null || _guidedBounds is null) return;
         if (!_currentDecision.Action.Equals("left_click", StringComparison.OrdinalIgnoreCase)) return;
-
         var bounds = _guidedBounds.Value;
         bounds.Inflate(5, 5);
         if (!bounds.Contains(point)) return;
@@ -241,10 +308,9 @@ public partial class MainWindow : Window
     {
         if (_currentDecision is null || _activeRequest is null) return;
         var decision = _currentDecision;
-        var targetName = _currentTarget is null ? "local target" : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
+        var targetName = _currentTarget is null ? "visual/local target" : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         _history.Add(new GuideHistoryItem(++_stepNumber, decision.Action, targetName, decision.Instruction));
         if (_history.Count > 12) _history.RemoveAt(0);
-
         _currentDecision = null;
         _currentTarget = null;
         _guidedBounds = null;
