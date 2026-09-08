@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check worker/index.js"
+    "check": "node --check worker/index.js",
+    "test": "node worker/selftest.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
