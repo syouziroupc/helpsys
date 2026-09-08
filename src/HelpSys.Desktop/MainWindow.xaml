@@ -11,8 +11,8 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        Loaded="MainWindow_LiveLoaded"
-        Closing="MainWindow_LiveClosing">
+        Loaded="MainWindow_StableLoaded"
+        Closing="MainWindow_StableClosing">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
