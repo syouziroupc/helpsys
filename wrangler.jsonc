@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpsys",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-08",
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "HELPSYS_MODEL": "@cf/google/gemma-4-26b-a4b-it"
+  }
+}
