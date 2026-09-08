@@ -15,6 +15,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private int _queued;
     private long _lastSignalTicks;
     private bool _subscribed;
+    private bool _disposed;
 
     public event EventHandler? Pulse;
 
@@ -26,8 +27,12 @@ public sealed class GuidanceStateWatcher : IDisposable
 
     public void Start()
     {
+        if (_disposed) throw new ObjectDisposedException(nameof(GuidanceStateWatcher));
         if (_cts is not null) return;
+
         _cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _queued, 0);
+        Interlocked.Exchange(ref _lastSignalTicks, 0);
 
         try
         {
@@ -45,9 +50,12 @@ public sealed class GuidanceStateWatcher : IDisposable
 
     private void Signal()
     {
+        if (_disposed) return;
         Interlocked.Exchange(ref _lastSignalTicks, DateTime.UtcNow.Ticks);
         if (Interlocked.Exchange(ref _queued, 1) != 0) return;
-        try { _signal.Release(); } catch (SemaphoreFullException) { }
+        try { _signal.Release(); }
+        catch (SemaphoreFullException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task PumpAsync(CancellationToken cancellationToken)
@@ -56,11 +64,11 @@ public sealed class GuidanceStateWatcher : IDisposable
         {
             try
             {
-                var signalTask = _signal.WaitAsync(cancellationToken);
-                var heartbeatTask = Task.Delay(HeartbeatPeriod, cancellationToken);
-                var completed = await Task.WhenAny(signalTask, heartbeatTask).ConfigureAwait(false);
-
-                if (completed == signalTask)
+                // A single timed WaitAsync avoids leaving an abandoned semaphore waiter behind
+                // every time the heartbeat wins a Task.WhenAny race. Abandoned waiters could
+                // consume later UI signals without clearing _queued and silently break debounce.
+                var signaled = await _signal.WaitAsync(HeartbeatPeriod, cancellationToken).ConfigureAwait(false);
+                if (signaled)
                 {
                     await WaitUntilQuietAsync(cancellationToken).ConfigureAwait(false);
                     Interlocked.Exchange(ref _queued, 0);
@@ -72,9 +80,14 @@ public sealed class GuidanceStateWatcher : IDisposable
             {
                 break;
             }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
             catch
             {
-                await Task.Delay(HeartbeatPeriod, cancellationToken).ConfigureAwait(false);
+                try { await Task.Delay(HeartbeatPeriod, cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
         }
     }
@@ -100,7 +113,9 @@ public sealed class GuidanceStateWatcher : IDisposable
     public void Stop()
     {
         var cts = _cts;
+        var pump = _pumpTask;
         _cts = null;
+        _pumpTask = null;
         if (cts is null) return;
 
         cts.Cancel();
@@ -110,12 +125,25 @@ public sealed class GuidanceStateWatcher : IDisposable
             try { Automation.RemoveStructureChangedEventHandler(AutomationElement.RootElement, _structureHandler); } catch { }
             _subscribed = false;
         }
+
+        // Do not dispose synchronization primitives while PumpAsync can still be inside them.
+        // The pump contains no UI-thread dependency, so joining it here cannot deadlock WPF.
+        if (pump is not null && (!Task.CurrentId.HasValue || pump.Id != Task.CurrentId.Value))
+        {
+            try { pump.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        Interlocked.Exchange(ref _queued, 0);
         cts.Dispose();
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
         Stop();
+        _disposed = true;
         _signal.Dispose();
     }
 }
