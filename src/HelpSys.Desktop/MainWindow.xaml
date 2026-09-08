@@ -2,14 +2,17 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="HelpSys"
-        Width="570" Height="122"
+        Width="620" MinHeight="122"
+        SizeToContent="Height"
         WindowStyle="None"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"
         Background="Transparent"
         AllowsTransparency="True"
-        WindowStartupLocation="Manual">
+        WindowStartupLocation="Manual"
+        Loaded="MainWindow_LiveLoaded"
+        Closing="MainWindow_LiveClosing">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
@@ -18,6 +21,7 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="25" />
         <RowDefinition Height="46" />
+        <RowDefinition Height="Auto" />
         <RowDefinition Height="25" />
       </Grid.RowDefinitions>
 
@@ -47,14 +51,45 @@
                  Padding="11,7"
                  VerticalContentAlignment="Center"
                  KeyDown="RequestBox_KeyDown"
+                 PreviewKeyDown="RequestBox_PreviewKeyDown_Extended"
                  ToolTip="例: YouTubeを見たい" />
         <Button Grid.Column="1" x:Name="VoiceButton" Content="音声" Margin="0,0,6,0" Height="38" Click="VoiceButton_Click" ToolTip="マイクで入力" />
         <Button Grid.Column="2" x:Name="SpeakButton" Content="読み上げ" Margin="0,0,6,0" Height="38" Click="SpeakButton_Click" ToolTip="今の案内をもう一度読み上げる" />
         <Button Grid.Column="3" x:Name="ClearButton" Content="消す" Margin="0,0,6,0" Height="38" Click="ClearButton_Click" ToolTip="現在の案内を消す" />
-        <Button Grid.Column="4" x:Name="GuideButton" Content="案内" Height="38" FontWeight="SemiBold" Click="GuideButton_Click" />
+        <Button Grid.Column="4" x:Name="GuideButton" Content="案内" Height="38" FontWeight="SemiBold"
+                PreviewMouseLeftButtonDown="GuideButton_PreviewMouseLeftButtonDown_Extended"
+                Click="GuideButton_Click" />
       </Grid>
 
-      <DockPanel Grid.Row="2" LastChildFill="True">
+      <Border x:Name="ClarificationPanel" Grid.Row="2" Visibility="Collapsed"
+              Margin="0,4,0,5" Padding="9" CornerRadius="9"
+              Background="#FFF5F8FC" BorderBrush="#FFD8E1ED" BorderThickness="1">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="38" />
+          </Grid.RowDefinitions>
+          <TextBlock x:Name="ClarificationQuestionText" Grid.Row="0"
+                     Margin="2,0,2,7" FontSize="12.5" FontWeight="SemiBold"
+                     Foreground="#FF27364A" TextWrapping="Wrap" />
+          <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="92" />
+              <ColumnDefinition Width="82" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="AnswerBox" Height="34" Margin="0,0,7,0"
+                     FontSize="14" Padding="9,5" VerticalContentAlignment="Center"
+                     KeyDown="AnswerBox_KeyDown_Extended" />
+            <Button x:Name="AnswerVoiceButton" Grid.Column="1" Height="34" Margin="0,0,7,0"
+                    Content="音声で回答" Click="AnswerVoiceButton_Click_Extended" />
+            <Button x:Name="AnswerButton" Grid.Column="2" Height="34" Content="回答する"
+                    FontWeight="SemiBold" Click="AnswerButton_Click_Extended" />
+          </Grid>
+        </Grid>
+      </Border>
+
+      <DockPanel Grid.Row="3" LastChildFill="True">
         <TextBlock DockPanel.Dock="Right" Text="Ctrl+Alt+H" FontSize="10" Foreground="#FF9AA3B2" VerticalAlignment="Center" Margin="10,0,0,0" />
         <TextBlock x:Name="StateText"
                    Text="やりたいことを入力してください。"
