@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -30,7 +31,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/v1/guide":
             elements = payload.get("elements") or []
-            foreground = ((payload.get("systemContext") or {}).get("foregroundProcess") or "").lower()
+            system_context = payload.get("systemContext") or {}
+            foreground = (system_context.get("foregroundProcess") or "").lower()
 
             eligible = [
                 item
@@ -41,10 +43,43 @@ class Handler(BaseHTTPRequestHandler):
                 and float(item.get("height") or 0) >= 8
                 and item.get("id")
             ]
-            target = next(
-                (item for item in eligible if str(item.get("processName") or "").lower() == foreground),
-                eligible[0] if eligible else None,
+
+            diagnostics = {
+                "foreground": foreground,
+                "foregroundProcessId": system_context.get("foregroundProcessId"),
+                "eligible": [
+                    {
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "automationId": item.get("automationId"),
+                        "controlType": item.get("controlType"),
+                        "processName": item.get("processName"),
+                    }
+                    for item in eligible[:80]
+                ],
+            }
+            Path("artifacts").mkdir(exist_ok=True)
+            Path("artifacts/mock-last-request.json").write_text(
+                json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+
+            # The smoke target deliberately exposes this one button. Prefer it so the test covers
+            # structured target selection + local revalidation + overlay presentation instead of
+            # depending on incidental shell controls in the hosted runner.
+            target = next(
+                (
+                    item
+                    for item in eligible
+                    if str(item.get("automationId") or "").lower() == "smokebutton"
+                    or str(item.get("name") or "").lower() == "open test target"
+                ),
+                None,
+            )
+            if target is None:
+                target = next(
+                    (item for item in eligible if str(item.get("processName") or "").lower() == foreground),
+                    eligible[0] if eligible else None,
+                )
 
             if target is None:
                 self._json(
