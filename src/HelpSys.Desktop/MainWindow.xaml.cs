@@ -42,7 +42,7 @@ public partial class MainWindow : Window
     private DateTime _lastGuidedClickUtc = DateTime.MinValue;
     private bool _forceVisionNext;
 
-    private bool _planning => _sessionState.State is GuidanceSessionState.Capturing or GuidanceSessionState.Planning or GuidanceSessionState.Presenting;
+    private bool _planning => _sessionState.PlannerInFlight;
     private bool _verifyingAction => _sessionState.State == GuidanceSessionState.Verifying;
     private bool _awaitingClarification => _sessionState.State == GuidanceSessionState.Clarifying;
 
@@ -193,8 +193,8 @@ public partial class MainWindow : Window
 
     private async Task AdvanceGuideAsync()
     {
-        if (_planning || _activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
-        var generation = _sessionState.BeginOperation(GuidanceSessionState.Capturing);
+        if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
+        if (!_sessionState.TryBeginOperation(out var generation, GuidanceSessionState.Capturing)) return;
         _currentDecision = null;
         _currentTarget = null;
         _stepBaseline = [];
@@ -328,6 +328,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _sessionState.EndOperation(generation);
             GuideButton.IsEnabled = !_planning;
         }
     }
