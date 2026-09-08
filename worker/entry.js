@@ -64,7 +64,7 @@ function beginnerBranchOverride(body) {
   if (guest) {
     return {
       status: 'target', targetId: String(guest.id), action: 'left_click',
-      instruction: '使う人を選ぶ画面です。どの名前を使うかわからない場合は、「ゲストモード」と書かれたところで、マウスの左ボタンを1回押してください。',
+      instruction: 'ご自分の名前が画面にあれば、その名前のところでマウスの左ボタンを1回押してください。どれを使うかわからない場合は、青い枠の「ゲストモード」を1回押してください。',
       question: null, key: null, confidence: 0.99
     };
   }
