@@ -118,8 +118,7 @@ public sealed class ProgressStore
         }
         finally
         {
-            try { if (File.Exists(tempPath)) File.Delete(tempPath); }
-            catch { }
+            TryDelete(tempPath);
         }
     }
 
@@ -134,14 +133,33 @@ public sealed class ProgressStore
         if (TryLoad(_backupPath, out var backup))
         {
             _items = backup;
-            // Restore the valid backup through the same atomic save path so the next
-            // launch does not repeatedly encounter the damaged primary file.
-            try { Save(); }
+            // Do not call Save() here: File.Replace would rotate the damaged primary into
+            // the backup slot and destroy the known-good recovery copy. Restore primary
+            // independently while leaving the valid backup untouched.
+            try { RestorePrimaryFromBackup(); }
             catch { }
             return;
         }
 
         _items = new Dictionary<string, LessonProgress>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void RestorePrimaryFromBackup()
+    {
+        if (!File.Exists(_backupPath)) return;
+        var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("進捗保存先を確認できません。");
+        var tempPath = Path.Combine(directory, $"progress.recover.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.Copy(_backupPath, tempPath, overwrite: true);
+            // Temp and destination are on the same volume. The rename/replace cannot expose
+            // a partially written JSON file to the next process.
+            File.Move(tempPath, _path, overwrite: true);
+        }
+        finally
+        {
+            TryDelete(tempPath);
+        }
     }
 
     private static bool TryLoad(string path, out Dictionary<string, LessonProgress> loaded)
@@ -159,5 +177,11 @@ public sealed class ProgressStore
         catch (JsonException) { return false; }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch { }
     }
 }
