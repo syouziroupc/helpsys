@@ -24,14 +24,19 @@ public sealed class ProgressStore
     private readonly string _backupPath;
     private Dictionary<string, LessonProgress> _items = new(StringComparer.OrdinalIgnoreCase);
 
-    public ProgressStore()
+    public ProgressStore() : this(null) { }
+
+    internal ProgressStore(string? rootOverride)
     {
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HelpSys.Education");
+        var root = rootOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HelpSys.Education");
         Directory.CreateDirectory(root);
         _path = Path.Combine(root, "progress.json");
         _backupPath = Path.Combine(root, "progress.backup.json");
         Load();
     }
+
+    internal string PrimaryPathForSelfTest => _path;
+    internal string BackupPathForSelfTest => _backupPath;
 
     public LessonProgress Get(string lessonId)
     {
