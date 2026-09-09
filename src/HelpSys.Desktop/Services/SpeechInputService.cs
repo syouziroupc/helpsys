@@ -209,19 +209,32 @@ public sealed class SpeechInputService : IDisposable
         request.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
         if (!string.IsNullOrWhiteSpace(_apiKey)) request.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
 
-        using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
-
+        HttpResponseMessage response;
+        string body;
         try
         {
-            var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
-            return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
+            response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+            body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         }
-        catch (JsonException ex)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {
-            throw new InvalidOperationException("音声認識サービスの応答形式が不正です。", ex);
+            throw new InvalidOperationException("音声認識サービスの応答が時間内に返りませんでした。", ex);
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
+                return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("音声認識サービスの応答形式が不正です。", ex);
+            }
         }
     }
 
