@@ -53,16 +53,39 @@ await expectRateLimited('/v1/education/assist', {
   body: JSON.stringify({ stage: 'practice', lessonId: 'x', lessonTitle: 'x', objective: 'x', message: 'x' })
 }, 'EDUCATION_RATE_LIMITER');
 
-const corsProbe = await guard.fetch(new Request('https://example.test/v1/education/assist', {
-  method: 'OPTIONS',
-  headers: {
-    origin: 'https://malicious.example',
-    'access-control-request-method': 'POST'
-  }
-}), {}, {});
-assert(corsProbe.headers.get('access-control-allow-origin') === null,
-  'Education API must not expose wildcard cross-origin access');
-assert(corsProbe.status !== 204,
-  'Education API must not advertise an OPTIONS CORS preflight success');
+for (const path of ['/v1/quality-guide', '/v1/guide', '/v1/vision-guide', '/v1/education/assist']) {
+  let aiCalls = 0;
+  const response = await guard.fetch(new Request(`https://example.test${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain', origin: 'https://malicious.example' },
+    body: JSON.stringify({ request: '電卓を開いて' })
+  }), { AI: { async run() { aiCalls++; } } }, {});
+  assert(response.status === 415, `${path} must reject browser-simple text/plain POST`);
+  assert(aiCalls === 0, `${path} must reject invalid media type before AI`);
+  assert(response.headers.get('access-control-allow-origin') === null,
+    `${path} rejection must not opt into cross-origin access`);
+}
+
+for (const path of ['/v1/quality-guide', '/v1/guide', '/v1/vision-guide', '/v1/education/assist', '/v1/transcribe']) {
+  const corsProbe = await guard.fetch(new Request(`https://example.test${path}`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://malicious.example',
+      'access-control-request-method': 'POST'
+    }
+  }), {}, {});
+  assert(corsProbe.status === 404, `${path} must reject browser CORS preflight`);
+  assert(corsProbe.headers.get('access-control-allow-origin') === null,
+    `${path} must not expose wildcard cross-origin access`);
+}
+
+let oversizedAiCalls = 0;
+const oversized = await guard.fetch(new Request('https://example.test/v1/education/assist', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'content-length': '50000' },
+  body: '{}'
+}), { AI: { async run() { oversizedAiCalls++; } } }, {});
+assert(oversized.status === 413, 'oversized Education request must be rejected before parsing/inference');
+assert(oversizedAiCalls === 0, 'oversized Education request must not reach AI');
 
 console.log('runtime hardening self-test passed.');
