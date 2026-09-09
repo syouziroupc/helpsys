@@ -1,4 +1,5 @@
 import base from './deliberation-guard.js';
+import education from './education.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
 const APP_RULES = [
@@ -13,9 +14,20 @@ const APP_RULES = [
 
 export default {
   async fetch(request, env, ctx) {
+    let url;
+    try { url = new URL(request.url); }
+    catch { return base.fetch(request, env, ctx); }
+
+    // Public Education downloads must work without asking beginners to configure a
+    // second Worker URL. The standalone helpsys-education config remains available for
+    // development/optional isolation, while production also exposes the same endpoint
+    // through the Git-integrated HelpSys Worker.
+    if (url.pathname === '/v1/education/assist') {
+      return education.fetch(request, env, ctx);
+    }
+
     let bodyPromise = null;
     try {
-      const url = new URL(request.url);
       if (request.method === 'POST' && (url.pathname === '/v1/guide' || url.pathname === '/v1/vision-guide'))
         bodyPromise = request.clone().json();
     } catch { }
@@ -39,7 +51,6 @@ export default {
     return override ? replaceJson(response, override) : response;
   }
 };
-
 
 export function guardSecretClarification(decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
