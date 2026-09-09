@@ -6,7 +6,7 @@ on:
       - "src/HelpSys.Desktop/**"
       - "tests/type_text_mock_server.py"
       - "tests/type_text_ui_probe.ps1"
-      - "tests/advanced_virtual_target.ps1"
+      - "tests/HelpSys.VirtualTarget/**"
       - ".github/workflows/type-text-ui-probe.yml"
   workflow_dispatch:
 
