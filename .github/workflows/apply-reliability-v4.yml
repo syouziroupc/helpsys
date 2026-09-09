@@ -1,0 +1,57 @@
+name: Apply Reliability v4 audit
+
+on:
+  push:
+    branches: [audit/reliability-v4-deep]
+    paths:
+      - "tools/apply_reliability_v4_patch.py"
+      - ".github/workflows/apply-reliability-v4.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-commit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/reliability-v4-deep
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Apply audited patch
+        run: python tools/apply_reliability_v4_patch.py
+
+      - name: Verify Worker
+        run: |
+          node --check worker/index.js
+          node --check worker/reliability-v4-guard.js
+          node worker/selftest.mjs
+          node worker/policy-selftest.mjs
+          node worker/visible-first-selftest.mjs
+          node worker/deliberation-selftest.mjs
+          node worker/reliability-v4-selftest.mjs
+
+      - name: Build Windows app
+        run: |
+          dotnet restore HelpSys.sln
+          dotnet build HelpSys.sln -c Release --no-restore
+
+      - name: Commit verified patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if (git diff --cached --quiet) { throw 'Patch produced no changes.' }
+          git commit -m "Reliability v4: close deep audit gaps"
+          git push origin HEAD:audit/reliability-v4-deep
