@@ -153,7 +153,7 @@ export default {
         image,
         reasoning_effort: 'low',
         temperature: 0.1,
-        max_completion_tokens: 560,
+        max_completion_tokens: 520,
         tools: [qualityTool],
         tool_choice: 'required',
         parallel_tool_calls: false
