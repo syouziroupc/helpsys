@@ -11,6 +11,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private readonly object _subscriptionGate = new();
     private readonly AutomationFocusChangedEventHandler _focusHandler;
     private readonly StructureChangedEventHandler _structureHandler;
+    private readonly AutomationPropertyChangedEventHandler _propertyHandler;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
     private AutomationElement? _structureRoot;
@@ -20,6 +21,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private long _scopeRequestVersion;
     private bool _focusSubscribed;
     private bool _structureSubscribed;
+    private bool _propertySubscribed;
     private bool _disposed;
 
     public event EventHandler? Pulse;
@@ -28,6 +30,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     {
         _focusHandler = (_, _) => Signal();
         _structureHandler = (_, _) => Signal();
+        _propertyHandler = (_, _) => Signal();
     }
 
     public void Start()
@@ -135,11 +138,37 @@ public sealed class GuidanceStateWatcher : IDisposable
                 _structureRoot = null;
                 _structureSubscribed = false;
             }
+
+            if (_structureRoot is not null)
+            {
+                try
+                {
+                    Automation.AddAutomationPropertyChangedEventHandler(
+                        _structureRoot,
+                        TreeScope.Subtree,
+                        _propertyHandler,
+                        AutomationElement.HasKeyboardFocusProperty,
+                        TogglePattern.ToggleStateProperty,
+                        SelectionItemPattern.IsSelectedProperty,
+                        ExpandCollapsePattern.ExpandCollapseStateProperty);
+                    _propertySubscribed = true;
+                }
+                catch
+                {
+                    _propertySubscribed = false;
+                }
+            }
         }
     }
 
     private void RemoveStructureSubscriptionLocked()
     {
+        if (_structureRoot is not null && _propertySubscribed)
+        {
+            try { Automation.RemoveAutomationPropertyChangedEventHandler(_structureRoot, _propertyHandler); } catch { }
+        }
+        _propertySubscribed = false;
+
         if (!_structureSubscribed || _structureRoot is null)
         {
             _structureRoot = null;
