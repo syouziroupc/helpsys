@@ -19,10 +19,13 @@ public sealed class CloudGuideService : IDisposable
     private readonly HttpClient _http;
     private readonly SystemContextService _contextVerifier = new();
     private readonly UiAutomationScanner _stateVerifier = new();
+    private readonly object _decisionMetadataGate = new();
     private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private long _rateLimitedUntilUtcTicks;
+    private string? _lastInputTargetId;
+    private string? _lastInputText;
 
     public CloudGuideService()
     {
@@ -66,6 +69,7 @@ public sealed class CloudGuideService : IDisposable
         string? routeIssue,
         CancellationToken cancellationToken)
     {
+        ClearDecisionMetadata();
         var relevantElements = SelectRelevantElements(elements, systemContext);
         var cloudContext = SanitizeSystemContextForCloud(systemContext, request);
         var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, cloudContext);
@@ -75,6 +79,7 @@ public sealed class CloudGuideService : IDisposable
             history,
             systemContext = cloudContext,
             evidence,
+            captureBounds = new { x = frame.ScreenX, y = frame.ScreenY, width = frame.ScreenWidth, height = frame.ScreenHeight },
             recoveryMode,
             routeIssue = ShortValue(routeIssue),
             elements = relevantElements.Select(CompactElement),
@@ -89,11 +94,13 @@ public sealed class CloudGuideService : IDisposable
             cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         await EnsurePlanningEvidenceCurrentAsync(relevantElements, systemContext, cancellationToken);
+        RememberDecisionMetadata(decision);
         return decision;
     }
 
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
+        ClearDecisionMetadata();
         var relevantElements = SelectRelevantElements(elements, systemContext);
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
@@ -113,11 +120,13 @@ public sealed class CloudGuideService : IDisposable
         var decision = await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         await EnsurePlanningEvidenceCurrentAsync(relevantElements, systemContext, cancellationToken);
+        RememberDecisionMetadata(decision);
         return decision;
     }
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
+        ClearDecisionMetadata();
         var cloudContext = SanitizeSystemContextForCloud(systemContext, request);
         var evidence = GuidanceEvidenceService.Build(true, [], history, cloudContext);
         var body = new
@@ -126,6 +135,7 @@ public sealed class CloudGuideService : IDisposable
             history,
             systemContext = cloudContext,
             evidence,
+            captureBounds = new { x = frame.ScreenX, y = frame.ScreenY, width = frame.ScreenWidth, height = frame.ScreenHeight },
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
             imageHeight = frame.ImageHeight
@@ -135,6 +145,62 @@ public sealed class CloudGuideService : IDisposable
         var decision = await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
+    }
+
+    public string? ResolveExpectedInputText(GuideDecision decision)
+    {
+        if (!decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(decision.TargetId)) return null;
+        lock (_decisionMetadataGate)
+        {
+            return string.Equals(_lastInputTargetId, decision.TargetId, StringComparison.Ordinal) ? _lastInputText : null;
+        }
+    }
+
+    private void RememberDecisionMetadata(QualityGuideDecision decision)
+    {
+        lock (_decisionMetadataGate)
+        {
+            if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(decision.TargetId) &&
+                !string.IsNullOrWhiteSpace(decision.InputText))
+            {
+                _lastInputTargetId = decision.TargetId;
+                _lastInputText = decision.InputText.Trim().Length <= 160 ? decision.InputText.Trim() : decision.InputText.Trim()[..160];
+            }
+            else
+            {
+                _lastInputTargetId = null;
+                _lastInputText = null;
+            }
+        }
+    }
+
+    private void RememberDecisionMetadata(GuideDecision decision)
+    {
+        lock (_decisionMetadataGate)
+        {
+            if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(decision.TargetId) &&
+                !string.IsNullOrWhiteSpace(decision.InputText))
+            {
+                _lastInputTargetId = decision.TargetId;
+                _lastInputText = decision.InputText.Trim().Length <= 160 ? decision.InputText.Trim() : decision.InputText.Trim()[..160];
+            }
+            else
+            {
+                _lastInputTargetId = null;
+                _lastInputText = null;
+            }
+        }
+    }
+
+    private void ClearDecisionMetadata()
+    {
+        lock (_decisionMetadataGate)
+        {
+            _lastInputTargetId = null;
+            _lastInputText = null;
+        }
     }
 
     private static object CompactElement(UiElementCandidate x) => new
