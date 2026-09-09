@@ -140,7 +140,7 @@ public partial class MainWindow
                 return;
             }
 
-            var expectedText = ExtractExpectedInputTextDeepAudit(decision.Instruction);
+            var expectedText = NormalizeExpectedInputTextDeepAudit(decision.InputText) ?? ExtractExpectedInputTextDeepAudit(decision.Instruction);
             if (string.IsNullOrWhiteSpace(expectedText) || fresh.Value is null)
             {
                 RecordTypeTextDeviation("type_text_unverifiable", fresh,
@@ -196,6 +196,14 @@ public partial class MainWindow
         if (_history.Count > 12) _history.RemoveAt(0);
     }
 
+    private static string? NormalizeExpectedInputTextDeepAudit(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.Length > 160 || LooksSensitiveExpectedTextDeepAudit(text)) return null;
+        return text;
+    }
+
     private static string? ExtractExpectedInputTextDeepAudit(string? instruction)
     {
         if (string.IsNullOrWhiteSpace(instruction)) return null;
@@ -204,9 +212,7 @@ public partial class MainWindow
             "[「『](?<text>[^」』\\r\\n]{1,160})[」』].{0,40}(?:と)?入力",
             RegexOptions.CultureInvariant);
         if (!match.Success) return null;
-        var value = match.Groups["text"].Value.Trim();
-        if (value.Length == 0 || LooksSensitiveExpectedTextDeepAudit(value)) return null;
-        return value;
+        return NormalizeExpectedInputTextDeepAudit(match.Groups["text"].Value);
     }
 
     private static bool InputTextMatchesDeepAudit(string actual, string expected)
