@@ -14,7 +14,10 @@ assert(guards.includes('TryRouteRecoveryAsync("案内枠以外の場所が操作
 assert(guards.includes('IsPointInsideHelpSysWindow'), 'HelpSys self-interaction must not be mistaken for route deviation.');
 
 assert(stable.includes('AttachDeepAuditGuards();'), 'Deep-audit interaction guards must be attached with the live watcher.');
-assert(stable.includes('semanticState'), 'Stable UI fingerprints must include semantic control state.');
+assert(stable.includes('HasSemanticLiveStateChanged'), 'Single-control semantic state changes must be detected independently of whole-screen similarity.');
+assert(stable.includes('semanticChange || HasStableLiveTopologyChanged'), 'Semantic deviations must feed the live change decision directly.');
+assert(stable.includes('!semanticChange && !ConfirmStableLiveChange'), 'A confirmed UIA semantic change must not be hidden by the whole-screen similarity threshold.');
+assert(stable.includes('SemanticLiveState'), 'Stable UI fingerprints must include semantic control state.');
 assert(stable.includes('toggle={x.ToggleState'), 'Toggle state must participate in stable-state detection.');
 assert(stable.includes('selected={x.Selected'), 'Selection state must participate in stable-state detection.');
 assert(stable.includes('expand={x.ExpandCollapseState'), 'Expand/collapse state must participate in stable-state detection.');
