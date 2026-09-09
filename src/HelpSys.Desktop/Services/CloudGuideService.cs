@@ -21,6 +21,7 @@ public sealed class CloudGuideService : IDisposable
     private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private long _rateLimitedUntilUtcTicks;
 
     public CloudGuideService()
     {
@@ -202,11 +203,13 @@ public sealed class CloudGuideService : IDisposable
 
     private async Task<T> SendAsync<T>(Func<HttpRequestMessage> createMessage, CancellationToken cancellationToken)
     {
+        ThrowIfLocallyRateLimited();
         GuideServiceException? lastTransientError = null;
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfLocallyRateLimited();
             using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             attemptCts.CancelAfter(AttemptTimeout);
 
@@ -230,6 +233,12 @@ public sealed class CloudGuideService : IDisposable
                 }
 
                 var status = (int)response.StatusCode;
+                if (status == 429)
+                {
+                    RememberRateLimit(response);
+                    throw new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内サービスの利用が集中しています。同じ要求を連続送信せず、制限解除後に再開します。");
+                }
+
                 var kind = IsTransientStatus(status) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
                 var apiError = new GuideServiceException(kind, $"HelpSys API {status}: {Short(body)}");
                 if (!IsTransientStatus(status) || attempt > 0) throw apiError;
@@ -258,7 +267,25 @@ public sealed class CloudGuideService : IDisposable
         throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
     }
 
-    private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
+    private void RememberRateLimit(HttpResponseMessage response)
+    {
+        var seconds = 60;
+        if (response.Headers.TryGetValues("Retry-After", out var values))
+        {
+            var raw = values.FirstOrDefault();
+            if (int.TryParse(raw, out var parsed)) seconds = Math.Clamp(parsed, 1, 300);
+        }
+        Interlocked.Exchange(ref _rateLimitedUntilUtcTicks, DateTime.UtcNow.AddSeconds(seconds).Ticks);
+    }
+
+    private void ThrowIfLocallyRateLimited()
+    {
+        var untilTicks = Interlocked.Read(ref _rateLimitedUntilUtcTicks);
+        if (untilTicks <= DateTime.UtcNow.Ticks) return;
+        throw new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内サービスの利用制限が解除されるまで、同じ要求の再送を停止しています。");
+    }
+
+    private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 500 or 502 or 503 or 504;
     private static string Short(string value) => value.Length <= 180 ? value : value[..180];
     public void Dispose() => _http.Dispose();
 }
