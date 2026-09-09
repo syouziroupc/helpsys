@@ -97,7 +97,7 @@ export default {
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
     const canonical = compactCanonical(task);
 
-    const model = env.HELPSYS_QUALITY_MODEL || env.HELPSYS_MODEL || DEFAULT_MODEL;
+    const model = selectQualityModel(env.HELPSYS_QUALITY_MODEL);
     const userPayload = JSON.stringify({
       goal,
       completedSteps: history,
@@ -274,6 +274,10 @@ function notFound(instruction) {
     x: 0, y: 0, width: 0, height: 0,
     screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
   };
+}
+
+function selectQualityModel(value) {
+  return value === DEFAULT_MODEL ? value : DEFAULT_MODEL;
 }
 
 function authorized(request, env) {
