@@ -1,45 +1,168 @@
 <Window x:Class="HelpSys.Education.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HelpSys Education" Width="960" Height="700" MinWidth="840" MinHeight="600"
+        Title="HelpSys Education" Width="1040" Height="760" MinWidth="900" MinHeight="640"
         WindowStartupLocation="CenterScreen" Background="#F5F6F8">
     <Window.Resources>
-        <Style TargetType="Button"><Setter Property="Padding" Value="16,9"/><Setter Property="Margin" Value="0,0,8,0"/><Setter Property="FontSize" Value="14"/></Style>
-        <Style x:Key="StageButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="MinWidth" Value="105"/></Style>
-        <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="White"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="26"/><Setter Property="BorderBrush" Value="#DFE3E8"/><Setter Property="BorderThickness" Value="1"/></Style>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="14,8"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+        <Style x:Key="StageButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinWidth" Value="105"/>
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="24"/>
+            <Setter Property="BorderBrush" Value="#DFE3E8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
     </Window.Resources>
+
     <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="285"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Border Grid.Column="0" Background="#20242B" Padding="20">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="300"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#20242B" Padding="18">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,18"><TextBlock Text="HelpSys Education" Foreground="White" FontSize="23" FontWeight="SemiBold"/><TextBlock Text="学ぶ → 練習 → テスト" Foreground="#BCC3CE" Margin="0,6,0,0"/></StackPanel>
-                <ListBox x:Name="LessonList" Background="Transparent" BorderThickness="0" Foreground="White" DisplayMemberPath="Title" SelectionChanged="LessonList_SelectionChanged"/>
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="HelpSys Education" Foreground="White" FontSize="23" FontWeight="SemiBold"/>
+                    <TextBlock Text="0からPC基礎を身につける" Foreground="#BCC3CE" Margin="0,5,0,14"/>
+                    <ProgressBar x:Name="OverallProgressBar" Height="8" Minimum="0" Maximum="100" Value="0"/>
+                    <TextBlock x:Name="OverallProgressText" Foreground="#D8DDE5" Margin="0,7,0,12" TextWrapping="Wrap"/>
+                    <WrapPanel Margin="0,0,0,14">
+                        <Button Content="全体進捗" Click="ShowProgress_Click" Padding="10,6"/>
+                        <Button Content="用語集" Click="ShowGlossary_Click" Padding="10,6"/>
+                    </WrapPanel>
+                    <Separator Background="#3A414C" Margin="0,0,0,12"/>
+                </StackPanel>
+
+                <ListBox x:Name="LessonList" Background="Transparent" BorderThickness="0"
+                         Foreground="White" DisplayMemberPath="Title"
+                         SelectionChanged="LessonList_SelectionChanged"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"/>
             </DockPanel>
         </Border>
-        <Grid Grid.Column="1" Margin="28">
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <StackPanel Grid.Row="0"><TextBlock x:Name="LessonTitle" FontSize="30" FontWeight="SemiBold" Foreground="#1E2329"/><TextBlock x:Name="LessonSummary" FontSize="15" Foreground="#626A73" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,22,0,18"><Button Style="{StaticResource StageButton}" Content="教育" Click="ShowEducation_Click"/><Button Style="{StaticResource StageButton}" Content="練習" Click="ShowPractice_Click"/><Button Style="{StaticResource StageButton}" Content="テスト" Click="ShowTest_Click"/></StackPanel>
+
+        <Grid Grid.Column="1" Margin="26">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0">
+                <TextBlock x:Name="LessonSection" FontSize="13" FontWeight="SemiBold" Foreground="#6A7380"/>
+                <TextBlock x:Name="LessonTitle" FontSize="29" FontWeight="SemiBold" Foreground="#1E2329" Margin="0,3,0,0"/>
+                <TextBlock x:Name="LessonSummary" FontSize="15" Foreground="#626A73" Margin="0,7,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,18,0,16">
+                <Button Style="{StaticResource StageButton}" Content="教育" Click="ShowEducation_Click"/>
+                <Button Style="{StaticResource StageButton}" Content="練習" Click="ShowPractice_Click"/>
+                <Button Style="{StaticResource StageButton}" Content="テスト" Click="ShowTest_Click"/>
+            </StackPanel>
+
             <Grid Grid.Row="2">
-                <Border x:Name="EducationPanel" Style="{StaticResource Card}"><StackPanel><TextBlock Text="教育" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="まず内容を理解する画面です。ここではHelpSysが積極的に説明します。" Foreground="#68717A" Margin="0,6,0,18"/><TextBlock x:Name="EducationText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/><Button Content="説明を理解した" HorizontalAlignment="Left" Margin="0,26,0,0" Click="MarkEducationDone_Click"/></StackPanel></Border>
-                <Border x:Name="PracticePanel" Style="{StaticResource Card}" Visibility="Collapsed">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
-                        <TextBlock Text="練習" FontSize="22" FontWeight="SemiBold"/>
-                        <TextBlock Text="教材に応じて専用練習画面または外部の練習サイトを使います。" Foreground="#68717A" Margin="0,6,0,18"/>
-                        <TextBlock x:Name="PracticeText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/>
-                        <Button x:Name="OpenPracticeButton" HorizontalAlignment="Left" Margin="0,20,0,0" Click="OpenPractice_Click"/>
-                        <TextBlock x:Name="PracticeLinkNote" Foreground="#68717A" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                        <Separator Margin="0,18,0,16"/>
-                        <TextBlock Text="練習ヒント" FontSize="18" FontWeight="SemiBold"/>
-                        <TextBlock x:Name="EducationAiStatusText" Foreground="#68717A" Margin="0,5,0,8" TextWrapping="Wrap"/>
-                        <Button x:Name="PracticeHintButton" Content="ヒントを1つもらう" HorizontalAlignment="Left" Click="PracticeHint_Click"/>
-                        <Border x:Name="PracticeHintBox" Background="#F2F4F7" CornerRadius="8" Padding="14" Margin="0,10,0,0" Visibility="Collapsed"><TextBlock x:Name="PracticeHintText" TextWrapping="Wrap" LineHeight="23"/></Border>
-                        <Button Content="今回の練習を完了" HorizontalAlignment="Left" Margin="0,20,0,0" Click="MarkPracticeDone_Click"/>
-                    </StackPanel></ScrollViewer>
+                <Border x:Name="EducationPanel" Style="{StaticResource Card}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock Text="教育" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock Text="まず意味を理解します。分からない言葉は用語集で確認できます。" Foreground="#68717A" Margin="0,6,0,16" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="EducationText" FontSize="16" LineHeight="26" TextWrapping="Wrap"/>
+
+                            <TextBlock Text="この単元でできるようになること" FontSize="17" FontWeight="SemiBold" Margin="0,20,0,8"/>
+                            <ItemsControl x:Name="EducationObjectivesList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat=• {0}}" FontSize="15" Margin="0,3" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Border x:Name="SafetyNoteBox" Background="#FFF7E8" BorderBrush="#E8C889" BorderThickness="1" CornerRadius="8" Padding="13" Margin="0,18,0,0" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Text="安全上の注意" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="SafetyNoteText" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="説明を理解した → 練習へ" HorizontalAlignment="Left" Margin="0,22,0,0" Click="MarkEducationDone_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Border>
-                <Border x:Name="TestPanel" Style="{StaticResource Card}" Visibility="Collapsed"><StackPanel><TextBlock Text="テスト" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="原則として答えを表示せず、習得できたかを確認する画面です。" Foreground="#68717A" Margin="0,6,0,18"/><TextBlock x:Name="TestText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/><Border Background="#F2F4F7" CornerRadius="8" Padding="16" Margin="0,24,0,0"><TextBlock Text="テスト画面では教育AIを呼び出しません。答えやヒントが必要な場合はテストを終了して練習へ戻ります。" TextWrapping="Wrap" Foreground="#515A64"/></Border><Button Content="テスト合格として記録" HorizontalAlignment="Left" Margin="0,24,0,0" Click="MarkTestPassed_Click"/></StackPanel></Border>
+
+                <Border x:Name="PracticePanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock Text="練習" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="PracticeText" FontSize="16" LineHeight="25" TextWrapping="Wrap" Margin="0,8,0,12"/>
+
+                            <TextBlock Text="やること" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,6"/>
+                            <ItemsControl x:Name="PracticeStepsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding StringFormat=• {0}}" FontSize="15" Margin="0,3" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <Button x:Name="OpenPracticeButton" HorizontalAlignment="Left" Margin="0,14,0,0" Click="OpenPractice_Click" Visibility="Collapsed"/>
+                            <TextBlock x:Name="PracticeLinkNote" Foreground="#68717A" Margin="0,7,0,0" TextWrapping="Wrap"/>
+
+                            <Border Background="#F7F8FA" BorderBrush="#E1E5EA" BorderThickness="1" CornerRadius="9" Padding="14" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="安全な練習エリア" FontWeight="SemiBold" FontSize="16"/>
+                                    <TextBlock x:Name="PracticeLabStatusText" Foreground="#68717A" Margin="0,4,0,9" TextWrapping="Wrap"/>
+                                    <StackPanel x:Name="PracticeLabHost"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Separator Margin="0,18,0,15"/>
+                            <TextBlock Text="困ったときの練習ヒント" FontSize="17" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="EducationAiStatusText" Foreground="#68717A" Margin="0,5,0,8" TextWrapping="Wrap"/>
+                            <Button x:Name="PracticeHintButton" Content="ヒントを1つもらう" HorizontalAlignment="Left" Click="PracticeHint_Click"/>
+                            <Border x:Name="PracticeHintBox" Background="#EEF3F8" CornerRadius="8" Padding="13" Margin="0,9,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="PracticeHintText" TextWrapping="Wrap" LineHeight="23"/>
+                            </Border>
+
+                            <Button x:Name="MarkPracticeDoneButton" Content="練習完了 → テストへ" HorizontalAlignment="Left" Margin="0,18,0,0" Click="MarkPracticeDone_Click" IsEnabled="False"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <Border x:Name="TestPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock Text="テスト" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="TestText" FontSize="16" LineHeight="25" TextWrapping="Wrap" Margin="0,8,0,13"/>
+                            <Border Background="#F2F4F7" CornerRadius="8" Padding="12" Margin="0,0,0,14">
+                                <TextBlock Text="テスト中は教育AIを呼びません。合格は全問正解（100%）です。間違えても何度でもやり直せます。" TextWrapping="Wrap" Foreground="#515A64"/>
+                            </Border>
+
+                            <TextBlock x:Name="QuizProgressText" FontWeight="SemiBold" Foreground="#68717A"/>
+                            <TextBlock x:Name="QuizQuestionText" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,9"/>
+                            <StackPanel x:Name="QuizOptionsPanel"/>
+                            <Border x:Name="QuizFeedbackBox" Background="#F7F8FA" CornerRadius="8" Padding="12" Margin="0,10,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="QuizFeedbackText" TextWrapping="Wrap"/>
+                            </Border>
+                            <Button x:Name="CheckQuizButton" Content="回答を確認" HorizontalAlignment="Left" Margin="0,14,0,0" Click="CheckQuiz_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
             </Grid>
-            <Border Grid.Row="3" Background="White" CornerRadius="10" Padding="14" Margin="0,18,0,0" BorderBrush="#DFE3E8" BorderThickness="1"><DockPanel><TextBlock x:Name="ProgressText" FontWeight="SemiBold" Foreground="#37404A"/><TextBlock x:Name="StageStatusText" DockPanel.Dock="Right" Foreground="#68717A"/></DockPanel></Border>
+
+            <Border Grid.Row="3" Background="White" CornerRadius="10" Padding="13" Margin="0,16,0,0" BorderBrush="#DFE3E8" BorderThickness="1">
+                <DockPanel>
+                    <TextBlock x:Name="ProgressText" FontWeight="SemiBold" Foreground="#37404A"/>
+                    <TextBlock x:Name="StageStatusText" DockPanel.Dock="Right" Foreground="#68717A"/>
+                </DockPanel>
+            </Border>
         </Grid>
     </Grid>
 </Window>
