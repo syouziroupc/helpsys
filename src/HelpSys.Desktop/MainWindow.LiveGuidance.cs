@@ -197,8 +197,12 @@ public partial class MainWindow
             return;
         }
 
-        _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", answer, _clarificationQuestion ?? "確認質問"));
+        var question = _clarificationQuestion ?? "確認質問";
+        _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", answer, question));
         if (_history.Count > 12) _history.RemoveAt(0);
+        // History is intentionally short. Persist the user's explicit branch choice in the active
+        // session goal as well, otherwise a long task forgets the answer after 12 later events.
+        _activeRequest += $"\n利用者への確認: {question}\n利用者からの追加回答: {answer}";
         _clarificationQuestion = null;
         HideClarificationUiIfNeeded(force: true);
         try { _actionObserver.Start(); } catch { }
