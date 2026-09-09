@@ -14,6 +14,7 @@ public partial class MainWindow
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
     {
+        AttachDeepAuditGuards();
         if (_liveWatcherStarted) return;
         _liveWatcherStarted = true;
         _liveWatcher.Pulse += StableLiveWatcher_Pulse;
@@ -22,6 +23,7 @@ public partial class MainWindow
 
     private void MainWindow_StableClosing(object? sender, CancelEventArgs e)
     {
+        DetachDeepAuditGuards();
         if (!_liveWatcherStarted) return;
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
@@ -109,7 +111,7 @@ public partial class MainWindow
                 ClearStableLiveChangeCandidate();
                 _liveElements = [];
                 _liveSystem = null;
-                if (_sessionState.PlannerInFlight) InvalidatePlannerForLiveContextChange();
+                if (!_verifyingAction) InvalidatePlannerForLiveContextChange();
                 return;
             }
             nowSystem = afterScanSystem;
@@ -125,18 +127,8 @@ public partial class MainWindow
             }
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
-
-            if (!hardChange && !_verifyingAction && _currentDecision is not null &&
-                _currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-            {
-                _liveElements = nowElements;
-                _liveSystem = nowSystem;
-                ClearStableLiveChangeCandidate();
-                await ValidateCurrentVisionTargetAsync(token);
-                return;
-            }
-
-            var topologyChange = HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+            var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+            var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
             if (!hardChange && !topologyChange)
             {
@@ -148,7 +140,10 @@ public partial class MainWindow
                 return;
             }
 
-            if (!hardChange && !ConfirmStableLiveChange(nowElements, nowSystem))
+            // Property-change callbacks already pass through the watcher's quiet period. A semantic
+            // state change on the same current control is therefore strong enough to invalidate one
+            // stale instruction without requiring a large whole-screen topology difference.
+            if (!hardChange && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
                 return;
@@ -167,25 +162,15 @@ public partial class MainWindow
                 {
                     _history.Add(new GuideHistoryItem(
                         _stepNumber,
-                        "screen_changed",
+                        semanticChange ? "semantic_state_changed" : "screen_changed",
                         "現在の画面",
-                        "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
+                        semanticChange
+                            ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
+                            : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
-                var plannerWasInFlight = _sessionState.PlannerInFlight;
-                _sessionState.Invalidate(GuidanceSessionState.Idle);
-                _speechOutput.Stop();
-                InvalidateCurrentGuidanceForLiveChange();
-
-                if (plannerWasInFlight)
-                {
-                    _liveRestartAfterPlanCancel = true;
-                    try { _sessionCts?.Cancel(); } catch { }
-                }
-
-                _liveReplanPending = true;
-                SetState("画面の切り替わりを確認しました。新しい画面が落ち着いてから案内を作り直しています…", speak: false);
+                InvalidatePlannerForLiveContextChange();
             }
 
             await ValidateCurrentVisionTargetAsync(token);
@@ -216,12 +201,20 @@ public partial class MainWindow
 
     private void InvalidatePlannerForLiveContextChange()
     {
-        if (!_sessionState.PlannerInFlight) return;
+        var plannerWasInFlight = _sessionState.PlannerInFlight;
+        var hadGuidance = _currentDecision is not null || _awaitingClarification;
+        if (!plannerWasInFlight && !hadGuidance && !_liveReplanPending) return;
+
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _speechOutput.Stop();
         InvalidateCurrentGuidanceForLiveChange();
-        _liveRestartAfterPlanCancel = true;
-        try { _sessionCts?.Cancel(); } catch { }
+
+        if (plannerWasInFlight)
+        {
+            _liveRestartAfterPlanCancel = true;
+            try { _sessionCts?.Cancel(); } catch { }
+        }
+
         _liveReplanPending = true;
         SetState("操作中の画面が切り替わったため、古い案内を破棄しました。新しい画面が落ち着いてから案内を作り直します…", speak: false);
     }
@@ -242,6 +235,38 @@ public partial class MainWindow
         var afterUrl = after.Browser?.Url ?? string.Empty;
         return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) &&
                (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
+    }
+
+    private static bool HasSemanticLiveStateChanged(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        SystemContextSnapshot beforeSystem,
+        IReadOnlyList<UiElementCandidate> afterElements,
+        SystemContextSnapshot afterSystem)
+    {
+        var before = SemanticLiveStateMap(beforeElements, beforeSystem.ForegroundProcess);
+        var after = SemanticLiveStateMap(afterElements, afterSystem.ForegroundProcess);
+
+        foreach (var pair in before)
+        {
+            if (after.TryGetValue(pair.Key, out var afterState) &&
+                !string.Equals(pair.Value, afterState, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static Dictionary<string, string> SemanticLiveStateMap(
+        IReadOnlyList<UiElementCandidate> elements,
+        string foregroundProcess)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in elements.Where(x => x.Interactable && IsRelevantProcess(x.ProcessName, foregroundProcess)))
+        {
+            var identity = StableLiveElementIdentity(item);
+            if (map.ContainsKey(identity)) continue;
+            map[identity] = SemanticLiveState(item);
+        }
+        return map;
     }
 
     private static bool HasStableLiveTopologyChanged(
@@ -271,7 +296,10 @@ public partial class MainWindow
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private static string StableLiveElementKey(UiElementCandidate x)
+    private static string StableLiveElementKey(UiElementCandidate x) =>
+        $"{StableLiveElementIdentity(x)}|{SemanticLiveState(x)}";
+
+    private static string StableLiveElementIdentity(UiElementCandidate x)
     {
         var bx = (int)Math.Round(x.X / 24d);
         var by = (int)Math.Round(x.Y / 24d);
@@ -280,6 +308,10 @@ public partial class MainWindow
         var stableName = IsStableNamedControl(x.ControlType) ? NormalizeStableName(x.Name) : string.Empty;
         return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
     }
+
+    private static string SemanticLiveState(UiElementCandidate x) => x.Interactable
+        ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
+        : string.Empty;
 
     private static bool IsStableNamedControl(string controlType) => controlType.ToLowerInvariant() is
         "button" or "menuitem" or "listitem" or "treeitem" or "tabitem" or "hyperlink" or "checkbox" or "radiobutton";

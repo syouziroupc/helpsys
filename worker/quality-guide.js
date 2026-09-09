@@ -1,4 +1,4 @@
-import { buildWindowsTaskContext, guardDecisionForTask } from './windows-knowledge.js';
+import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTask } from './windows-knowledge.js';
 
 const DEFAULT_MODEL = '@cf/zai-org/glm-5.3-flash';
 const MAX_UI_ELEMENTS = 280;
@@ -61,6 +61,7 @@ ROUTE RECOVERY:
 - Do not require the current screen to match an earlier expected route. A recovery step may close an irrelevant dialog, switch to the relevant app, reopen search, move to a parent view, or use another safe path when that action is grounded in the current evidence.
 - Do not repeat an action recorded as failed unless current evidence shows the cause of failure has changed.
 - canonicalConstraint is a route reference during recoveryMode, not a veto, except safety warnings and user-choice branches remain hard constraints.
+- Known-site identity is a safety invariant, not a route preference. Recovery may change the route, but it may never relax official-domain, non-sponsored, or browser-warning checks.
 - In recoveryMode, prefer a grounded target or a necessary clarification over not_found. Use not_found only when no safe next operation can be grounded from the available evidence.
 
 PHYSICAL WINDOWS RULES:
@@ -186,6 +187,8 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
 
   if (status === 'done') {
     if (!screenConfirmed || confidence < MIN_DONE_CONFIDENCE || visualEvidence.length < 3) return notFound('画面上で完了を確認できませんでした。');
+    if (task?.kind === 'site' && task?.deterministic?.status !== 'done')
+      return notFound('既知サイトは現在のブラウザードメインが公式ドメインと一致した場合だけ完了扱いにします。');
     if (isStrictTask(task) && !relaxedCanonical && task?.deterministic && task.deterministic.status !== 'done')
       return notFound('画面上の状態と安全な標準手順が一致しないため、完了扱いにしません。');
     return { ...base, targetId: null, action: 'none', key: null, question: null };
@@ -232,12 +235,23 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     if (!screenConfirmed) return notFound('画像だけの操作位置は画面確認が必要です。');
     if (!['left_click', 'double_click'].includes(action) || base.width < 4 || base.height < 4)
       return notFound('画像上の押す場所を十分に確認できませんでした。');
+    if (task?.kind === 'site') {
+      const guardedVision = guardVisionDecisionForTask(task, {
+        status: 'target', label: null, instruction: base.instruction, question: null,
+        x: base.x, y: base.y, width: base.width, height: base.height,
+        confidence: base.confidence, observedDomain: base.observedDomain, sponsored: base.sponsored
+      });
+      if (guardedVision?.status !== 'target')
+        return notFound(guardedVision?.instruction || '公式ドメインと確認できない画像候補は案内しません。');
+    }
     return base;
   }
 
   if (!targetId || !ids.has(targetId)) return notFound('Windowsの操作対象と一致させられませんでした。');
   const target = elements.find(x => x.id === targetId);
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
+  if (task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
+    return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
   if (action === 'type_text' && !(target.focused === true && target.keyboardFocusable === true))
     return notFound('入力欄が実際に選ばれていることを確認できませんでした。');
 
@@ -245,7 +259,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   if (task?.kind === 'site' && (physical.sponsored || /(?:広告|スポンサー|sponsored|\bad\b)/i.test(target.name || '')))
     return notFound('広告ではなく公式サイトへ進む必要があるため、この候補は選びません。');
 
-  if (isStrictTask(task) && !relaxedCanonical) {
+  if (task?.kind === 'site' || (isStrictTask(task) && !relaxedCanonical)) {
     const guarded = guardDecisionForTask(task, {
       status: 'target', targetId: physical.targetId, action: physical.action,
       instruction: physical.instruction, question: null, key: physical.key, confidence

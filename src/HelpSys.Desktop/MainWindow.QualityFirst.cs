@@ -373,12 +373,17 @@ public partial class MainWindow
             return;
         }
 
+        var visualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+            ? "double_click"
+            : "left_click";
         var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
-            ? "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
+            ? visualAction == "double_click"
+                ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
+                : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
             : decision.Instruction;
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
-        _currentDecision = new GuideDecision("target", "vision-target", "left_click", instruction, null, null, quality.Confidence);
+        _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;

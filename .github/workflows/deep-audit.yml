@@ -1,0 +1,33 @@
+name: Deep audit regressions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  deep-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check deep-audit scripts
+        run: |
+          node --check worker/quality-guide.js
+          node --check worker/deep-audit-selftest.mjs
+          node --check tests/deep-audit-contract.mjs
+
+      - name: Run deep-audit regressions
+        run: |
+          node worker/deep-audit-selftest.mjs
+          node tests/deep-audit-contract.mjs
+
+      - name: Restore
+        run: dotnet restore HelpSys.sln
+
+      - name: Build
+        run: dotnet build HelpSys.sln -c Release --no-restore
