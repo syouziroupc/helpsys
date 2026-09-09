@@ -6,6 +6,11 @@ $form.Text = 'HelpSys Smoke Target'
 $form.Width = 640
 $form.Height = 360
 $form.StartPosition = 'CenterScreen'
+# GitHub's Windows Server runner may host powershell.exe inside Windows Terminal, so
+# process/title activation is not reliable. Keep the dedicated test form topmost; HelpSys
+# is also topmost and therefore sits above it. SystemContextService must skip HelpSys itself
+# and resolve this real work surface directly beneath it, which matches the production case.
+$form.TopMost = $true
 
 $label = New-Object System.Windows.Forms.Label
 $label.Text = 'HelpSys smoke target'
@@ -32,4 +37,5 @@ $button.Add_Click({ $label.Text = 'Button clicked' })
 $form.Controls.Add($label)
 $form.Controls.Add($input)
 $form.Controls.Add($button)
+$form.Add_Shown({ $form.Activate() })
 [System.Windows.Forms.Application]::Run($form)
