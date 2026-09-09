@@ -11,8 +11,8 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        Loaded="MainWindow_ReliabilityV3Loaded"
-        Closing="MainWindow_ReliabilityV3Closing">
+        Loaded="MainWindow_CombinedLoaded"
+        Closing="MainWindow_CombinedClosing">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
@@ -22,7 +22,7 @@
         <RowDefinition Height="25" />
         <RowDefinition Height="46" />
         <RowDefinition Height="Auto" />
-        <RowDefinition Height="25" />
+        <RowDefinition Height="28" />
       </Grid.RowDefinitions>
 
       <Grid x:Name="DragHandle" Grid.Row="0" Background="Transparent" MouseLeftButtonDown="DragHandle_MouseLeftButtonDown">
@@ -90,6 +90,10 @@
       </Border>
 
       <DockPanel Grid.Row="3" LastChildFill="True">
+        <Button DockPanel.Dock="Right" x:Name="CommanderButton" Content="コマンダー"
+                MinWidth="94" Height="23" Padding="8,0" Margin="8,0,0,0"
+                FontSize="10.5" Click="CommanderButton_Click"
+                ToolTip="『ねえコマンダー』で呼び出す" />
         <TextBlock DockPanel.Dock="Right" Text="Ctrl+Alt+H" FontSize="10" Foreground="#FF9AA3B2" VerticalAlignment="Center" Margin="10,0,0,0" />
         <TextBlock x:Name="StateText"
                    Text="やりたいことを入力してください。"
