@@ -42,7 +42,6 @@ function practicePrompt(level) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
     if (url.pathname === '/health' && request.method === 'GET') {
       return json({ ok: true, service: 'helpsys-education', model: selectEducationModel(env.HELPSYS_EDUCATION_MODEL) });
     }
@@ -162,16 +161,11 @@ function text(value, max) {
 }
 
 function json(value, status = 200) {
-  return withCors(new Response(JSON.stringify(value), {
+  return new Response(JSON.stringify(value), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' }
-  }));
-}
-
-function withCors(response) {
-  const headers = new Headers(response.headers);
-  headers.set('access-control-allow-origin', '*');
-  headers.set('access-control-allow-methods', 'GET,POST,OPTIONS');
-  headers.set('access-control-allow-headers', 'content-type,x-helpsys-education-key');
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    }
+  });
 }
