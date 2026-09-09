@@ -128,6 +128,19 @@ public partial class MainWindow
             var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
             var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
+            if (!hardChange && semanticChange && IsExpectedGuidanceSemanticProgress(_liveElements, nowElements))
+            {
+                // A user following the current instruction is expected to change semantic UI state.
+                // Focusing the instructed input, selecting the instructed tab, or toggling the
+                // instructed checkbox is progress, not a route deviation. The action observer owns
+                // completion verification; the live watcher only refreshes its baseline here.
+                _liveElements = nowElements;
+                _liveSystem = nowSystem;
+                ClearStableLiveChangeCandidate();
+                await ValidateCurrentVisionTargetAsync(token);
+                return;
+            }
+
             if (!hardChange && !topologyChange)
             {
                 _liveElements = nowElements;
@@ -175,6 +188,33 @@ public partial class MainWindow
         {
             _liveObserveGate.Release();
         }
+    }
+
+    private bool IsExpectedGuidanceSemanticProgress(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        IReadOnlyList<UiElementCandidate> afterElements)
+    {
+        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction ||
+            _currentDecision is null || _currentTarget is null)
+            return false;
+
+        var action = _currentDecision.Action;
+        if (!action.Equals("type_text", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var before = FindMatchingTargetV3(_currentTarget, beforeElements);
+        var after = FindMatchingTargetV3(_currentTarget, afterElements);
+        if (before is null || after is null) return false;
+
+        if (action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
+            return !before.Focused && after.Focused;
+
+        if (!string.Equals(SemanticLiveState(before), SemanticLiveState(after), StringComparison.Ordinal))
+            return true;
+
+        return false;
     }
 
     private bool ConfirmStableLiveChange(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot system)
