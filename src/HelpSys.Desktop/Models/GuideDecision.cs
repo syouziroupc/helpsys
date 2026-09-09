@@ -7,4 +7,5 @@ public sealed record GuideDecision(
     string Instruction,
     string? Question,
     string? Key,
-    double Confidence);
+    double Confidence,
+    string? InputText = null);
