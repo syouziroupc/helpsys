@@ -95,6 +95,7 @@ public sealed class SpeechInputService : IDisposable
             try { engine.RecognizeAsyncCancel(); } catch { }
             try { engine.Dispose(); } catch { }
         });
+        MicrophoneCoordinator.TrackBackgroundRelease(release);
 
         try { await release.WaitAsync(ReleaseTimeout).ConfigureAwait(false); }
         catch (TimeoutException) { }
@@ -109,10 +110,11 @@ public sealed class SpeechInputService : IDisposable
             _engine = null;
         }
         if (engine is null) return;
-        _ = Task.Run(() =>
+        var release = Task.Run(() =>
         {
             try { engine.RecognizeAsyncCancel(); } catch { }
             try { engine.Dispose(); } catch { }
         });
+        MicrophoneCoordinator.TrackBackgroundRelease(release);
     }
 }
