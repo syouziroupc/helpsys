@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSysは、Windows画面を理解して次に操作する場所をオーバーレイで案内するPC操作支援ツールです。">
+  <meta name="description" content="HelpSysは、Windows画面を理解して次に操作する場所を案内するPC操作支援ツールです。通常版とEducation版を配布しています。">
   <meta name="theme-color" content="#0b1020">
+  <link rel="canonical" href="https://helpsys.syouziroupc.workers.dev/">
   <title>HelpSys — Windows操作を、画面上で案内。</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="HelpSys トップ">
+    <a class="brand" href="./" aria-label="HelpSys トップ">
       <span class="brand-mark" aria-hidden="true">H</span>
       <span>HelpSys</span>
     </a>
-    <a class="github-link" href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noreferrer">GitHub</a>
+    <a class="github-link" href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">GitHub</a>
   </header>
 
   <main>
@@ -23,10 +24,11 @@
       <div class="hero-copy">
         <p class="eyebrow">WINDOWS 10 / 11 ・ PREVIEW</p>
         <h1>次の操作を、<br><span>画面上で教える。</span></h1>
-        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。今の画面を確認し、あなたが次にクリック・入力する場所を矢印と短い説明で案内するWindows向け操作支援ツールです。</p>
-        <div class="actions">
-          <a class="download-button" href="https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-win-x64.zip">Windows版をダウンロード</a>
-          <span class="download-note">64-bit ・ 開発版</span>
+        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。現在の状態を確認し、あなたが次にクリック・入力する場所を短い説明で案内するWindows向け操作支援ツールです。</p>
+        <div class="actions" aria-label="ダウンロード">
+          <a class="download-button" href="/download">通常版をダウンロード</a>
+          <a class="download-button ghost" href="/download/education">Education版</a>
+          <span class="download-note">Windows 10 / 11 ・ 64-bit ・ 開発版</span>
         </div>
       </div>
 
@@ -47,24 +49,45 @@
 
     <section class="section">
       <div class="section-title">
+        <p class="eyebrow">TWO EDITIONS</p>
+        <h2>用途に合わせて選ぶ。</h2>
+      </div>
+      <div class="download-options">
+        <article class="download-card">
+          <p class="eyebrow">HELPSYS</p>
+          <h3>通常版</h3>
+          <p>「何をすればいいか分からない」ときに、現在の画面から次の1手を案内します。操作は利用者自身が行い、HelpSysは結果を確認して次へ進みます。</p>
+          <a class="download-button" href="/download">最新版ZIPをダウンロード</a>
+        </article>
+        <article class="download-card">
+          <p class="eyebrow">HELPSYS EDUCATION</p>
+          <h3>Education版</h3>
+          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。難易度を少しずつ上げ、最終的にWindowsの基本操作を身につけるための学習版です。</p>
+          <a class="download-button ghost" href="/download/education">Education最新版ZIP</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
         <p class="eyebrow">HOW IT WORKS</p>
-        <h2>必要なときだけ呼び出す。</h2>
+        <h2>必要なときに案内を開始する。</h2>
       </div>
       <div class="steps">
         <article class="card">
           <span class="number">01</span>
           <h3>HelpSysを呼ぶ</h3>
-          <p>画面右下のボタン、または <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で起動します。待機中は画面解析を行いません。</p>
+          <p>画面右下のボタン、または <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。AIによる案内は利用者の依頼から始まります。</p>
         </article>
         <article class="card">
           <span class="number">02</span>
           <h3>やりたいことを伝える</h3>
-          <p>「YouTubeを見たい」など、目的を入力します。HelpSysが現在のWindows画面から次の操作対象を確認します。</p>
+          <p>「YouTubeを見たい」など、目的を入力します。HelpSysが現在のWindows状態から次の操作対象を確認します。</p>
         </article>
         <article class="card">
           <span class="number">03</span>
           <h3>自分で操作する</h3>
-          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行います。</p>
+          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行い、HelpSysは状態変化を確認して次へ進みます。</p>
         </article>
       </div>
     </section>
@@ -75,33 +98,37 @@
         <h2>操作代行ではなく、操作支援。</h2>
       </div>
       <div class="feature-list">
-        <div><strong>画面構造を優先</strong><span>Windows UI Automationを使い、画像だけの推測に頼りません。</span></div>
-        <div><strong>低確度なら案内しない</strong><span>対象を十分に特定できない場合は、無理に矢印を出さない設計です。</span></div>
-        <div><strong>画像解析は必要時のみ</strong><span>構造情報で判断できない場面だけ画面画像を利用します。</span></div>
+        <div><strong>画面構造を優先</strong><span>Windows UI Automationを第一情報源にし、画像だけの推測に頼りません。</span></div>
+        <div><strong>古い案内を捨てる</strong><span>画面や前面アプリが変わった場合、以前の計画をそのまま表示しません。</span></div>
+        <div><strong>成功を確認する</strong><span>クリックや入力を検出しただけで完了にせず、操作後の状態変化を確認します。</span></div>
+        <div><strong>画像解析は必要時のみ</strong><span>構造情報だけで安全に判断できない場面でVisionを利用します。</span></div>
       </div>
     </section>
 
     <section class="privacy">
       <div>
         <p class="eyebrow">PRIVACY</p>
-        <h2>常時監視しません。</h2>
+        <h2>送信する情報を限定する。</h2>
       </div>
-      <p>HelpSysは、ユーザーが明示的に案内を開始したときだけ画面情報を取得します。通常はWindowsのUI構造情報を使い、画像が必要な場合のみスクリーンショットを利用します。UI Automationで検出できたパスワード欄は画像送信前にマスクします。</p>
+      <p>HelpSysは、案内に必要な状態を観測し、AIによる案内が必要な場面で必要な情報だけを送ります。通常はWindowsのUI構造情報を優先し、画像が必要な場合のみ対象モニターのスクリーンショットを利用します。パスワード欄などの秘密情報をHelpSysへ入力するよう求める案内は拒否します。</p>
     </section>
 
     <section class="download-panel">
       <div>
         <p class="eyebrow">DOWNLOAD</p>
         <h2>HelpSys for Windows</h2>
-        <p>現在は開発版です。Windows 10 / 11、64-bit環境向け。</p>
+        <p>通常版・Education版ともにWindows 10 / 11、64-bit環境向けの開発版です。</p>
       </div>
-      <a class="download-button secondary" href="https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-win-x64.zip">最新版ZIPをダウンロード</a>
+      <div class="download-panel-actions">
+        <a class="download-button secondary" href="/download">通常版</a>
+        <a class="download-button secondary ghost" href="/download/education">Education版</a>
+      </div>
     </section>
   </main>
 
   <footer>
     <span>HelpSys Preview</span>
-    <a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noreferrer">Source on GitHub</a>
+    <a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
   </footer>
 </body>
 </html>
