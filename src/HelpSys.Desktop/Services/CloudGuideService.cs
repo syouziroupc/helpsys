@@ -15,6 +15,11 @@ public sealed class CloudGuideService : IDisposable
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
+    private static readonly string[] SecurityTitleMarkers =
+    [
+        "privacy error", "deceptive site", "dangerous site", "smartscreen", "phishing", "malware",
+        "安全ではありません", "安全でない", "フィッシング", "詐欺", "プライバシーが保護されません", "証明書エラー", "証明書が無効"
+    ];
 
     private readonly HttpClient _http;
     private readonly SystemContextService _contextVerifier = new();
@@ -228,9 +233,32 @@ public sealed class CloudGuideService : IDisposable
 
     private static SystemContextSnapshot SanitizeSystemContextForCloud(SystemContextSnapshot context, string request)
     {
-        if (context.Browser is null) return context;
-        var browser = context.Browser with { Url = SanitizeBrowserUrl(context.Browser.Url, KnownSiteSearchMarker(request)) };
-        return context with { Browser = browser };
+        var safeForegroundTitle = SanitizeWindowTitleForCloud(context.ForegroundProcess, context.ForegroundTitle);
+        if (context.Browser is null)
+            return context with { ForegroundTitle = safeForegroundTitle };
+
+        var browser = context.Browser with
+        {
+            Url = SanitizeBrowserUrl(context.Browser.Url, KnownSiteSearchMarker(request)),
+            WindowTitle = SanitizeWindowTitleForCloud(context.Browser.ProcessName, context.Browser.WindowTitle)
+        };
+        return context with { ForegroundTitle = safeForegroundTitle, Browser = browser };
+    }
+
+    private static string SanitizeWindowTitleForCloud(string processName, string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return string.Empty;
+        var raw = title.Trim();
+
+        // Preserve only a fixed safety category, never the original warning/document/tab text.
+        // The Worker safety detector already recognizes this canonical phrase.
+        if (SecurityTitleMarkers.Any(marker => raw.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+            return "Privacy error";
+
+        // Window titles often contain search queries, document names, email subjects or customer
+        // data. Process identity is sufficient as a coarse cloud hint; detailed local UIA remains
+        // available without transmitting the title.
+        return string.IsNullOrWhiteSpace(processName) ? "<window-title-present>" : processName.Trim();
     }
 
     private static string? SanitizeBrowserUrl(string? value, string? knownSiteSearchMarker)
