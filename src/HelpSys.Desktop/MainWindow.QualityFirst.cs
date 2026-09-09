@@ -59,6 +59,9 @@ public partial class MainWindow
             var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
+            var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
+            SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
+
             ScreenCaptureFrame frame;
             try
             {
@@ -86,7 +89,8 @@ public partial class MainWindow
             }
 
             if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-            SetState("画面とWindowsの操作情報を照合して、次の1手を決めています…", speak: false);
+            var fusedEvidence = GuidanceEvidenceService.Build(true, candidates, _history, systemContext);
+            SetState(GuidanceEvidenceService.BuildProgressText(fusedEvidence), speak: false);
 
             QualityGuideDecision quality;
             try
@@ -137,13 +141,20 @@ public partial class MainWindow
                 return;
             }
 
+            var structuredFusionTarget =
+                quality.Status.Equals("target", StringComparison.OrdinalIgnoreCase) &&
+                !quality.ScreenConfirmed &&
+                quality.Confidence >= MinimumStructuredFallbackConfidence &&
+                !string.IsNullOrWhiteSpace(quality.TargetId) &&
+                !string.Equals(quality.TargetId, "vision-target", StringComparison.Ordinal);
+
             if (!quality.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
-                !quality.ScreenConfirmed ||
-                quality.Confidence < MinimumQualityTargetConfidence)
+                quality.Confidence < MinimumQualityTargetConfidence ||
+                (!quality.ScreenConfirmed && !structuredFusionTarget))
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 StopWithMessage(string.IsNullOrWhiteSpace(quality.Instruction)
-                    ? "画像では次の操作を確定できず、Windows上の操作対象でも一致する場所が見つかりませんでした。"
+                    ? "複数の情報を照合しましたが、次の操作を十分な確度で決められませんでした。"
                     : quality.Instruction);
                 return;
             }
@@ -159,6 +170,11 @@ public partial class MainWindow
 
             if (decision.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(decision.TargetId))
             {
+                if (!quality.ScreenConfirmed)
+                {
+                    StopWithMessage("キーボード操作は画面でも確認できた場合だけ案内します。");
+                    return;
+                }
                 ShowKeyboardGuide(decision, candidates, systemContext, generation);
                 return;
             }
@@ -177,10 +193,10 @@ public partial class MainWindow
             }
 
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
-            if (target is null || !target.Interactable || target.Bounds.IsEmpty)
+            if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage("画像の候補と、現在操作できるWindowsの場所を一致させられませんでした。");
+                StopWithMessage("候補と、現在操作できるWindowsの場所を一致させられませんでした。");
                 return;
             }
 
@@ -259,9 +275,6 @@ public partial class MainWindow
             return true;
         }
 
-        // Structured fallback is intentionally narrower than visual guidance: it may point only
-        // to a concrete, current UI Automation node. It never declares completion, invents image
-        // coordinates, or emits targetless keyboard actions without visual confirmation.
         if (!fallback.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
             fallback.Confidence < MinimumStructuredFallbackConfidence ||
             string.IsNullOrWhiteSpace(fallback.TargetId))

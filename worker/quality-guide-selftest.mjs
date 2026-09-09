@@ -30,6 +30,10 @@ async function ask(body) {
   return value;
 }
 
+function payload() {
+  return JSON.parse(lastInvocation?.args?.messages?.[1]?.content || '{}');
+}
+
 const baseDone = {
   status: 'done', targetId: null, action: 'none', instruction: '目的の画面です。', question: null, key: null,
   confidence: 0.97, x: 0, y: 0, width: 0, height: 0,
@@ -39,6 +43,13 @@ const baseDone = {
 nextDecision = { ...baseDone, screenConfirmed: false, visualEvidence: '' };
 let value = await ask({
   request: 'Excelを開いて',
+  evidence: {
+    screenshotAvailable: true,
+    uiElementCount: 1,
+    interactableCount: 0,
+    foregroundProcess: 'excel',
+    evidenceSources: ['screenshot', 'ui-automation', 'foreground-window']
+  },
   systemContext: { foregroundProcess: 'excel', foregroundProcessId: 10, runningApps: ['excel'] },
   elements: [{ id: 'e1', name: 'Microsoft Excel', controlType: 'Window', processName: 'excel', interactable: false, enabled: true }]
 });
@@ -46,6 +57,8 @@ assert(value.status === 'not_found', 'done without visible screen confirmation m
 assert(lastInvocation?.model === '@cf/zai-org/glm-5.3-flash', 'quality planner must default to GLM-5.3 Flash');
 assert(lastInvocation?.args?.reasoning_effort === 'low', 'quality planner must use low reasoning effort for normal latency');
 assert(lastInvocation?.args?.max_completion_tokens <= 520, 'quality planner output budget must stay compact');
+assert(payload().evidenceSummary?.sourceCount === 3, 'quality planner must receive an explicit evidence-source inventory');
+assert(payload().evidenceSummary?.uiElementCount === 1, 'quality planner must receive the UIA candidate count');
 
 nextDecision = { ...baseDone };
 value = await ask({
@@ -71,9 +84,39 @@ nextDecision = {
 value = await ask({
   request: '設定を開いて',
   systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
-  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true, toggleState: 'Off', selected: false }]
 });
 assert(value.status === 'target' && value.targetId === 'b1', 'visible UIA target aligned with screenshot should remain actionable');
+assert(payload().uiElements?.[0]?.toggleState === 'Off', 'UIA state must survive compaction into the fused model input');
+assert(payload().uiElements?.[0]?.selected === false, 'UIA selection state must survive compaction into the fused model input');
+
+nextDecision = {
+  status: 'target', targetId: 'b1', action: 'left_click', instruction: '「設定」を1回押してください。',
+  question: null, key: null, confidence: 0.91, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: '設定を開いて',
+  evidence: {
+    screenshotAvailable: true,
+    uiElementCount: 1,
+    interactableCount: 1,
+    foregroundProcess: 'searchhost',
+    evidenceSources: ['screenshot', 'ui-automation', 'foreground-window']
+  },
+  systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
+});
+assert(value.status === 'target' && value.targetId === 'b1' && value.screenConfirmed === false,
+  'high-confidence real UIA target must survive when the screenshot is ambiguous');
+
+nextDecision = { ...nextDecision, confidence: 0.84 };
+value = await ask({
+  request: '設定を開いて',
+  systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
+});
+assert(value.status === 'not_found', 'ambiguous structured target below the high-confidence threshold must be rejected');
 
 nextDecision = {
   status: 'target', targetId: 'chrome-desktop', action: 'left_click',
@@ -95,6 +138,18 @@ assert(value.instruction.includes('2回'), 'desktop shortcut instruction must ex
 assert(value.instruction.includes('Google Chrome'), 'guidance should name the actual visible browser instead of a generic internet-app phrase');
 
 nextDecision = {
+  status: 'target', targetId: 'secret', action: 'type_text', instruction: '入力してください。',
+  question: null, key: null, confidence: 0.96, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '入力欄が見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: 'ログインしたい',
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 40, runningApps: ['chrome'] },
+  elements: [{ id: 'secret', name: 'パスワード', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, focused: true, keyboardFocusable: true, password: true, value: 'do-not-send' }]
+});
+assert(payload().uiElements?.[0]?.value === null, 'password values must never enter the model payload');
+
+nextDecision = {
   status: 'clarify', targetId: null, action: 'none', instruction: '', question: 'パスワードを教えてください。', key: null,
   confidence: 0.99, x: 0, y: 0, width: 0, height: 0,
   screenConfirmed: true, visualEvidence: 'ログイン画面', observedDomain: null, sponsored: false
@@ -106,4 +161,4 @@ value = await ask({
 });
 assert(value.status === 'not_found', 'quality planner must never ask HelpSys to receive a secret');
 
-console.log('HelpSys GLM quality-first fused guidance self-test passed.');
+console.log('HelpSys multisource evidence-fusion guidance self-test passed.');
