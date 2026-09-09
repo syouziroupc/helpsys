@@ -9,6 +9,7 @@ public partial class MainWindow
     private readonly CommanderWakeService _commander = new();
     private int _commanderWakeBusy;
     private bool _commanderStarted;
+    private CancellationTokenSource? _commanderInteractionCts;
 
     private void MainWindow_CombinedLoaded(object sender, RoutedEventArgs e)
     {
@@ -23,6 +24,7 @@ public partial class MainWindow
 
     private void MainWindow_CombinedClosing(object? sender, CancelEventArgs e)
     {
+        try { _commanderInteractionCts?.Cancel(); } catch { }
         if (_commanderStarted)
         {
             _commanderStarted = false;
@@ -35,10 +37,15 @@ public partial class MainWindow
 
     private void CommanderButton_Click(object sender, RoutedEventArgs e)
     {
-        _commander.SetEnabled(!_commander.Enabled);
+        var enable = !_commander.Enabled;
+        if (!enable)
+        {
+            try { _commanderInteractionCts?.Cancel(); } catch { }
+        }
+        _commander.SetEnabled(enable);
         UpdateCommanderUi();
-        SetState(_commander.Enabled
-            ? "コマンダーを有効にしました。「ねえコマンダー」で呼び出せます。"
+        SetState(enable
+            ? "コマンダーを有効にしました。音声で呼び出せます。"
             : "コマンダーを停止しました。マイク待機も解除しています。", speak: false);
     }
 
@@ -55,7 +62,7 @@ public partial class MainWindow
             ? "コマンダー OFF"
             : _commander.Listening ? "コマンダー ●" : "コマンダー";
         CommanderButton.ToolTip = !_commander.Enabled
-            ? "押すと『ねえコマンダー』の待機を開始します"
+            ? "押すと音声呼び出しの待機を開始します"
             : $"『ねえコマンダー』で呼び出す / 状態: {_commander.Status}";
     }
 
@@ -78,8 +85,8 @@ public partial class MainWindow
             return;
         }
 
+        CancellationTokenSource? interactionCts = null;
         CancellationTokenSource? localVoiceCts = null;
-        string? command = null;
         try
         {
             if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
@@ -87,53 +94,70 @@ public partial class MainWindow
 
             if (_planning || _verifyingAction)
             {
-                SetState("今の案内を確認中です。終わったらもう一度「ねえコマンダー」と呼んでください。", speak: true);
+                SetState("現在の案内を確認中です。処理が終わってから呼び出してください。", speak: false);
                 return;
             }
 
+            interactionCts = new CancellationTokenSource(TimeSpan.FromSeconds(16));
+            _commanderInteractionCts = interactionCts;
+            var token = interactionCts.Token;
+
             _speechOutput.Stop();
             SetState("コマンダーを呼び出しました。用件を話してください。", speak: false);
-            _speechOutput.Speak("はい。どうしましたか？", allowRepeat: true);
 
-            // The wake recognizer is already fully released. Keep it suspended while the
-            // spoken acknowledgement is playing so it cannot hear itself, then acquire the
-            // microphone for one normal dictation turn.
-            await Task.Delay(2300);
+            // Do not guess how long TTS takes. Dictation starts only after the short
+            // acknowledgement has actually finished (or its bounded timeout expires).
+            await _speechOutput.SpeakPromptAsync("はい。どうしましたか？", token);
+            token.ThrowIfCancellationRequested();
 
             if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
             if (_voiceCts is not null)
             {
-                // A user may manually start voice input during the acknowledgement. Never
-                // steal the same microphone; foreground manual capture keeps priority.
                 SetState("別の音声入力が動いているため、コマンダーはマイクを取りません。", speak: false);
                 return;
             }
 
-            localVoiceCts = new CancellationTokenSource();
+            localVoiceCts = CancellationTokenSource.CreateLinkedTokenSource(token);
             _voiceCts = localVoiceCts;
             VoiceButton.Content = "停止";
             GuideButton.IsEnabled = false;
-            SetState("コマンダーが用件を聞いています…", speak: false);
+            SetState("用件を聞いています…", speak: false);
 
-            command = await _speechInput.RecognizeOnceAsync(localVoiceCts.Token);
-            if (string.IsNullOrWhiteSpace(command) && !localVoiceCts.IsCancellationRequested &&
-                !Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                SetState("用件を聞き取れませんでした。もう一度「ねえコマンダー」と呼ぶか、文字で入力してください。", speak: true);
+            var command = await _speechInput.RecognizeOnceAsync(localVoiceCts.Token);
+            token.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                SetState("聞き取れませんでした。必要ならもう一度呼び出してください。", speak: true);
+                return;
+            }
+
+            RequestBox.Text = command.Trim();
+            RequestBox.CaretIndex = RequestBox.Text.Length;
+            SetState($"「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
+
+            // Keep the wake recognizer released through the initial planning pass. This avoids
+            // a new wake callback racing the same microphone/UI while the current request starts.
+            await StartOrContinueSessionAsync();
         }
         catch (OperationCanceledException)
         {
             if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                SetState("コマンダーの音声入力を停止しました。", speak: false);
+                SetState("音声入力を終了しました。", speak: false);
         }
         catch (Exception ex)
         {
             if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                SetState($"コマンダーの音声入力を開始できません: {ex.Message}", speak: true);
+                SetState($"音声入力を開始できません: {ex.Message}", speak: false);
         }
         finally
         {
             if (ReferenceEquals(_voiceCts, localVoiceCts)) _voiceCts = null;
             try { localVoiceCts?.Dispose(); } catch { }
+
+            if (ReferenceEquals(_commanderInteractionCts, interactionCts)) _commanderInteractionCts = null;
+            try { interactionCts?.Dispose(); } catch { }
+
             _commander.CompleteWakeInteraction();
             Interlocked.Exchange(ref _commanderWakeBusy, 0);
 
@@ -144,11 +168,5 @@ public partial class MainWindow
                 UpdateCommanderUi();
             }
         }
-
-        if (string.IsNullOrWhiteSpace(command) || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        RequestBox.Text = command.Trim();
-        RequestBox.CaretIndex = RequestBox.Text.Length;
-        SetState($"コマンダー: 「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
-        await StartOrContinueSessionAsync();
     }
 }
