@@ -127,17 +127,6 @@ public partial class MainWindow
             }
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
-
-            if (!hardChange && !_verifyingAction && _currentDecision is not null &&
-                _currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-            {
-                _liveElements = nowElements;
-                _liveSystem = nowSystem;
-                ClearStableLiveChangeCandidate();
-                await ValidateCurrentVisionTargetAsync(token);
-                return;
-            }
-
             var topologyChange = HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
             if (!hardChange && !topologyChange)
