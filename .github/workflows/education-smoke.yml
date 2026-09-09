@@ -5,11 +5,17 @@ on:
     branches: [main]
     paths:
       - "src/HelpSys.Education/**"
+      - "worker/education.js"
+      - "worker/education-selftest.mjs"
+      - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
   pull_request:
     paths:
       - "src/HelpSys.Education/**"
       - "HelpSys.sln"
+      - "worker/education.js"
+      - "worker/education-selftest.mjs"
+      - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
 
 jobs:
@@ -20,6 +26,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - name: Test Education AI contract
+        run: |
+          node --check worker/education.js
+          node --check worker/education-selftest.mjs
+          node worker/education-selftest.mjs
 
       - name: Restore and build
         run: |
@@ -43,45 +55,25 @@ jobs:
             $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
             $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-            try {
-              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-              $bitmap.Save((Join-Path $PWD $path), [System.Drawing.Imaging.ImageFormat]::Png)
-            }
-            finally {
-              $graphics.Dispose()
-              $bitmap.Dispose()
-            }
+            try { $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); $bitmap.Save((Join-Path $PWD $path), [System.Drawing.Imaging.ImageFormat]::Png) }
+            finally { $graphics.Dispose(); $bitmap.Dispose() }
           }
 
           try {
             if ($process.HasExited) { throw 'HelpSys Education exited during startup.' }
             $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $condition = New-Object System.Windows.Automation.PropertyCondition(
-              [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
-              $process.Id)
+            $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
             $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
             if ($null -eq $window) { throw 'HelpSys Education top-level window was not exposed to UI Automation.' }
-
             $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             $names = @($window.Current.Name)
-            foreach ($node in $nodes) {
-              try {
-                if (-not [string]::IsNullOrWhiteSpace($node.Current.Name)) { $names += $node.Current.Name }
-              }
-              catch { }
-            }
-
+            foreach ($node in $nodes) { try { if (-not [string]::IsNullOrWhiteSpace($node.Current.Name)) { $names += $node.Current.Name } } catch { } }
             foreach ($required in @('HelpSys Education','教育','練習','テスト')) {
-              if (-not ($names -contains $required)) {
-                Save-Screenshot 'artifacts/education-failure.png'
-                throw "Education UI missing required element: $required"
-              }
+              if (-not ($names -contains $required)) { Save-Screenshot 'artifacts/education-failure.png'; throw "Education UI missing required element: $required" }
             }
             Save-Screenshot 'artifacts/education-home.png'
           }
-          finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-          }
+          finally { if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force } }
 
       - name: Upload Education smoke artifact
         if: always()

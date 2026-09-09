@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpsys-education",
+  "main": "worker/education.js",
+  "compatibility_date": "2026-09-09",
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "HELPSYS_EDUCATION_MODEL": "@cf/google/gemma-4-26b-a4b-it"
+  }
+}
