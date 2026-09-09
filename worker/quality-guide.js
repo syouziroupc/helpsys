@@ -42,17 +42,26 @@ const qualitySystemPrompt = `You are the fast, careful multimodal planning compo
 The human operates the computer. Return only ONE immediate next operation by calling return_quality_guidance exactly once.
 
 MULTI-SOURCE EVIDENCE FUSION:
-- Do not treat one source as automatically authoritative for every question. First compare the independent evidence that is available.
-- screenshot: best evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
-- uiElements: best evidence for control identity, Name, AutomationId, ControlType, current value/state, focus, actionability and exact Windows bounds.
+- The screenshot is ONE source, not the master source. Do not make the whole decision depend on image recognition alone.
+- screenshot: evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
+- uiElements: evidence for control identity, Name, AutomationId, ControlType, current value/state, focus, actionability and exact Windows bounds.
 - systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser URL/domain.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
-- completedSteps: sequence evidence only. It can explain how the current state was reached, but never overrides current state.
-- windowsKnowledge/canonicalConstraint: known Windows behavior and hard workflow constraints.
-- Prefer a next step supported by at least two independent current-state signals when two or more are available.
-- If sources conflict, determine what each source can reliably establish. Current foreground/window state beats stale history. A current actionable UIA node can establish control identity even when text is visually hard to read; the screenshot must still support claims about what is visibly present.
+- completedSteps: sequence evidence. It explains how the current state may have been reached and which actions already failed, but never overrides current state.
+- windowsKnowledge/canonicalConstraint: Windows behavior and known standard paths. Standard paths are useful references, not a substitute for observing the current state.
+- Compare all independent evidence that is available. Prefer a next step supported by at least two current-state signals when two or more exist.
+- If sources conflict, decide what each source can actually establish. Current foreground/window state beats stale history. A current actionable UIA node can establish control identity even when text is visually hard to read.
 - When the screenshot is ambiguous but UIA plus foreground/system state strongly identify a current actionable control, you may return that real UI element id with screenConfirmed=false. This path requires high confidence and will be revalidated by the desktop immediately before display.
-- Do not invent agreement. If the conflict changes what action is safe or correct, return not_found or clarify.
+- Do not invent agreement. If a conflict changes what action is safe or correct, clarify instead of guessing.
+
+ROUTE RECOVERY:
+- The USER GOAL is fixed. The imagined route is NOT fixed.
+- A user may click the wrong thing, open a different window, arrive at an unexpected dialog, or take a different valid path. This is normal state, not a reason to stop.
+- In recoveryMode, first infer WHERE THE USER IS NOW from all evidence. Then choose the smallest safe next operation that moves the current state back toward the goal.
+- Do not require the current screen to match an earlier expected route. A recovery step may close an irrelevant dialog, switch to the relevant app, reopen search, move to a parent view, or use another safe path when that action is grounded in the current evidence.
+- Do not repeat an action recorded as failed unless current evidence shows the cause of failure has changed.
+- canonicalConstraint is a route reference during recoveryMode, not a veto, except safety warnings and user-choice branches remain hard constraints.
+- In recoveryMode, prefer a grounded target or a necessary clarification over not_found. Use not_found only when no safe next operation can be grounded from the available evidence.
 
 PHYSICAL WINDOWS RULES:
 - A desktop shortcut/icon exposed as an Explorer ListItem normally needs a DOUBLE CLICK to launch. A single click merely selects it and is not enough.
@@ -75,7 +84,7 @@ QUALITY AND SPEED:
 - Never bypass browser security, privacy, certificate, or phishing warnings.
 - For known sites, avoid ads/sponsored results and lookalike domains.
 - Use short, concrete Japanese. Describe the actual mouse or keyboard motion. Avoid unexplained jargon.
-- confidence means confidence that this exact immediate step is correct on the current state after reconciling the available evidence.`;
+- confidence means confidence that this exact immediate step is correct on the CURRENT state after reconciling the available evidence.`;
 
 export default {
   async fetch(request, env) {
@@ -103,19 +112,25 @@ export default {
       : [];
     const systemContext = compactSystemContext(body?.systemContext);
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
+    const recoveryMode = body?.recoveryMode === true;
+    const routeIssue = text(body?.routeIssue, 180);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
-    const canonical = compactCanonical(task);
+    const canonical = compactCanonical(task, recoveryMode);
 
     const model = selectQualityModel(env.HELPSYS_QUALITY_MODEL);
     const userPayload = JSON.stringify({
       goal,
+      recoveryMode,
+      routeIssue: routeIssue || null,
       completedSteps: history,
       systemContext,
       evidenceSummary: evidence,
       windowsKnowledge: task?.knowledge || '',
       canonicalConstraint: canonical,
       uiElements: elements,
-      instruction: 'Reconcile the available independent evidence sources, then decide exactly one current-state step.'
+      instruction: recoveryMode
+        ? 'The goal is fixed but the route is flexible. Infer the current state, then choose exactly one safe recovery step toward the goal. Do not stop merely because the current screen differs from the expected path.'
+        : 'Reconcile the available independent evidence sources, then decide exactly one current-state step.'
     });
 
     try {
@@ -135,7 +150,7 @@ export default {
 
       const raw = extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
-      return json(validateQualityDecision(raw, elements, task));
+      return json(validateQualityDecision(raw, elements, task, recoveryMode));
     } catch (error) {
       console.error('quality guide inference failed', error);
       return json({ error: 'quality_inference_failed' }, 502);
@@ -143,7 +158,7 @@ export default {
   }
 };
 
-export function validateQualityDecision(raw, elements, task) {
+export function validateQualityDecision(raw, elements, task, recoveryMode = false) {
   const ids = new Set(elements.map(x => x.id));
   const statuses = new Set(['target', 'clarify', 'done', 'not_found']);
   const actions = new Set(['left_click', 'double_click', 'type_text', 'press_key', 'none']);
@@ -158,6 +173,7 @@ export function validateQualityDecision(raw, elements, task) {
   const key = nullableText(raw?.key, 80);
   const observedDomain = nullableText(raw?.observedDomain, 220);
   const sponsored = raw?.sponsored === true;
+  const relaxedCanonical = recoveryMode && task?.kind === 'launch-app';
 
   const base = {
     status, targetId, action, instruction, question, key, confidence,
@@ -170,7 +186,7 @@ export function validateQualityDecision(raw, elements, task) {
 
   if (status === 'done') {
     if (!screenConfirmed || confidence < MIN_DONE_CONFIDENCE || visualEvidence.length < 3) return notFound('画面上で完了を確認できませんでした。');
-    if (isStrictTask(task) && task?.deterministic && task.deterministic.status !== 'done')
+    if (isStrictTask(task) && !relaxedCanonical && task?.deterministic && task.deterministic.status !== 'done')
       return notFound('画面上の状態と安全な標準手順が一致しないため、完了扱いにしません。');
     return { ...base, targetId: null, action: 'none', key: null, question: null };
   }
@@ -206,7 +222,7 @@ export function validateQualityDecision(raw, elements, task) {
   if (action === 'press_key') {
     if (!screenConfirmed) return notFound('キーボード操作は現在画面でも確認できた場合だけ案内します。');
     if (!key) return notFound('押すキーを確認できませんでした。');
-    if (isStrictTask(task) && task?.deterministic?.status === 'target' && task.deterministic.action === 'press_key' &&
+    if (isStrictTask(task) && !relaxedCanonical && task?.deterministic?.status === 'target' && task.deterministic.action === 'press_key' &&
         normalizeKey(key) !== normalizeKey(task.deterministic.key))
       return notFound('画面と安全な標準手順で次のキーが一致しませんでした。');
     return { ...base, targetId: null };
@@ -229,7 +245,7 @@ export function validateQualityDecision(raw, elements, task) {
   if (task?.kind === 'site' && (physical.sponsored || /(?:広告|スポンサー|sponsored|\bad\b)/i.test(target.name || '')))
     return notFound('広告ではなく公式サイトへ進む必要があるため、この候補は選びません。');
 
-  if (isStrictTask(task)) {
+  if (isStrictTask(task) && !relaxedCanonical) {
     const guarded = guardDecisionForTask(task, {
       status: 'target', targetId: physical.targetId, action: physical.action,
       instruction: physical.instruction, question: null, key: physical.key, confidence
@@ -265,7 +281,7 @@ function guardSecretClarification(decision) {
   return notFound('パスワード、暗証番号、認証コードなどの秘密情報はHelpSysへ入力しないでください。');
 }
 
-function compactCanonical(task) {
+function compactCanonical(task, recoveryMode = false) {
   if (!task) return null;
   const deterministic = isStrictTask(task) && task.deterministic ? {
     status: task.deterministic.status,
@@ -277,6 +293,7 @@ function compactCanonical(task) {
   } : null;
   return {
     kind: task.kind || 'general',
+    role: recoveryMode && task.kind === 'launch-app' ? 'route_reference' : 'constraint',
     deterministic,
     allowedTargetIds: isStrictTask(task) && task.allowedTargetIds instanceof Set ? [...task.allowedTargetIds] : null,
     officialDomains: Array.isArray(task?.site?.domains) ? task.site.domains : null
