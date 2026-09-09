@@ -13,4 +13,5 @@ public sealed record QualityGuideDecision(
     double Width,
     double Height,
     bool ScreenConfirmed,
-    string VisualEvidence);
+    string VisualEvidence,
+    string? InputText = null);
