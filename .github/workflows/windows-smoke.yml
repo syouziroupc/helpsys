@@ -31,7 +31,10 @@ jobs:
           node --check worker/reliability-v4-selftest.mjs
           node --check worker/quality-guide.js
           node --check worker/quality-guide-selftest.mjs
+          node --check worker/transcribe.js
+          node --check worker/transcribe-selftest.mjs
           node --check tests/site-release-contract.mjs
+          node --check tests/commander-stability-contract.mjs
 
       - name: Test Worker contract
         run: |
@@ -41,6 +44,7 @@ jobs:
           node worker/deliberation-selftest.mjs
           node worker/reliability-v4-selftest.mjs
           node worker/quality-guide-selftest.mjs
+          node worker/transcribe-selftest.mjs
 
       - name: Test site and release contract
         run: node tests/site-release-contract.mjs
@@ -65,8 +69,8 @@ jobs:
           Start-Sleep -Seconds 3
 
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
-          $process = Start-Process $exe -PassThru
-          Start-Sleep -Seconds 5
+          $overlayProcess = $null
+          $process = $null
 
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
@@ -87,7 +91,7 @@ jobs:
           }
 
           function Find-HelpSysElement([string] $automationId) {
-            if ($process.HasExited) { return $null }
+            if ($null -eq $process -or $process.HasExited) { return $null }
             $root = [System.Windows.Automation.AutomationElement]::RootElement
             $processCondition = New-Object System.Windows.Automation.PropertyCondition(
               [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
@@ -100,7 +104,7 @@ jobs:
           }
 
           function Get-HelpSysNames {
-            if ($process.HasExited) { return @() }
+            if ($null -eq $process -or $process.HasExited) { return @() }
             $root = [System.Windows.Automation.AutomationElement]::RootElement
             $processCondition = New-Object System.Windows.Automation.PropertyCondition(
               [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
@@ -118,6 +122,20 @@ jobs:
           }
 
           try {
+            # Visual regression check for the actual listening overlay. No microphone is used.
+            $env:HELPSYS_SMOKE_LISTENING_OVERLAY = '1'
+            $overlayProcess = Start-Process $exe -PassThru
+            Start-Sleep -Seconds 2
+            if ($overlayProcess.HasExited) { throw 'HelpSys exited before the listening overlay screenshot.' }
+            Save-DesktopScreenshot 'artifacts/helpsys-listening-overlay.png'
+            Stop-Process -Id $overlayProcess.Id -Force
+            $overlayProcess.WaitForExit()
+            $overlayProcess = $null
+            Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+
+            $process = Start-Process $exe -PassThru
+            Start-Sleep -Seconds 5
             if ($process.HasExited) { throw 'HelpSys exited before the idle smoke screenshot.' }
             Save-DesktopScreenshot 'artifacts/helpsys-idle.png'
 
@@ -165,7 +183,9 @@ jobs:
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
           }
           finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+            Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
+            if ($null -ne $overlayProcess -and -not $overlayProcess.HasExited) { Stop-Process -Id $overlayProcess.Id -Force }
+            if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
             if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
             if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
