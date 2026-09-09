@@ -18,9 +18,6 @@ public partial class MainWindow
         _deepAuditGuardsAttached = true;
         _actionObserver.LeftClick += ObserveOffRouteClickDeepAudit;
 
-        // KeyReleased was originally subscribed in the constructor. Reorder it once so this
-        // synchronous submission guard sees the finishing key before the normal verifier can
-        // mark a type_text step as complete.
         _actionObserver.KeyReleased -= OnObservedKeyReleasedV3;
         _actionObserver.KeyReleased += ObserveTypeTextSubmitDeepAudit;
         _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
@@ -101,8 +98,6 @@ public partial class MainWindow
         if (!MatchesKeySpecV3(expectedKey, observation)) return;
         if (Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 1) != 0) return;
 
-        // Temporarily hide the decision from the normal KeyReleased subscriber. Otherwise that
-        // subscriber can declare success before this local focus/value verification finishes.
         var generation = _sessionState.Generation;
         var decision = _currentDecision;
         var target = _currentTarget;
@@ -146,12 +141,18 @@ public partial class MainWindow
             }
 
             var expectedText = ExtractExpectedInputTextDeepAudit(decision.Instruction);
-            if (!string.IsNullOrWhiteSpace(expectedText) &&
-                !string.IsNullOrWhiteSpace(fresh.Value) &&
-                !InputTextMatchesDeepAudit(fresh.Value, expectedText))
+            if (string.IsNullOrWhiteSpace(expectedText) || fresh.Value is null)
             {
-                // This comparison is local only. The actual UIA value is never added to history or
-                // sent to the Worker. Tell the user what the instruction expected, not what they typed.
+                RecordTypeTextDeviation("type_text_unverifiable", fresh,
+                    "入力内容そのものをローカルで照合できなかったため、Enter操作を成功扱いにせず現在状態から再計画する。");
+                ClearCurrentGuidanceV3();
+                SetState("入力内容を安全に確認できないため、現在の画面から次の操作を確認し直しています…", speak: false);
+                await TryRouteRecoveryAsync("入力内容をローカルで照合できない", generation, _sessionCts.Token);
+                return;
+            }
+
+            if (!InputTextMatchesDeepAudit(fresh.Value, expectedText))
+            {
                 _currentDecision = decision;
                 _currentTarget = fresh;
                 _guidedBounds = fresh.Bounds;
