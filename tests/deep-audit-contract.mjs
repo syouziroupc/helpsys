@@ -5,6 +5,7 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 
 const guards = read('src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs');
 const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
+const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const qualityWindow = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
 const qualityWorker = read('worker/quality-guide.js');
 
@@ -19,6 +20,14 @@ assert(stable.includes('selected={x.Selected'), 'Selection state must participat
 assert(stable.includes('expand={x.ExpandCollapseState'), 'Expand/collapse state must participate in stable-state detection.');
 assert(stable.includes('if (!_verifyingAction) InvalidatePlannerForLiveContextChange();'), 'Hard context changes during scanning must invalidate stale guidance even when no planner request is active.');
 assert(!stable.includes('if (!_sessionState.PlannerInFlight) return;\n        _sessionState.Invalidate'), 'Stale-guidance invalidation must not depend solely on PlannerInFlight.');
+assert(!stable.includes('_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase)'), 'Text-entry guidance must not suppress focus/state deviation detection.');
+
+assert(watcher.includes('AddAutomationPropertyChangedEventHandler'), 'Semantic UI state changes must trigger live observation without waiting only for heartbeat scans.');
+assert(watcher.includes('TogglePattern.ToggleStateProperty'), 'Toggle changes must trigger the live watcher.');
+assert(watcher.includes('SelectionItemPattern.IsSelectedProperty'), 'Selection changes must trigger the live watcher.');
+assert(watcher.includes('ExpandCollapsePattern.ExpandCollapseStateProperty'), 'Expand/collapse changes must trigger the live watcher.');
+assert(watcher.includes('AutomationElement.HasKeyboardFocusProperty'), 'Focus changes must trigger the live watcher.');
+assert(watcher.includes('RemoveAutomationPropertyChangedEventHandler'), 'Semantic UIA subscriptions must be removed during scope changes/shutdown.');
 
 assert(qualityWindow.includes('var visualAction = decision.Action.Equals("double_click"'), 'Visual targets must preserve double-click semantics.');
 assert(qualityWindow.includes('new GuideDecision("target", "vision-target", visualAction'), 'Visual target runtime state must use the preserved action.');
