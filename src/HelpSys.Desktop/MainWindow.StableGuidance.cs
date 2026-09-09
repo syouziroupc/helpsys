@@ -127,7 +127,8 @@ public partial class MainWindow
             }
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
-            var topologyChange = HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+            var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+            var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
             if (!hardChange && !topologyChange)
             {
@@ -139,7 +140,10 @@ public partial class MainWindow
                 return;
             }
 
-            if (!hardChange && !ConfirmStableLiveChange(nowElements, nowSystem))
+            // Property-change callbacks already pass through the watcher's quiet period. A semantic
+            // state change on the same current control is therefore strong enough to invalidate one
+            // stale instruction without requiring a large whole-screen topology difference.
+            if (!hardChange && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
                 return;
@@ -158,9 +162,11 @@ public partial class MainWindow
                 {
                     _history.Add(new GuideHistoryItem(
                         _stepNumber,
-                        "screen_changed",
+                        semanticChange ? "semantic_state_changed" : "screen_changed",
                         "現在の画面",
-                        "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
+                        semanticChange
+                            ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
+                            : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
@@ -231,6 +237,38 @@ public partial class MainWindow
                (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
     }
 
+    private static bool HasSemanticLiveStateChanged(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        SystemContextSnapshot beforeSystem,
+        IReadOnlyList<UiElementCandidate> afterElements,
+        SystemContextSnapshot afterSystem)
+    {
+        var before = SemanticLiveStateMap(beforeElements, beforeSystem.ForegroundProcess);
+        var after = SemanticLiveStateMap(afterElements, afterSystem.ForegroundProcess);
+
+        foreach (var pair in before)
+        {
+            if (after.TryGetValue(pair.Key, out var afterState) &&
+                !string.Equals(pair.Value, afterState, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static Dictionary<string, string> SemanticLiveStateMap(
+        IReadOnlyList<UiElementCandidate> elements,
+        string foregroundProcess)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in elements.Where(x => x.Interactable && IsRelevantProcess(x.ProcessName, foregroundProcess)))
+        {
+            var identity = StableLiveElementIdentity(item);
+            if (map.ContainsKey(identity)) continue;
+            map[identity] = SemanticLiveState(item);
+        }
+        return map;
+    }
+
     private static bool HasStableLiveTopologyChanged(
         IReadOnlyList<UiElementCandidate> beforeElements,
         SystemContextSnapshot beforeSystem,
@@ -258,18 +296,22 @@ public partial class MainWindow
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private static string StableLiveElementKey(UiElementCandidate x)
+    private static string StableLiveElementKey(UiElementCandidate x) =>
+        $"{StableLiveElementIdentity(x)}|{SemanticLiveState(x)}";
+
+    private static string StableLiveElementIdentity(UiElementCandidate x)
     {
         var bx = (int)Math.Round(x.X / 24d);
         var by = (int)Math.Round(x.Y / 24d);
         var bw = (int)Math.Round(x.Width / 24d);
         var bh = (int)Math.Round(x.Height / 24d);
         var stableName = IsStableNamedControl(x.ControlType) ? NormalizeStableName(x.Name) : string.Empty;
-        var semanticState = x.Interactable
-            ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
-            : string.Empty;
-        return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{semanticState}|{bx},{by},{bw},{bh}";
+        return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
     }
+
+    private static string SemanticLiveState(UiElementCandidate x) => x.Interactable
+        ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
+        : string.Empty;
 
     private static bool IsStableNamedControl(string controlType) => controlType.ToLowerInvariant() is
         "button" or "menuitem" or "listitem" or "treeitem" or "tabitem" or "hyperlink" or "checkbox" or "radiobutton";
