@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSysは、Windows画面を確認して次に操作する場所を案内するPC操作支援ツールです。通常版は『ねえコマンダー』で音声起動できます。">
+  <meta name="description" content="HelpSysは、GLMでWindows画面を確認し、次に操作する場所を案内するPC操作支援ツールです。通常版は『ねえコマンダー』で音声起動できます。">
   <meta name="theme-color" content="#0b1020">
   <link rel="canonical" href="https://helpsys.syouziroupc.workers.dev/">
   <title>HelpSys — Windows操作を、画面上で案内。</title>
@@ -22,9 +22,9 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">WINDOWS 10 / 11 ・ RELIABILITY V7 PREVIEW</p>
+        <p class="eyebrow">WINDOWS 10 / 11 ・ RELIABILITY V8 PREVIEW</p>
         <h1>次の操作を、<br><span>画面上で教える。</span></h1>
-        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。現在の画面を確認し、あなたが次にクリック・入力する場所を短い説明で案内するWindows向け操作支援ツールです。通常版は「ねえコマンダー」と呼びかけて音声で開始できます。</p>
+        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。GLMが現在の画面とWindowsの構造情報を照合し、あなたが次にクリック・入力する場所を1手ずつ案内します。通常版は「ねえコマンダー」と呼びかけて音声で開始できます。</p>
         <div class="actions" aria-label="ダウンロード">
           <a class="download-button" href="/download">通常版をダウンロード</a>
           <a class="download-button ghost" href="/download/education">Education版</a>
@@ -56,13 +56,13 @@
         <article class="download-card">
           <p class="eyebrow">HELPSYS</p>
           <h3>通常版</h3>
-          <p>「何をすればいいか分からない」ときに、現在の画面から次の1手を案内します。操作は利用者自身が行い、HelpSysは結果を確認して次へ進みます。「ねえコマンダー」による音声起動にも対応しています。</p>
+          <p>現在の画面から次の1手を案内します。Reliability v8ではGLMへ移行し、Commanderのマイク競合・フリーズ対策と、デスクトップショートカット等の物理操作判定を強化しました。</p>
           <a class="download-button" href="/download">最新版ZIPをダウンロード</a>
         </article>
         <article class="download-card">
           <p class="eyebrow">HELPSYS EDUCATION</p>
           <h3>Education版</h3>
-          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。難易度を少しずつ上げ、最終的にWindowsの基本操作を身につけるための学習版です。</p>
+          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。通常版の安定化を優先しているため、Educationの追加開発は現在優先していません。</p>
           <a class="download-button ghost" href="/download/education">Education最新版ZIP</a>
         </article>
       </div>
@@ -77,12 +77,12 @@
         <article class="card">
           <span class="number">01</span>
           <h3>HelpSysを呼ぶ</h3>
-          <p>「ねえコマンダー」と呼びかけるか、画面右下のボタン、<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。Commander待機は他の音声入力がマイクを使う間は停止し、競合を避けます。</p>
+          <p>「ねえコマンダー」と呼びかけるか、画面右下のボタン、<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。v8では他の音声入力が動く前にCommanderのマイク待機を完全に解放します。</p>
         </article>
         <article class="card">
           <span class="number">02</span>
           <h3>やりたいことを伝える</h3>
-          <p>「YouTubeを見たい」など目的を文字または音声で伝えます。HelpSysは現在のスクリーンショット、UI構造、前面アプリなどを同時に確認して次の操作対象を判断します。</p>
+          <p>「YouTubeを見たい」など目的を文字または音声で伝えます。GLM-5.3 Flashが現在のスクリーンショットとUI構造を同時に確認して次の操作を判断します。</p>
         </article>
         <article class="card">
           <span class="number">03</span>
@@ -94,14 +94,14 @@
 
     <section class="section split-section">
       <div>
-        <p class="eyebrow">QUALITY FIRST</p>
-        <h2>構造情報だけで先に決めない。</h2>
+        <p class="eyebrow">RELIABILITY V8</p>
+        <h2>正しさと応答速度を両立する。</h2>
       </div>
       <div class="feature-list">
-        <div><strong>現在の画面を主要証拠にする</strong><span>各ステップで現在のスクリーンショットを確認し、UI Automationや前面アプリ情報は補助証拠として同時に照合します。</span></div>
-        <div><strong>矛盾したら進まない</strong><span>画面とUI構造・system contextが一致しない場合は、推測で次へ進まず再確認します。</span></div>
-        <div><strong>完了を厳しく確認する</strong><span>バックグラウンドでアプリが動いているだけでは完了にせず、画面上の可視証拠と高いconfidenceを要求します。</span></div>
-        <div><strong>古い案内を捨てる</strong><span>画面や前面アプリが変わった場合、以前の計画や青枠を新しい画面へ持ち越しません。</span></div>
+        <div><strong>GLMで画面を確認</strong><span>画面判断はGLM-5.3 Flash、通常テキスト処理はGLM-4.7 Flashを使用します。</span></div>
+        <div><strong>物理操作を再検証</strong><span>デスクトップショートカットはダブルクリック、タスクバーは1クリックなど、AI出力をそのまま表示せずWindows側の操作形態と照合します。</span></div>
+        <div><strong>Commanderを固めない</strong><span>音声recognizerの停止・破棄を状態lockから分離し、マイク解放完了後だけ次の認識へ進みます。</span></div>
+        <div><strong>待ちすぎない</strong><span>音声入力とモデル呼び出しに短い上限時間を設け、固まって見える長時間待機を避けます。</span></div>
       </div>
     </section>
 
@@ -110,14 +110,14 @@
         <p class="eyebrow">PRIVACY</p>
         <h2>送信前に画面を確認する。</h2>
       </div>
-      <p>Quality Firstでは案内判断に現在のスクリーンショットを使用します。ただし、安全にキャプチャできない場合はUI構造だけで推測して続行しません。パスワード欄など秘密情報を含む画面の扱いを確認し、パスワード、PIN、OTP、認証コード等をHelpSysへ入力するよう求める案内は拒否します。</p>
+      <p>Quality Firstでは案内判断に現在のスクリーンショットを使用します。ただし、安全にキャプチャできない場合はUI構造だけで推測して続行しません。パスワード、PIN、OTP、認証コード等をHelpSysへ入力するよう求める案内は拒否します。</p>
     </section>
 
     <section class="download-panel">
       <div>
         <p class="eyebrow">DOWNLOAD</p>
         <h2>HelpSys for Windows</h2>
-        <p>通常版・Education版ともにWindows 10 / 11、64-bit環境向けの開発版です。通常版の最新版はReliability v7です。</p>
+        <p>Windows 10 / 11、64-bit環境向けの開発版です。通常版の最新版はReliability v8です。</p>
       </div>
       <div class="download-panel-actions">
         <a class="download-button secondary" href="/download">通常版</a>
