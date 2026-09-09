@@ -1,3 +1,4 @@
+import '../tests/commander-stability-contract.mjs';
 import quality from './quality-guide.js';
 
 function assert(condition, message) {
@@ -42,6 +43,9 @@ let value = await ask({
   elements: [{ id: 'e1', name: 'Microsoft Excel', controlType: 'Window', processName: 'excel', interactable: false, enabled: true }]
 });
 assert(value.status === 'not_found', 'done without visible screen confirmation must be rejected');
+assert(lastInvocation?.model === '@cf/zai-org/glm-5.3-flash', 'quality planner must default to GLM-5.3 Flash');
+assert(lastInvocation?.args?.reasoning_effort === 'low', 'quality planner must use low reasoning effort for normal latency');
+assert(lastInvocation?.args?.max_completion_tokens <= 520, 'quality planner output budget must stay compact');
 
 nextDecision = { ...baseDone };
 value = await ask({
@@ -72,6 +76,25 @@ value = await ask({
 assert(value.status === 'target' && value.targetId === 'b1', 'visible UIA target aligned with screenshot should remain actionable');
 
 nextDecision = {
+  status: 'target', targetId: 'chrome-desktop', action: 'left_click',
+  instruction: '青い枠のインターネットを見るアプリで、マウスの左ボタンを1回押してください。',
+  question: null, key: null, confidence: 0.96, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: 'デスクトップにGoogle Chromeのショートカットが見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: 'youtubeが見たい',
+  systemContext: { foregroundProcess: 'explorer', foregroundProcessId: 50, runningApps: ['chrome'], taskbarVisible: true },
+  elements: [{
+    id: 'chrome-desktop', name: 'Google Chrome', controlType: 'ListItem', processName: 'explorer',
+    interactable: true, enabled: true, keyboardFocusable: true, focused: false
+  }]
+});
+assert(value.status === 'target' && value.targetId === 'chrome-desktop', 'Chrome desktop shortcut should remain the selected target');
+assert(value.action === 'double_click', 'Explorer desktop shortcut launch must be corrected to double_click');
+assert(value.instruction.includes('2回'), 'desktop shortcut instruction must explicitly say two left-button presses');
+assert(value.instruction.includes('Google Chrome'), 'guidance should name the actual visible browser instead of a generic internet-app phrase');
+
+nextDecision = {
   status: 'clarify', targetId: null, action: 'none', instruction: '', question: 'パスワードを教えてください。', key: null,
   confidence: 0.99, x: 0, y: 0, width: 0, height: 0,
   screenConfirmed: true, visualEvidence: 'ログイン画面', observedDomain: null, sponsored: false
@@ -83,4 +106,4 @@ value = await ask({
 });
 assert(value.status === 'not_found', 'quality planner must never ask HelpSys to receive a secret');
 
-console.log('HelpSys quality-first fused guidance self-test passed.');
+console.log('HelpSys GLM quality-first fused guidance self-test passed.');

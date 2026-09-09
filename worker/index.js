@@ -1,6 +1,7 @@
 import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTask, visionHintForTask } from './windows-knowledge.js';
 
-const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+const DEFAULT_TEXT_MODEL = '@cf/zai-org/glm-4.7-flash';
+const DEFAULT_VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const MAX_UI_ELEMENTS = 420;
 const MAX_HISTORY = 12;
 const MAX_IMAGE_CHARS = 6_500_000;
@@ -105,7 +106,12 @@ export default {
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
 
     if (url.pathname === '/health' && request.method === 'GET') {
-      return json({ ok: true, service: 'helpsys', model: env.HELPSYS_MODEL || DEFAULT_MODEL });
+      return json({
+        ok: true,
+        service: 'helpsys',
+        model: selectTextModel(env.HELPSYS_MODEL),
+        visionModel: selectVisionModel(env.HELPSYS_VISION_MODEL || env.HELPSYS_QUALITY_MODEL)
+      });
     }
 
     if (request.method !== 'POST' || (url.pathname !== '/v1/guide' && url.pathname !== '/v1/vision-guide')) {
@@ -141,7 +147,7 @@ async function runStructuredGuide(goal, history, systemContext, body, env) {
   if (task.forceVision) return json(safeNotFound(0));
   if (elements.length === 0) return json(safeNotFound(0));
 
-  const model = env.HELPSYS_MODEL || DEFAULT_MODEL;
+  const model = selectTextModel(env.HELPSYS_MODEL);
   const userPayload = JSON.stringify({
     goal,
     completedSteps: history,
@@ -181,7 +187,7 @@ async function runVisionGuide(goal, history, systemContext, body, env) {
   }
 
   const task = buildWindowsTaskContext(goal, [], history, systemContext);
-  const model = env.HELPSYS_MODEL || DEFAULT_MODEL;
+  const model = selectVisionModel(env.HELPSYS_VISION_MODEL || env.HELPSYS_QUALITY_MODEL);
   const userPayload = JSON.stringify({
     goal,
     completedSteps: history,
@@ -213,6 +219,14 @@ async function runVisionGuide(goal, history, systemContext, body, env) {
     console.error('vision guide inference failed', error);
     return json({ error: 'vision_inference_failed' }, 502);
   }
+}
+
+function selectTextModel(value) {
+  return value === DEFAULT_TEXT_MODEL ? value : DEFAULT_TEXT_MODEL;
+}
+
+function selectVisionModel(value) {
+  return value === DEFAULT_VISION_MODEL ? value : DEFAULT_VISION_MODEL;
 }
 
 function authorized(request, env) {

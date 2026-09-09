@@ -5,8 +5,9 @@ namespace HelpSys.Services;
 
 public sealed class SpeechOutputService : IDisposable
 {
-    private static readonly TimeSpan SpeechCommitDelay = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan SpeechCommitDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan DuplicateSuppressionWindow = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan PromptTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SpeechSynthesizer _synthesizer = new();
     private readonly object _gate = new();
@@ -34,8 +35,6 @@ public sealed class SpeechOutputService : IDisposable
         {
             if (_disposed) return;
 
-            // Automatic live guidance can request the same sentence repeatedly while UIA is
-            // noisy. Ignore that chatter without interrupting speech that is already correct.
             if (!allowRepeat &&
                 (string.Equals(_pendingSpeechText, value, StringComparison.Ordinal) ||
                  (string.Equals(_lastSpokenText, value, StringComparison.Ordinal) &&
@@ -48,14 +47,73 @@ public sealed class SpeechOutputService : IDisposable
             current = new CancellationTokenSource();
             _pendingSpeechCts = current;
             _pendingSpeechText = value;
-
-            // Once a different/new instruction has been accepted, the previous committed
-            // instruction is stale. Stop it immediately; only the new instruction is delayed.
             try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
         }
 
         try { previous?.Cancel(); } catch { }
         _ = CommitSpeechAsync(value, current, allowRepeat);
+    }
+
+    public async Task SpeakPromptAsync(string? text, CancellationToken cancellationToken = default)
+    {
+        var value = Prepare(text);
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        CancellationTokenSource? pending;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            pending = _pendingSpeechCts;
+            _pendingSpeechCts = null;
+            _pendingSpeechText = null;
+            try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
+        }
+        try { pending?.Cancel(); } catch { }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Prompt? prompt = null;
+        EventHandler<SpeakCompletedEventArgs>? handler = null;
+        handler = (_, e) =>
+        {
+            if (prompt is null || ReferenceEquals(e.Prompt, prompt)) completion.TrySetResult(true);
+        };
+
+        try
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _synthesizer.SpeakCompleted += handler;
+                prompt = _synthesizer.SpeakAsync(value);
+                _lastSpokenText = value;
+                _lastSpokenUtc = DateTime.UtcNow;
+            }
+
+            using var registration = cancellationToken.Register(() =>
+            {
+                completion.TrySetCanceled(cancellationToken);
+                lock (_gate)
+                {
+                    try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
+                }
+            });
+
+            try { await completion.Task.WaitAsync(PromptTimeout, cancellationToken).ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                lock (_gate)
+                {
+                    try { _synthesizer.SpeakAsyncCancelAll(); } catch { }
+                }
+            }
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                try { _synthesizer.SpeakCompleted -= handler; } catch { }
+            }
+        }
     }
 
     private async Task CommitSpeechAsync(string value, CancellationTokenSource source, bool allowRepeat)

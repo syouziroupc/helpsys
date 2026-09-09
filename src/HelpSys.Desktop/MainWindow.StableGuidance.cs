@@ -10,6 +10,7 @@ public partial class MainWindow
     private string? _stableLiveChangeSignature;
     private DateTime _stableLiveChangeSinceUtc = DateTime.MinValue;
     private int _stableLiveChangeSamples;
+    private int _stablePulseQueued;
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
     {
@@ -24,22 +25,38 @@ public partial class MainWindow
         if (!_liveWatcherStarted) return;
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
+        Interlocked.Exchange(ref _stablePulseQueued, 0);
         _liveWatcher.Dispose();
     }
 
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        Dispatcher.BeginInvoke(new Action(async () =>
+        // A heartbeat may arrive while the previous UIA scan is still awaiting. Queue at most one
+        // dispatcher observation so rapid focus/structure changes cannot flood the WPF UI queue.
+        if (Interlocked.Exchange(ref _stablePulseQueued, 1) != 0) return;
+
+        try
         {
-            try { await ObserveStableLiveStateAsync(); }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-            catch (Exception)
+            Dispatcher.BeginInvoke(new Action(async () =>
             {
-                ClearStableLiveChangeCandidate();
-            }
-        }));
+                try { await ObserveStableLiveStateAsync(); }
+                catch (OperationCanceledException) { }
+                catch (ObjectDisposedException) { }
+                catch (Exception)
+                {
+                    ClearStableLiveChangeCandidate();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _stablePulseQueued, 0);
+                }
+            }));
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _stablePulseQueued, 0);
+        }
     }
 
     private async Task ObserveStableLiveStateAsync()

@@ -1,0 +1,86 @@
+name: GLM live smoke
+
+on:
+  pull_request:
+    paths:
+      - "worker/**"
+      - "wrangler.jsonc"
+      - ".github/workflows/glm-live-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  preview-inference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve Cloudflare preview URL
+        id: preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+            slug=$(printf '%s' "$GITHUB_HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's#[/_]+#-#g; s#[^a-z0-9-]+#-#g; s#^-+##; s#-+$##')
+            echo "url=https://${slug}-helpsys.syouziroupc.workers.dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=https://helpsys.syouziroupc.workers.dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for preview and invoke GLM quality route
+        shell: bash
+        env:
+          BASE_URL: ${{ steps.preview.outputs.url }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, time, urllib.error, urllib.request
+
+          base = os.environ['BASE_URL'].rstrip('/')
+          payload = {
+              'request': '画面を確認し、操作対象がなければ推測せずnot_foundにしてください。',
+              'history': [],
+              'systemContext': {
+                  'foregroundProcess': 'explorer',
+                  'foregroundProcessId': 1,
+                  'foregroundTitle': 'Desktop',
+                  'taskbarVisible': True,
+                  'runningApps': [],
+                  'browser': None,
+              },
+              'elements': [],
+              'image': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              'imageWidth': 1,
+              'imageHeight': 1,
+          }
+          body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+          headers = {
+              'content-type': 'application/json',
+              'accept': 'application/json,text/plain,*/*',
+              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36',
+              'x-helpsys-request-id': 'github-live-smoke',
+          }
+          last = None
+
+          for attempt in range(5):
+              try:
+                  req = urllib.request.Request(base + '/v1/quality-guide', data=body, headers=headers, method='POST')
+                  with urllib.request.urlopen(req, timeout=20) as res:
+                      text = res.read().decode('utf-8', 'replace')
+                      value = json.loads(text)
+                      if value.get('error'):
+                          raise RuntimeError(f'HTTP {res.status} API error: {value}')
+                      if value.get('status') not in {'target', 'clarify', 'done', 'not_found'}:
+                          raise RuntimeError(f'HTTP {res.status} invalid guidance payload: {value}')
+                      print('GLM live inference succeeded:', value.get('status'))
+                      raise SystemExit(0)
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode('utf-8', 'replace')[:800]
+                  last = RuntimeError(f'HTTP {exc.code}: {detail}')
+              except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as exc:
+                  last = exc
+
+              print(f'attempt {attempt + 1}/5 failed: {last}')
+              time.sleep(4)
+
+          detail = str(last).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::error title=GLM live inference failed::{detail}')
+          raise SystemExit(f'GLM live inference failed after preview wait: {last}')
+          PY

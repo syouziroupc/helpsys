@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+const DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash';
 const MAX_TEXT = 1200;
 
 const assistTool = {
@@ -44,7 +44,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
     if (url.pathname === '/health' && request.method === 'GET') {
-      return json({ ok: true, service: 'helpsys-education', model: env.HELPSYS_EDUCATION_MODEL || DEFAULT_MODEL });
+      return json({ ok: true, service: 'helpsys-education', model: selectEducationModel(env.HELPSYS_EDUCATION_MODEL) });
     }
     if (url.pathname !== '/v1/education/assist' || request.method !== 'POST') return json({ error: 'not_found' }, 404);
     if (!authorized(request, env)) return json({ error: 'unauthorized' }, 401);
@@ -83,7 +83,7 @@ export default {
     });
 
     try {
-      const result = await env.AI.run(env.HELPSYS_EDUCATION_MODEL || DEFAULT_MODEL, {
+      const result = await env.AI.run(selectEducationModel(env.HELPSYS_EDUCATION_MODEL), {
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: payload }
@@ -131,6 +131,10 @@ export function guardAssist(value, stage, hintLevel = 1) {
     };
   }
   return { status: 'answer', message, nextHintLevel: null };
+}
+
+function selectEducationModel(value) {
+  return value === DEFAULT_MODEL ? value : DEFAULT_MODEL;
 }
 
 function authorized(request, env) {

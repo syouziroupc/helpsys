@@ -9,7 +9,20 @@ namespace HelpSys.Services;
 public sealed class SystemContextService
 {
     private const uint GwHwndNext = 2;
+    private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private readonly int _selfProcessId = Environment.ProcessId;
+    private readonly object _cacheGate = new();
+
+    private IReadOnlyList<string> _runningCache = [];
+    private DateTime _runningCacheUtc = DateTime.MinValue;
+    private BrowserContextSnapshot? _browserCache;
+    private nint _browserCacheHwnd;
+    private string _browserCacheProcess = string.Empty;
+    private string _browserCacheTitle = string.Empty;
+    private DateTime _browserCacheUtc = DateTime.MinValue;
+    private int _runningRefreshInFlight;
+    private int _browserRefreshInFlight;
 
     private static readonly HashSet<string> BrowserProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -35,13 +48,114 @@ public sealed class SystemContextService
             }
         }
 
-        var running = CaptureRunningWindowProcesses();
+        // Process enumeration and browser UI Automation can each become slow while windows are
+        // being created/destroyed. Never run those scans on the WPF caller thread. Capture returns
+        // the last bounded snapshot immediately and refreshes supplemental context in the pool.
+        var running = GetCachedRunningProcesses(processName);
         var taskbarVisible = IsTaskbarActuallyVisible();
         var browser = BrowserProcesses.Contains(processName)
-            ? TryCaptureBrowser(hwnd, processName, title)
+            ? GetCachedBrowser(hwnd, processName, title)
             : null;
 
         return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser);
+    }
+
+    private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
+    {
+        IReadOnlyList<string> cached;
+        DateTime capturedUtc;
+        lock (_cacheGate)
+        {
+            cached = _runningCache;
+            capturedUtc = _runningCacheUtc;
+        }
+
+        if (DateTime.UtcNow - capturedUtc >= RunningCacheTtl) QueueRunningRefresh();
+
+        if (string.IsNullOrWhiteSpace(foregroundProcess) || cached.Contains(foregroundProcess, StringComparer.OrdinalIgnoreCase))
+            return cached;
+
+        return cached.Append(foregroundProcess)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Take(48)
+            .ToArray();
+    }
+
+    private void QueueRunningRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _runningRefreshInFlight, 1, 0) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var fresh = CaptureRunningWindowProcesses();
+                lock (_cacheGate)
+                {
+                    _runningCache = fresh;
+                    _runningCacheUtc = DateTime.UtcNow;
+                }
+            }
+            catch { }
+            finally
+            {
+                Interlocked.Exchange(ref _runningRefreshInFlight, 0);
+            }
+        });
+    }
+
+    private BrowserContextSnapshot GetCachedBrowser(nint hwnd, string processName, string title)
+    {
+        BrowserContextSnapshot? cached;
+        nint cachedHwnd;
+        string cachedProcess;
+        string cachedTitle;
+        DateTime capturedUtc;
+        lock (_cacheGate)
+        {
+            cached = _browserCache;
+            cachedHwnd = _browserCacheHwnd;
+            cachedProcess = _browserCacheProcess;
+            cachedTitle = _browserCacheTitle;
+            capturedUtc = _browserCacheUtc;
+        }
+
+        var sameWindow = cached is not null && cachedHwnd == hwnd &&
+                         cachedProcess.Equals(processName, StringComparison.OrdinalIgnoreCase) &&
+                         cachedTitle.Equals(title, StringComparison.Ordinal);
+        if (!sameWindow || DateTime.UtcNow - capturedUtc >= BrowserCacheTtl)
+            QueueBrowserRefresh(hwnd, processName, title);
+
+        // Never reuse URL/domain information from another window or an earlier title. Returning
+        // an empty browser detail for one short refresh interval is safer than returning stale data.
+        return sameWindow
+            ? cached!
+            : new BrowserContextSnapshot(processName, title, null, null, null, false);
+    }
+
+    private void QueueBrowserRefresh(nint hwnd, string processName, string title)
+    {
+        if (hwnd == nint.Zero || Interlocked.CompareExchange(ref _browserRefreshInFlight, 1, 0) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var fresh = TryCaptureBrowser(hwnd, processName, title);
+                lock (_cacheGate)
+                {
+                    _browserCache = fresh;
+                    _browserCacheHwnd = hwnd;
+                    _browserCacheProcess = processName;
+                    _browserCacheTitle = title;
+                    _browserCacheUtc = DateTime.UtcNow;
+                }
+            }
+            catch { }
+            finally
+            {
+                Interlocked.Exchange(ref _browserRefreshInFlight, 0);
+            }
+        });
     }
 
     private nint ResolveEffectiveForegroundWindow()
@@ -52,7 +166,6 @@ public sealed class SystemContextService
 
         // HelpSys is topmost. When its input/button is clicked, GetForegroundWindow returns
         // HelpSys itself even though the user still needs guidance for the application below it.
-        // Walk down the Z order and use the first visible top-level window that is not HelpSys.
         var cursor = foreground;
         for (var i = 0; i < 96; i++)
         {
@@ -94,7 +207,7 @@ public sealed class SystemContextService
         return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).Take(48).ToArray();
     }
 
-    private static BrowserContextSnapshot? TryCaptureBrowser(nint hwnd, string processName, string title)
+    private static BrowserContextSnapshot TryCaptureBrowser(nint hwnd, string processName, string title)
     {
         if (hwnd == nint.Zero) return new BrowserContextSnapshot(processName, title, null, null, null, false);
 
@@ -111,8 +224,11 @@ public sealed class SystemContextService
             var queue = new Queue<(AutomationElement Element, int Depth)>();
             EnqueueChildren(walker, root, 0, queue);
             var visited = 0;
+            var stopwatch = Stopwatch.StartNew();
 
-            while (queue.Count > 0 && visited < 1600)
+            // This runs only in the thread pool, but it is still bounded so rapid screen changes
+            // cannot accumulate long-lived UIA work behind the live watcher.
+            while (queue.Count > 0 && visited < 1200 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(700))
             {
                 var (element, depth) = queue.Dequeue();
                 visited++;
@@ -126,9 +242,6 @@ public sealed class SystemContextService
                         var className = current.ClassName ?? string.Empty;
                         var hint = $"{name} {automationId} {className}";
 
-                        // A generic web-page search field is not a browser address bar. Treating
-                        // every Edit named "search/検索" as an address field caused text typed into
-                        // websites to look like a URL transition and repeatedly invalidate guidance.
                         if (!ContainsAddressHint(hint))
                         {
                             if (depth < 8) EnqueueChildren(walker, element, depth + 1, queue);
@@ -143,7 +256,7 @@ public sealed class SystemContextService
 
                         if (LooksLikeLocationValue(value))
                         {
-                            var score = 80 + (current.HasKeyboardFocus ? 12 : 0) + 70;
+                            var score = 150 + (current.HasKeyboardFocus ? 12 : 0);
                             if (score > bestScore)
                             {
                                 bestScore = score;
@@ -215,8 +328,6 @@ public sealed class SystemContextService
         if (hwnd == nint.Zero || !IsWindowVisible(hwnd) || !GetWindowRect(hwnd, out var rect)) return false;
         var width = Math.Max(0, rect.Right - rect.Left);
         var height = Math.Max(0, rect.Bottom - rect.Top);
-        // Auto-hidden taskbars can leave only a 1-2 px activation strip. Do not describe that
-        // as a visible taskbar to a beginner.
         return width >= 24 && height >= 24;
     }
 

@@ -5,15 +5,18 @@ namespace HelpSys.Services;
 
 public sealed class CommanderWakeService : IDisposable
 {
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(4);
-    private const float MinimumWakeConfidence = 0.55f;
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ReleaseDeadline = TimeSpan.FromSeconds(2);
+    private const float MinimumWakeConfidence = 0.72f;
 
     private readonly object _gate = new();
     private SpeechRecognitionEngine? _engine;
     private Timer? _retryTimer;
     private bool _enabled = true;
     private bool _disposed;
-    private int _suspendCount;
+    private bool _starting;
+    private bool _interactionHeld;
+    private int _foregroundSuspendCount;
     private bool _listening;
     private string _status = "準備中";
 
@@ -25,61 +28,49 @@ public sealed class CommanderWakeService : IDisposable
         MicrophoneCoordinator.ForegroundCaptureChanged += MicrophoneCoordinator_ForegroundCaptureChanged;
     }
 
-    public bool Enabled
-    {
-        get { lock (_gate) return _enabled; }
-    }
+    public bool Enabled { get { lock (_gate) return _enabled; } }
+    public bool Listening { get { lock (_gate) return _listening; } }
+    public string Status { get { lock (_gate) return _status; } }
 
-    public bool Listening
-    {
-        get { lock (_gate) return _listening; }
-    }
-
-    public string Status
-    {
-        get { lock (_gate) return _status; }
-    }
-
-    public void Start()
-    {
-        lock (_gate)
-        {
-            if (_disposed) return;
-            _enabled = true;
-        }
-        TryStartListening();
-    }
+    public void Start() => SetEnabled(true);
 
     public void SetEnabled(bool enabled)
     {
-        bool start;
+        SpeechRecognitionEngine? release = null;
+        bool shouldStart;
         lock (_gate)
         {
             if (_disposed) return;
             _enabled = enabled;
-            start = enabled && _suspendCount == 0;
             if (!enabled)
             {
-                StopEngineLocked();
+                _interactionHeld = false;
+                _starting = false;
+                release = DetachEngineLocked();
                 CancelRetryLocked();
                 SetStatusLocked("OFF");
             }
+            shouldStart = CanStartLocked();
         }
 
+        TrackRelease(release);
         RaiseStatusChanged();
-        if (start) TryStartListening();
+        if (shouldStart) QueueStart();
     }
 
     public void Suspend()
     {
+        SpeechRecognitionEngine? release;
         lock (_gate)
         {
             if (_disposed) return;
-            _suspendCount++;
-            StopEngineLocked();
+            _foregroundSuspendCount++;
+            release = DetachEngineLocked();
             CancelRetryLocked();
-            SetStatusLocked(_enabled ? "一時停止" : "OFF");
+            SetStatusLocked(_enabled ? "他の音声入力を優先" : "OFF");
         }
+
+        TrackRelease(release);
         RaiseStatusChanged();
     }
 
@@ -89,12 +80,26 @@ public sealed class CommanderWakeService : IDisposable
         lock (_gate)
         {
             if (_disposed) return;
-            if (_suspendCount > 0) _suspendCount--;
-            shouldStart = _enabled && _suspendCount == 0;
-            if (!shouldStart) SetStatusLocked(_enabled ? "一時停止" : "OFF");
+            if (_foregroundSuspendCount > 0) _foregroundSuspendCount--;
+            shouldStart = CanStartLocked();
+            if (!shouldStart && _enabled && _foregroundSuspendCount > 0) SetStatusLocked("他の音声入力を優先");
         }
         RaiseStatusChanged();
-        if (shouldStart) TryStartListening();
+        if (shouldStart) QueueStart();
+    }
+
+    public void CompleteWakeInteraction()
+    {
+        bool shouldStart;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _interactionHeld = false;
+            shouldStart = CanStartLocked();
+            if (!shouldStart && _enabled && _foregroundSuspendCount > 0) SetStatusLocked("他の音声入力を優先");
+        }
+        RaiseStatusChanged();
+        if (shouldStart) QueueStart();
     }
 
     private void MicrophoneCoordinator_ForegroundCaptureChanged(object? sender, bool active)
@@ -103,71 +108,94 @@ public sealed class CommanderWakeService : IDisposable
         else Resume();
     }
 
-    private void TryStartListening()
+    private bool CanStartLocked()
+        => !_disposed && _enabled && !_interactionHeld && _foregroundSuspendCount == 0 && !_starting && _engine is null;
+
+    private void QueueStart() => _ = Task.Run(StartListeningAsync);
+
+    private async Task StartListeningAsync()
     {
-        SpeechRecognitionEngine? engine = null;
+        lock (_gate)
+        {
+            if (!CanStartLocked()) return;
+            _starting = true;
+            CancelRetryLocked();
+            SetStatusLocked("マイク準備中");
+        }
+        RaiseStatusChanged();
+
+        SpeechRecognitionEngine? candidate = null;
         try
         {
-            lock (_gate)
+            if (!await MicrophoneCoordinator.WaitForBackgroundReleaseAsync().ConfigureAwait(false))
             {
-                if (_disposed || !_enabled || _suspendCount > 0 || _engine is not null) return;
-                CancelRetryLocked();
-                SetStatusLocked("起動中");
+                lock (_gate)
+                {
+                    _starting = false;
+                    if (!_disposed && _enabled) {
+                        SetStatusLocked("マイク解放待ち");
+                        ScheduleRetryLocked();
+                    }
+                }
+                RaiseStatusChanged();
+                return;
             }
-            RaiseStatusChanged();
 
             var recognizer = SelectJapaneseRecognizer();
             if (recognizer is null)
             {
                 lock (_gate)
                 {
-                    if (_disposed) return;
-                    SetStatusLocked("日本語音声認識なし");
-                    ScheduleRetryLocked();
+                    _starting = false;
+                    if (!_disposed && _enabled)
+                    {
+                        SetStatusLocked("日本語音声認識なし");
+                        ScheduleRetryLocked();
+                    }
                 }
                 RaiseStatusChanged();
                 return;
             }
 
-            engine = new SpeechRecognitionEngine(recognizer);
+            candidate = new SpeechRecognitionEngine(recognizer);
             var phrases = new Choices(
-                "ねえ コマンダー",
-                "ねぇ コマンダー",
-                "ねー コマンダー",
-                "ねえコマンダー",
-                "ねぇコマンダー",
-                "ねーコマンダー");
+                "ねえ コマンダー", "ねぇ コマンダー", "ねー コマンダー",
+                "ねえコマンダー", "ねぇコマンダー", "ねーコマンダー");
             var grammarBuilder = new GrammarBuilder { Culture = recognizer.Culture };
             grammarBuilder.Append(phrases);
-            engine.LoadGrammar(new Grammar(grammarBuilder));
-            engine.SpeechRecognized += Engine_SpeechRecognized;
-            engine.RecognizeCompleted += Engine_RecognizeCompleted;
-            engine.SetInputToDefaultAudioDevice();
+            candidate.LoadGrammar(new Grammar(grammarBuilder));
+            candidate.SpeechRecognized += Engine_SpeechRecognized;
+            candidate.RecognizeCompleted += Engine_RecognizeCompleted;
+            candidate.SetInputToDefaultAudioDevice();
+            candidate.RecognizeAsync(RecognizeMode.Multiple);
 
+            bool accepted;
             lock (_gate)
             {
-                if (_disposed || !_enabled || _suspendCount > 0)
+                _starting = false;
+                accepted = CanStartLocked();
+                if (accepted)
                 {
-                    DetachAndDispose(engine);
-                    return;
+                    _engine = candidate;
+                    candidate = null;
+                    _listening = true;
+                    SetStatusLocked("待機中");
                 }
-                _engine = engine;
-                engine = null;
-                _listening = true;
-                SetStatusLocked("待機中");
-                _engine.RecognizeAsync(RecognizeMode.Multiple);
             }
+            if (!accepted) TrackRelease(candidate);
             RaiseStatusChanged();
         }
         catch
         {
-            if (engine is not null) DetachAndDispose(engine);
+            TrackRelease(candidate);
             lock (_gate)
             {
-                if (_disposed) return;
-                StopEngineLocked();
-                SetStatusLocked("マイク待機");
-                ScheduleRetryLocked();
+                _starting = false;
+                if (!_disposed && _enabled)
+                {
+                    SetStatusLocked("マイク再試行待ち");
+                    ScheduleRetryLocked();
+                }
             }
             RaiseStatusChanged();
         }
@@ -177,68 +205,79 @@ public sealed class CommanderWakeService : IDisposable
     {
         if (e.Result is null || e.Result.Confidence < MinimumWakeConfidence || !IsWakePhrase(e.Result.Text)) return;
 
-        // Do not dispose the recognizer from inside its recognition callback. Queue the
-        // transition so the audio engine can return from the callback first, then fully
-        // release the microphone before Commander starts normal dictation.
-        _ = Task.Run(() =>
+        SpeechRecognitionEngine? release;
+        lock (_gate)
+        {
+            if (_disposed || !_enabled || _interactionHeld || _foregroundSuspendCount > 0 || !ReferenceEquals(sender, _engine)) return;
+            _interactionHeld = true;
+            release = DetachEngineLocked();
+            CancelRetryLocked();
+            SetStatusLocked("マイク切替中");
+        }
+        RaiseStatusChanged();
+
+        var releaseTask = ReleaseEngineAsync(release);
+        MicrophoneCoordinator.TrackBackgroundRelease(releaseTask);
+        _ = NotifyWakeAfterReleaseAsync(releaseTask);
+    }
+
+    private async Task NotifyWakeAfterReleaseAsync(Task releaseTask)
+    {
+        try
+        {
+            await releaseTask.WaitAsync(ReleaseDeadline).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
         {
             lock (_gate)
             {
-                if (_disposed || !_enabled || _suspendCount > 0) return;
-                _suspendCount++;
-                StopEngineLocked();
-                CancelRetryLocked();
-                SetStatusLocked("呼び出し中");
+                if (_disposed) return;
+                _interactionHeld = false;
+                SetStatusLocked("マイク再初期化待ち");
             }
             RaiseStatusChanged();
-            try { WakeDetected?.Invoke(this, EventArgs.Empty); } catch { ResumeAfterWakeFailure(); }
-        });
-    }
-
-    private void ResumeAfterWakeFailure()
-    {
-        lock (_gate)
-        {
-            if (_suspendCount > 0) _suspendCount--;
+            _ = RestartAfterSlowReleaseAsync(releaseTask);
+            return;
         }
-        ResumeIfReady();
-    }
-
-    public void CompleteWakeInteraction()
-    {
-        lock (_gate)
+        catch
         {
-            if (_disposed) return;
-            if (_suspendCount > 0) _suspendCount--;
+            CompleteWakeInteraction();
+            return;
         }
-        ResumeIfReady();
-    }
 
-    private void ResumeIfReady()
-    {
-        bool shouldStart;
         lock (_gate)
         {
-            if (_disposed) return;
-            shouldStart = _enabled && _suspendCount == 0;
-            if (!shouldStart) SetStatusLocked(_enabled ? "一時停止" : "OFF");
+            if (_disposed || !_enabled || !_interactionHeld) return;
+            SetStatusLocked("呼び出し中");
         }
         RaiseStatusChanged();
-        if (shouldStart) TryStartListening();
+
+        try { WakeDetected?.Invoke(this, EventArgs.Empty); }
+        catch { CompleteWakeInteraction(); }
+    }
+
+    private async Task RestartAfterSlowReleaseAsync(Task releaseTask)
+    {
+        try { await releaseTask.ConfigureAwait(false); } catch { }
+        bool shouldStart;
+        lock (_gate) shouldStart = CanStartLocked();
+        if (shouldStart) QueueStart();
     }
 
     private void Engine_RecognizeCompleted(object? sender, RecognizeCompletedEventArgs e)
     {
+        SpeechRecognitionEngine? release = null;
         lock (_gate)
         {
             if (_disposed || !ReferenceEquals(sender, _engine)) return;
-            StopEngineLocked();
-            if (_enabled && _suspendCount == 0)
+            release = DetachEngineLocked();
+            if (_enabled && !_interactionHeld && _foregroundSuspendCount == 0)
             {
-                SetStatusLocked("マイク待機");
+                SetStatusLocked("マイク再試行待ち");
                 ScheduleRetryLocked();
             }
         }
+        TrackRelease(release);
         RaiseStatusChanged();
     }
 
@@ -250,7 +289,7 @@ public sealed class CommanderWakeService : IDisposable
             .ToArray())
             .Replace("ねぇ", "ねえ", StringComparison.Ordinal)
             .Replace("ねー", "ねえ", StringComparison.Ordinal);
-        return normalized.Contains("ねえコマンダー", StringComparison.OrdinalIgnoreCase);
+        return normalized.Equals("ねえコマンダー", StringComparison.OrdinalIgnoreCase);
     }
 
     private static RecognizerInfo? SelectJapaneseRecognizer()
@@ -263,7 +302,7 @@ public sealed class CommanderWakeService : IDisposable
 
     private void ScheduleRetryLocked()
     {
-        if (_disposed || !_enabled || _suspendCount > 0 || _retryTimer is not null) return;
+        if (_disposed || !_enabled || _interactionHeld || _foregroundSuspendCount > 0 || _retryTimer is not null) return;
         _retryTimer = new Timer(_ =>
         {
             lock (_gate)
@@ -271,7 +310,7 @@ public sealed class CommanderWakeService : IDisposable
                 _retryTimer?.Dispose();
                 _retryTimer = null;
             }
-            TryStartListening();
+            QueueStart();
         }, null, RetryDelay, Timeout.InfiniteTimeSpan);
     }
 
@@ -281,21 +320,31 @@ public sealed class CommanderWakeService : IDisposable
         _retryTimer = null;
     }
 
-    private void StopEngineLocked()
+    private SpeechRecognitionEngine? DetachEngineLocked()
     {
         var engine = _engine;
         _engine = null;
         _listening = false;
-        if (engine is null) return;
-        try { engine.RecognizeAsyncCancel(); } catch { }
-        DetachAndDispose(engine);
+        return engine;
     }
 
-    private void DetachAndDispose(SpeechRecognitionEngine engine)
+    private void TrackRelease(SpeechRecognitionEngine? engine)
     {
-        try { engine.SpeechRecognized -= Engine_SpeechRecognized; } catch { }
-        try { engine.RecognizeCompleted -= Engine_RecognizeCompleted; } catch { }
-        try { engine.Dispose(); } catch { }
+        if (engine is null) return;
+        var releaseTask = ReleaseEngineAsync(engine);
+        MicrophoneCoordinator.TrackBackgroundRelease(releaseTask);
+    }
+
+    private Task ReleaseEngineAsync(SpeechRecognitionEngine? engine)
+    {
+        if (engine is null) return Task.CompletedTask;
+        return Task.Run(() =>
+        {
+            try { engine.SpeechRecognized -= Engine_SpeechRecognized; } catch { }
+            try { engine.RecognizeCompleted -= Engine_RecognizeCompleted; } catch { }
+            try { engine.RecognizeAsyncCancel(); } catch { }
+            try { engine.Dispose(); } catch { }
+        });
     }
 
     private void SetStatusLocked(string status) => _status = status;
@@ -308,14 +357,18 @@ public sealed class CommanderWakeService : IDisposable
     public void Dispose()
     {
         MicrophoneCoordinator.ForegroundCaptureChanged -= MicrophoneCoordinator_ForegroundCaptureChanged;
+        SpeechRecognitionEngine? release;
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true;
             _enabled = false;
+            _interactionHeld = false;
+            _starting = false;
             CancelRetryLocked();
-            StopEngineLocked();
+            release = DetachEngineLocked();
             SetStatusLocked("OFF");
         }
+        TrackRelease(release);
     }
 }

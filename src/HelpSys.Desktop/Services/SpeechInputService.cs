@@ -5,55 +5,75 @@ namespace HelpSys.Services;
 
 public sealed class SpeechInputService : IDisposable
 {
+    private static readonly TimeSpan RecognitionTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(2);
+    private readonly object _gate = new();
     private SpeechRecognitionEngine? _engine;
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
-        // Foreground dictation has priority over the low-duty Commander wake listener.
-        // The coordinator asks Commander to fully release its recognition engine first,
-        // then lets it resume only after this capture has finished.
         using var microphoneLease = MicrophoneCoordinator.BeginForegroundCapture();
-        DisposeEngine();
+
+        if (!await MicrophoneCoordinator.WaitForBackgroundReleaseAsync(cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException("コマンダーのマイク待機を安全に切り替えられませんでした。数秒後にもう一度試してください。");
+
         var recognizer = SelectRecognizer();
         if (recognizer is null)
             throw new InvalidOperationException("Windowsの音声認識エンジンが見つかりません。Windowsの音声機能を確認してください。");
 
-        _engine = new SpeechRecognitionEngine(recognizer);
-        _engine.LoadGrammar(new DictationGrammar());
-        _engine.SetInputToDefaultAudioDevice();
-
+        var engine = new SpeechRecognitionEngine(recognizer);
         var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         EventHandler<RecognizeCompletedEventArgs>? completedHandler = null;
-        completedHandler = (_, e) =>
-        {
-            if (e.Error is not null) completion.TrySetException(e.Error);
-            else if (e.Cancelled) completion.TrySetResult(null);
-            else completion.TrySetResult(string.IsNullOrWhiteSpace(e.Result?.Text) ? null : e.Result.Text.Trim());
-        };
-        _engine.RecognizeCompleted += completedHandler;
-
-        using var registration = cancellationToken.Register(() =>
-        {
-            try { _engine?.RecognizeAsyncCancel(); } catch { }
-        });
 
         try
         {
-            _engine.RecognizeAsync(RecognizeMode.Single);
+            engine.LoadGrammar(new DictationGrammar());
+            engine.SetInputToDefaultAudioDevice();
+
+            completedHandler = (_, e) =>
+            {
+                if (e.Error is not null) completion.TrySetException(e.Error);
+                else if (e.Cancelled) completion.TrySetResult(null);
+                else completion.TrySetResult(string.IsNullOrWhiteSpace(e.Result?.Text) ? null : e.Result.Text.Trim());
+            };
+            engine.RecognizeCompleted += completedHandler;
+
+            lock (_gate)
+            {
+                if (_engine is not null)
+                    throw new InvalidOperationException("別の音声入力がまだ終了していません。");
+                _engine = engine;
+            }
+
+            using var registration = cancellationToken.Register(() =>
+            {
+                try { engine.RecognizeAsyncCancel(); } catch { }
+            });
+
+            engine.RecognizeAsync(RecognizeMode.Single);
             try
             {
-                return await completion.Task.WaitAsync(TimeSpan.FromSeconds(12), cancellationToken);
+                return await completion.Task.WaitAsync(RecognitionTimeout, cancellationToken).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
-                try { _engine.RecognizeAsyncCancel(); } catch { }
+                try { engine.RecognizeAsyncCancel(); } catch { }
                 return null;
             }
         }
         finally
         {
-            if (_engine is not null && completedHandler is not null) _engine.RecognizeCompleted -= completedHandler;
-            DisposeEngine();
+            if (completedHandler is not null)
+            {
+                try { engine.RecognizeCompleted -= completedHandler; } catch { }
+            }
+
+            lock (_gate)
+            {
+                if (ReferenceEquals(_engine, engine)) _engine = null;
+            }
+
+            await ReleaseEngineAsync(engine).ConfigureAwait(false);
         }
     }
 
@@ -68,12 +88,33 @@ public sealed class SpeechInputService : IDisposable
             ?? recognizers[0];
     }
 
-    private void DisposeEngine()
+    private static async Task ReleaseEngineAsync(SpeechRecognitionEngine engine)
     {
-        try { _engine?.RecognizeAsyncCancel(); } catch { }
-        _engine?.Dispose();
-        _engine = null;
+        var release = Task.Run(() =>
+        {
+            try { engine.RecognizeAsyncCancel(); } catch { }
+            try { engine.Dispose(); } catch { }
+        });
+        MicrophoneCoordinator.TrackBackgroundRelease(release);
+
+        try { await release.WaitAsync(ReleaseTimeout).ConfigureAwait(false); }
+        catch (TimeoutException) { }
     }
 
-    public void Dispose() => DisposeEngine();
+    public void Dispose()
+    {
+        SpeechRecognitionEngine? engine;
+        lock (_gate)
+        {
+            engine = _engine;
+            _engine = null;
+        }
+        if (engine is null) return;
+        var release = Task.Run(() =>
+        {
+            try { engine.RecognizeAsyncCancel(); } catch { }
+            try { engine.Dispose(); } catch { }
+        });
+        MicrophoneCoordinator.TrackBackgroundRelease(release);
+    }
 }

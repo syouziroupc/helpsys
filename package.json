@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check worker/index.js && node --check worker/deliberation-guard.js && node --check worker/reliability-v4-guard.js && node --check worker/quality-guide.js && node --check worker/quality-guide-selftest.mjs && node --check tests/site-release-contract.mjs",
-    "test": "node worker/selftest.mjs && node worker/reliability-v4-selftest.mjs && node worker/quality-guide-selftest.mjs && node tests/site-release-contract.mjs",
+    "check": "node --check worker/index.js && node --check worker/deliberation-guard.js && node --check worker/reliability-v4-guard.js && node --check worker/quality-guide.js && node --check worker/quality-guide-selftest.mjs && node --check tests/site-release-contract.mjs && node --check tests/commander-stability-contract.mjs",
+    "test": "node worker/selftest.mjs && node worker/reliability-v4-selftest.mjs && node worker/quality-guide-selftest.mjs && node tests/site-release-contract.mjs && node tests/commander-stability-contract.mjs",
     "test:site": "node tests/site-release-contract.mjs",
     "dev:education": "wrangler dev --config wrangler.education.jsonc",
     "deploy:education": "wrangler deploy --config wrangler.education.jsonc",
