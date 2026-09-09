@@ -29,6 +29,25 @@ public partial class MainWindow
 
     private async void OnObservedLeftClickV3(Point point)
     {
+        try
+        {
+            await HandleObservedLeftClickV3Async(point);
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch
+        {
+            try
+            {
+                if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                    StopWithMessage("操作結果の確認中に予期しない問題が起きたため、古い案内を破棄しました。もう一度「案内」を押してください。");
+            }
+            catch { }
+        }
+    }
+
+    private async Task HandleObservedLeftClickV3Async(Point point)
+    {
         if (_sessionState.State != GuidanceSessionState.AwaitingUserAction || _currentDecision is null || _guidedBounds is null) return;
         var action = _currentDecision.Action;
         if (!action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
@@ -55,6 +74,25 @@ public partial class MainWindow
     }
 
     private async void OnObservedKeyReleasedV3(KeyObservation observation)
+    {
+        try
+        {
+            await HandleObservedKeyReleasedV3Async(observation);
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch
+        {
+            try
+            {
+                if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                    StopWithMessage("キー操作の確認中に予期しない問題が起きたため、古い案内を破棄しました。もう一度「案内」を押してください。");
+            }
+            catch { }
+        }
+    }
+
+    private async Task HandleObservedKeyReleasedV3Async(KeyObservation observation)
     {
         if (_sessionState.State != GuidanceSessionState.AwaitingUserAction || _currentDecision is null) return;
 
@@ -356,10 +394,8 @@ public partial class MainWindow
             if (!beforeTarget.Focused && current.Focused) return true;
         }
 
-        if (action.Equals("type_text", StringComparison.OrdinalIgnoreCase) && systemBefore?.Browser is null && type is "Edit" or "ComboBox")
-        {
-            if (!string.Equals(beforeTarget.Value, current.Value, StringComparison.Ordinal) && current.Value is not null) return true;
-        }
+        // A changed Edit value proves only that typing happened. type_text is completed only
+        // after the finishing key causes a stable system/window/content transition.
 
         return false;
     }
@@ -401,6 +437,7 @@ public partial class MainWindow
     private static bool HasSystemTransitionV3(SystemContextSnapshot? before, SystemContextSnapshot after)
     {
         if (before is null) return false;
+        if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
         var beforeUrl = before.Browser?.Url ?? string.Empty;
         var afterUrl = after.Browser?.Url ?? string.Empty;

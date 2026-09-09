@@ -12,6 +12,12 @@ public sealed class UiAutomationScanner
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(int maxCandidates = 360, CancellationToken cancellationToken = default)
         => Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken), cancellationToken);
 
+    public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForProcessAsync(int processId, int maxCandidates = 360, CancellationToken cancellationToken = default)
+    {
+        if (processId <= 0) return Task.FromResult<IReadOnlyList<UiElementCandidate>>([]);
+        return Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
+    }
+
     public Task<UiTarget?> FindBestTargetAsync(IReadOnlyList<string> hints, CancellationToken cancellationToken = default)
         => Task.Run(() => FindBestTarget(hints, cancellationToken), cancellationToken);
 
@@ -23,7 +29,7 @@ public sealed class UiAutomationScanner
 
     private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, CancellationToken cancellationToken)
     {
-        var current = CaptureCandidates(700, cancellationToken).Where(x => x.Interactable).ToArray();
+        var current = CaptureCandidates(700, cancellationToken, candidate.ProcessId > 0 ? candidate.ProcessId : null).Where(x => x.Interactable).ToArray();
         UiElementCandidate? best = null;
         var bestScore = double.NegativeInfinity;
         var oldCenterX = candidate.X + candidate.Width / 2d;
@@ -145,7 +151,7 @@ public sealed class UiAutomationScanner
 
         if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
 
-        var candidates = CaptureCandidates(700, cancellationToken)
+        var candidates = CaptureCandidates(700, cancellationToken, visibleProcessId)
             .Where(x => x.Interactable && !x.Bounds.IsEmpty && x.ProcessId == visibleProcessId)
             .ToArray();
         UiElementCandidate? best = null;
@@ -177,12 +183,13 @@ public sealed class UiAutomationScanner
         return best is not null && bestScore >= 25 ? best.Bounds : null;
     }
 
-    private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken)
+    private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken, int? rootProcessId = null)
     {
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
         var queue = new Queue<(AutomationElement Element, int Depth)>();
-        EnqueueChildren(walker, root, 0, queue);
+        if (rootProcessId is > 0) EnqueueProcessRoots(rootProcessId.Value, queue);
+        else EnqueueChildren(walker, root, 0, queue);
 
         var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
         var contextPoolLimit = Math.Max(180, maxCandidates / 2);
@@ -387,6 +394,18 @@ public sealed class UiAutomationScanner
     }
 
     private static string Trim(string value, int max) => value.Length <= max ? value : value[..max];
+
+    private static void EnqueueProcessRoots(int processId, Queue<(AutomationElement Element, int Depth)> queue)
+    {
+        try
+        {
+            var condition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
+            var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, condition);
+            foreach (AutomationElement root in roots) queue.Enqueue((root, 0));
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+    }
 
     private static void EnqueueChildren(TreeWalker walker, AutomationElement parent, int depth, Queue<(AutomationElement Element, int Depth)> queue)
     {

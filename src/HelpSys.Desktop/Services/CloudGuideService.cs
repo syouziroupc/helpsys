@@ -14,6 +14,7 @@ public sealed class CloudGuideService : IDisposable
     };
 
     private readonly HttpClient _http;
+    private readonly SystemContextService _contextVerifier = new();
     private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -56,7 +57,10 @@ public sealed class CloudGuideService : IDisposable
             })
         };
 
-        return await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
+        EnsurePlanningContextCurrent(systemContext);
+        var decision = await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
+        EnsurePlanningContextCurrent(systemContext);
+        return decision;
     }
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
@@ -71,7 +75,10 @@ public sealed class CloudGuideService : IDisposable
             imageHeight = frame.ImageHeight
         };
 
-        return await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
+        EnsurePlanningContextCurrent(systemContext);
+        var decision = await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
+        EnsurePlanningContextCurrent(systemContext);
+        return decision;
     }
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
@@ -83,11 +90,28 @@ public sealed class CloudGuideService : IDisposable
 
         return elements
             .Where(x =>
-                (foregroundId > 0 && x.ProcessId == foregroundId) ||
-                (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
+                (foregroundId > 0
+                    ? x.ProcessId == foregroundId
+                    : !string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
                 ShellProcesses.Contains(x.ProcessName))
             .Take(420)
             .ToArray();
+    }
+
+    private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
+    {
+        var current = _contextVerifier.Capture();
+        var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
+                                expected.ForegroundProcessId != current.ForegroundProcessId ||
+                                !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
+
+        var expectedUrl = expected.Browser?.Url ?? string.Empty;
+        var currentUrl = current.Browser?.Url ?? string.Empty;
+        var browserChanged = !string.IsNullOrWhiteSpace(expectedUrl) && !string.IsNullOrWhiteSpace(currentUrl) &&
+                             !expectedUrl.Equals(currentUrl, StringComparison.OrdinalIgnoreCase);
+
+        if (foregroundChanged || browserChanged)
+            throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
     private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)

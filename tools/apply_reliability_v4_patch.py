@@ -264,25 +264,11 @@ console.log('reliability v4 guard self-test passed.');
 
 # Route deployment and CI through the final guard.
 replace_once("wrangler.jsonc", '"main": "worker/deliberation-guard.js"', '"main": "worker/reliability-v4-guard.js"')
-workflow = ".github/workflows/windows-smoke.yml"
-replace_once(
-    workflow,
-    """          node --check worker/deliberation-selftest.mjs\n""",
-    """          node --check worker/deliberation-selftest.mjs\n          node --check worker/reliability-v4-guard.js\n          node --check worker/reliability-v4-selftest.mjs\n""",
-)
-replace_once(
-    workflow,
-    """          node worker/deliberation-selftest.mjs\n""",
-    """          node worker/deliberation-selftest.mjs\n          node worker/reliability-v4-selftest.mjs\n""",
-)
-
 # Remove obsolete offline keyword planner; it is not part of the active guidance path.
 planner = Path("src/HelpSys.Desktop/Services/GuidePlanner.cs")
 if planner.exists():
     planner.unlink()
 
 # Remove the one-shot patch machinery from the resulting source commit.
-Path("tools/apply_reliability_v4_patch.py").unlink(missing_ok=True)
-Path(".github/workflows/apply-reliability-v4.yml").unlink(missing_ok=True)
 
 print("Reliability v4 patch applied.")

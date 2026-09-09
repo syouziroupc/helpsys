@@ -130,11 +130,7 @@ public sealed class ScreenCaptureService
             }
         }
 
-        return new CaptureArea(
-            GetSystemMetrics(SmXVirtualScreen),
-            GetSystemMetrics(SmYVirtualScreen),
-            GetSystemMetrics(SmCxVirtualScreen),
-            GetSystemMetrics(SmCyVirtualScreen));
+        throw new InvalidOperationException("操作中のモニターを特定できないため、複数画面をまとめて送信せずVision案内を停止します。");
     }
 
     private bool BelongsToSelf(IntPtr hwnd)
