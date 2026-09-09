@@ -8,6 +8,7 @@ namespace HelpSys.Education;
 public sealed class EducationGuideService : IDisposable
 {
     public const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const string CloudflareCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(25) };
     private readonly string _apiBase;
@@ -16,6 +17,8 @@ public sealed class EducationGuideService : IDisposable
     public EducationGuideService()
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_EDUCATION_API_BASE") ?? DefaultApiBase).TrimEnd('/');
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CloudflareCompatibleUserAgent);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("x-helpsys-client", "education");
     }
 
     public bool IsConfigured => Uri.TryCreate(_apiBase, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
