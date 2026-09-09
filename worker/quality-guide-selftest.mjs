@@ -1,3 +1,4 @@
+import '../tests/commander-stability-contract.mjs';
 import quality from './quality-guide.js';
 
 function assert(condition, message) {
@@ -74,8 +75,6 @@ value = await ask({
 });
 assert(value.status === 'target' && value.targetId === 'b1', 'visible UIA target aligned with screenshot should remain actionable');
 
-// Regression from the real desktop screenshot: a Chrome desktop shortcut is an Explorer
-// ListItem. A single click only selects it, so HelpSys must never call that a launch action.
 nextDecision = {
   status: 'target', targetId: 'chrome-desktop', action: 'left_click',
   instruction: '青い枠のインターネットを見るアプリで、マウスの左ボタンを1回押してください。',
