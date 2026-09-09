@@ -31,7 +31,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v5-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v6-win-x64.zip'
           $stableAssetName = 'HelpSys-latest-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
@@ -52,20 +52,21 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v5-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v6-win-x64.zip'
           $stableAssetName = 'HelpSys-latest-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $stableAsset = Join-Path $PWD $stableAssetName
           $allowedAssets = @($assetName, $stableAssetName)
           $notes = @"
-          HelpSys Windows Preview — Reliability v5
+          HelpSys Windows Preview — Reliability v6
 
           - Windows 10 / 11 (64-bit)
           - Self-contained build
           - Versioned package: $assetName
           - Stable site download alias: $stableAssetName
-          - Reliability v5: 前面アプリ切替時のUI Automation監視競合を修正
-          - 起動直後のWindow購読を再試行し、同一プロセスではフォーカス中の可視Windowを優先
+          - 公開サイトの壊れた旧ZIP URLを廃止し、安定ダウンロード導線へ変更
+          - 本番HelpSys WorkerからEducation assist APIも提供し、Education配布版の未設定状態を解消
+          - Reliability v5の前面監視競合・起動直後Window再購読・フォーカスWindow優先も維持
           - 操作代行ではなく、現在状態を確認して人間が行う次の1手を案内する開発版です。
           "@
 
