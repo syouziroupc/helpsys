@@ -1,25 +1,11 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Windows;
+using System.Windows.Threading;
 using NAudio.Wave;
 
 namespace HelpSys.Services;
-
-public sealed class SpeechInputProgressEventArgs : EventArgs
-{
-    public SpeechInputProgressEventArgs(string stage, string message, double level = 0, string? text = null)
-    {
-        Stage = stage;
-        Message = message;
-        Level = level;
-        Text = text;
-    }
-
-    public string Stage { get; }
-    public string Message { get; }
-    public double Level { get; }
-    public string? Text { get; }
-}
 
 public sealed class SpeechInputService : IDisposable
 {
@@ -34,10 +20,10 @@ public sealed class SpeechInputService : IDisposable
     private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly ListeningOverlayWindow _listeningOverlay = new();
+    private DispatcherTimer? _overlayHideTimer;
     private int _captureActive;
     private bool _disposed;
-
-    public event EventHandler<SpeechInputProgressEventArgs>? ProgressChanged;
 
     public SpeechInputService()
     {
@@ -57,30 +43,51 @@ public sealed class SpeechInputService : IDisposable
             if (!await MicrophoneCoordinator.WaitForBackgroundReleaseAsync(cancellationToken).ConfigureAwait(false))
                 throw new InvalidOperationException("コマンダーのマイク待機を切り替えられませんでした。数秒後にもう一度試してください。");
 
-            RaiseProgress("listening", "聞き取り中…", 0);
+            ShowListening(0);
             var wave = await CaptureUtteranceAsync(cancellationToken).ConfigureAwait(false);
             if (wave is null || wave.Length < 256)
             {
-                RaiseProgress("idle", "音声を確認できませんでした。", 0);
+                ShowTransientResult("聞き取れませんでした");
                 return null;
             }
 
-            RaiseProgress("transcribing", "文字起こし中…", 0);
+            ShowTranscribing();
             var text = await TranscribeAsync(wave, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(text))
             {
-                RaiseProgress("idle", "音声を確認できませんでした。", 0);
+                ShowTransientResult("聞き取れませんでした");
                 return null;
             }
 
             text = text.Trim();
-            RaiseProgress("transcribed", "聞き取り結果", 0, text);
+            ShowTransientResult(text, TimeSpan.FromSeconds(1.8));
             return text;
+        }
+        catch (OperationCanceledException)
+        {
+            HideOverlay();
+            throw;
+        }
+        catch
+        {
+            HideOverlay();
+            throw;
         }
         finally
         {
             Interlocked.Exchange(ref _captureActive, 0);
         }
+    }
+
+    public void HideOverlay()
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            _overlayHideTimer?.Stop();
+            if (_listeningOverlay.IsVisible) _listeningOverlay.Hide();
+        }));
     }
 
     private async Task<byte[]?> CaptureUtteranceAsync(CancellationToken cancellationToken)
@@ -135,7 +142,7 @@ public sealed class SpeechInputService : IDisposable
                 Interlocked.Exchange(ref speechHeard, 1);
                 lastVoice = elapsed;
             }
-            RaiseProgress("listening", "聞き取り中…", level);
+            ShowListening(level);
 
             if (elapsed >= MaximumCaptureTime ||
                 (Volatile.Read(ref speechHeard) == 0 && elapsed >= InitialSilenceTimeout) ||
@@ -213,6 +220,29 @@ public sealed class SpeechInputService : IDisposable
         }
     }
 
+    private void ShowListening(double level) => DispatchOverlay(() => _listeningOverlay.ShowListening(level));
+    private void ShowTranscribing() => DispatchOverlay(_listeningOverlay.ShowTranscribing);
+
+    private void ShowTransientResult(string text, TimeSpan? duration = null)
+    {
+        DispatchOverlay(() =>
+        {
+            _listeningOverlay.ShowTranscript(text);
+            _overlayHideTimer ??= new DispatcherTimer();
+            _overlayHideTimer.Stop();
+            _overlayHideTimer.Interval = duration ?? TimeSpan.FromSeconds(1.2);
+            _overlayHideTimer.Tick -= OverlayHideTimer_Tick;
+            _overlayHideTimer.Tick += OverlayHideTimer_Tick;
+            _overlayHideTimer.Start();
+        });
+    }
+
+    private void OverlayHideTimer_Tick(object? sender, EventArgs e)
+    {
+        _overlayHideTimer?.Stop();
+        if (_listeningOverlay.IsVisible) _listeningOverlay.Hide();
+    }
+
     private static double CalculatePeak(byte[] buffer, int count)
     {
         var peak = 0;
@@ -225,10 +255,16 @@ public sealed class SpeechInputService : IDisposable
         return Math.Clamp(peak / 32767d, 0d, 1d);
     }
 
-    private void RaiseProgress(string stage, string message, double level, string? text = null)
+    private void DispatchOverlay(Action action)
     {
-        try { ProgressChanged?.Invoke(this, new SpeechInputProgressEventArgs(stage, message, level, text)); }
-        catch { }
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_disposed) return;
+            _overlayHideTimer?.Stop();
+            action();
+        }));
     }
 
     public void Dispose()
@@ -236,6 +272,14 @@ public sealed class SpeechInputService : IDisposable
         if (_disposed) return;
         _disposed = true;
         _http.Dispose();
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            _overlayHideTimer?.Stop();
+            _overlayHideTimer = null;
+            try { _listeningOverlay.Close(); } catch { }
+        }));
     }
 
     private sealed record TranscriptionResponse(string? Text);
