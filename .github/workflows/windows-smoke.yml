@@ -27,6 +27,8 @@ jobs:
           node --check worker/start-state-guard.js
           node --check worker/deliberation-guard.js
           node --check worker/deliberation-selftest.mjs
+          node --check worker/reliability-v4-guard.js
+          node --check worker/reliability-v4-selftest.mjs
 
       - name: Test Worker contract
         run: |
@@ -34,6 +36,7 @@ jobs:
           node worker/policy-selftest.mjs
           node worker/visible-first-selftest.mjs
           node worker/deliberation-selftest.mjs
+          node worker/reliability-v4-selftest.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
