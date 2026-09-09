@@ -34,8 +34,6 @@ public partial class MainWindow
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        // A heartbeat may arrive while the previous UIA scan is still awaiting. Queue at most one
-        // dispatcher observation so rapid focus/structure changes cannot flood the WPF UI queue.
         if (Interlocked.Exchange(ref _stablePulseQueued, 1) != 0) return;
 
         try
@@ -140,9 +138,6 @@ public partial class MainWindow
                 return;
             }
 
-            // Property-change callbacks already pass through the watcher's quiet period. A semantic
-            // state change on the same current control is therefore strong enough to invalidate one
-            // stale instruction without requiring a large whole-screen topology difference.
             if (!hardChange && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
@@ -233,8 +228,12 @@ public partial class MainWindow
 
         var beforeUrl = before.Browser?.Url ?? string.Empty;
         var afterUrl = after.Browser?.Url ?? string.Empty;
-        return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) &&
-               (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
+        // Browser URL capture is intentionally asynchronous and may be empty for one cache-refresh
+        // interval. Empty -> known (or known -> empty) is not proof of navigation. Only compare two
+        // actually observed URLs; topology/semantic monitoring still catches visible transitions.
+        return !string.IsNullOrWhiteSpace(beforeUrl) &&
+               !string.IsNullOrWhiteSpace(afterUrl) &&
+               !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasSemanticLiveStateChanged(
