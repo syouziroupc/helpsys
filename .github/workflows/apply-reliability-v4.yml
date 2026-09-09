@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Correct fail-closed control flow in patch definition
+      - name: Correct final patch definition
         shell: pwsh
         run: |
           @'
@@ -38,7 +38,9 @@ jobs:
           new = '''                            StopWithMessage(\\"現在操作しているアプリを確認できないため、操作結果を推測せず案内を停止しました。もう一度「案内」を押してください。\\");\\n                            return;\\n'''
           if old not in text:
               raise SystemExit('control-flow patch target not found')
-          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(old, new, 1)
+          text = text.replace('Condition.TrueCondition', 'System.Windows.Automation.Condition.TrueCondition')
+          p.write_text(text, encoding='utf-8')
           '@ | python -
 
       - name: Apply final hardening
