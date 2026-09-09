@@ -1,120 +1,242 @@
-using System.Globalization;
-using System.Speech.Recognition;
+using System.Diagnostics;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using NAudio.Wave;
 
 namespace HelpSys.Services;
 
+public sealed class SpeechInputProgressEventArgs : EventArgs
+{
+    public SpeechInputProgressEventArgs(string stage, string message, double level = 0, string? text = null)
+    {
+        Stage = stage;
+        Message = message;
+        Level = level;
+        Text = text;
+    }
+
+    public string Stage { get; }
+    public string Message { get; }
+    public double Level { get; }
+    public string? Text { get; }
+}
+
 public sealed class SpeechInputService : IDisposable
 {
-    private static readonly TimeSpan RecognitionTimeout = TimeSpan.FromSeconds(8);
-    private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(2);
-    private readonly object _gate = new();
-    private SpeechRecognitionEngine? _engine;
+    private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
+    private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan TranscriptionTimeout = TimeSpan.FromSeconds(18);
+    private const double MinimumVoiceLevel = 0.018;
+
+    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly string _apiBase;
+    private readonly string? _apiKey;
+    private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private int _captureActive;
+    private bool _disposed;
+
+    public event EventHandler<SpeechInputProgressEventArgs>? ProgressChanged;
+
+    public SpeechInputService()
+    {
+        _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
+        _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
+    }
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Interlocked.Exchange(ref _captureActive, 1) != 0)
+            throw new InvalidOperationException("別の音声入力がまだ終了していません。");
+
         using var microphoneLease = MicrophoneCoordinator.BeginForegroundCapture();
-
-        if (!await MicrophoneCoordinator.WaitForBackgroundReleaseAsync(cancellationToken).ConfigureAwait(false))
-            throw new InvalidOperationException("コマンダーのマイク待機を安全に切り替えられませんでした。数秒後にもう一度試してください。");
-
-        var recognizer = SelectRecognizer();
-        if (recognizer is null)
-            throw new InvalidOperationException("Windowsの音声認識エンジンが見つかりません。Windowsの音声機能を確認してください。");
-
-        var engine = new SpeechRecognitionEngine(recognizer);
-        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        EventHandler<RecognizeCompletedEventArgs>? completedHandler = null;
-
         try
         {
-            engine.LoadGrammar(new DictationGrammar());
-            engine.SetInputToDefaultAudioDevice();
+            if (!await MicrophoneCoordinator.WaitForBackgroundReleaseAsync(cancellationToken).ConfigureAwait(false))
+                throw new InvalidOperationException("コマンダーのマイク待機を切り替えられませんでした。数秒後にもう一度試してください。");
 
-            completedHandler = (_, e) =>
+            RaiseProgress("listening", "聞き取り中…", 0);
+            var wave = await CaptureUtteranceAsync(cancellationToken).ConfigureAwait(false);
+            if (wave is null || wave.Length < 256)
             {
-                if (e.Error is not null) completion.TrySetException(e.Error);
-                else if (e.Cancelled) completion.TrySetResult(null);
-                else completion.TrySetResult(string.IsNullOrWhiteSpace(e.Result?.Text) ? null : e.Result.Text.Trim());
-            };
-            engine.RecognizeCompleted += completedHandler;
-
-            lock (_gate)
-            {
-                if (_engine is not null)
-                    throw new InvalidOperationException("別の音声入力がまだ終了していません。");
-                _engine = engine;
-            }
-
-            using var registration = cancellationToken.Register(() =>
-            {
-                try { engine.RecognizeAsyncCancel(); } catch { }
-            });
-
-            engine.RecognizeAsync(RecognizeMode.Single);
-            try
-            {
-                return await completion.Task.WaitAsync(RecognitionTimeout, cancellationToken).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                try { engine.RecognizeAsyncCancel(); } catch { }
+                RaiseProgress("idle", "音声を確認できませんでした。", 0);
                 return null;
             }
+
+            RaiseProgress("transcribing", "文字起こし中…", 0);
+            var text = await TranscribeAsync(wave, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                RaiseProgress("idle", "音声を確認できませんでした。", 0);
+                return null;
+            }
+
+            text = text.Trim();
+            RaiseProgress("transcribed", "聞き取り結果", 0, text);
+            return text;
         }
         finally
         {
-            if (completedHandler is not null)
-            {
-                try { engine.RecognizeCompleted -= completedHandler; } catch { }
-            }
-
-            lock (_gate)
-            {
-                if (ReferenceEquals(_engine, engine)) _engine = null;
-            }
-
-            await ReleaseEngineAsync(engine).ConfigureAwait(false);
+            Interlocked.Exchange(ref _captureActive, 0);
         }
     }
 
-    private static RecognizerInfo? SelectRecognizer()
+    private async Task<byte[]?> CaptureUtteranceAsync(CancellationToken cancellationToken)
     {
-        var recognizers = SpeechRecognitionEngine.InstalledRecognizers();
-        if (recognizers.Count == 0) return null;
+        using var waveIn = new WaveInEvent
+        {
+            WaveFormat = new WaveFormat(16000, 16, 1),
+            BufferMilliseconds = 100,
+            NumberOfBuffers = 3
+        };
+        using var stream = new MemoryStream();
+        var writer = new WaveFileWriter(stream, waveIn.WaveFormat);
+        var completion = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopwatch = Stopwatch.StartNew();
+        var lastVoice = TimeSpan.Zero;
+        var speechHeard = 0;
+        var stopRequested = 0;
+        var cancelled = 0;
+        var writerDisposed = 0;
 
-        var current = CultureInfo.CurrentUICulture.Name;
-        return recognizers.FirstOrDefault(x => x.Culture.Name.Equals(current, StringComparison.OrdinalIgnoreCase))
-            ?? recognizers.FirstOrDefault(x => x.Culture.Name.Equals("ja-JP", StringComparison.OrdinalIgnoreCase))
-            ?? recognizers[0];
+        void DisposeWriter()
+        {
+            if (Interlocked.Exchange(ref writerDisposed, 1) != 0) return;
+            try { writer.Dispose(); } catch { }
+        }
+
+        void RequestStop()
+        {
+            if (Interlocked.Exchange(ref stopRequested, 1) != 0) return;
+            try { waveIn.StopRecording(); }
+            catch (Exception ex) { completion.TrySetException(ex); }
+        }
+
+        void OnDataAvailable(object? sender, WaveInEventArgs e)
+        {
+            if (e.BytesRecorded <= 0 || Volatile.Read(ref writerDisposed) != 0) return;
+            try
+            {
+                writer.Write(e.Buffer, 0, e.BytesRecorded);
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+                RequestStop();
+                return;
+            }
+
+            var level = CalculatePeak(e.Buffer, e.BytesRecorded);
+            var elapsed = stopwatch.Elapsed;
+            if (level >= MinimumVoiceLevel)
+            {
+                Interlocked.Exchange(ref speechHeard, 1);
+                lastVoice = elapsed;
+            }
+            RaiseProgress("listening", "聞き取り中…", level);
+
+            if (elapsed >= MaximumCaptureTime ||
+                (Volatile.Read(ref speechHeard) == 0 && elapsed >= InitialSilenceTimeout) ||
+                (Volatile.Read(ref speechHeard) != 0 && elapsed - lastVoice >= EndSilenceTimeout))
+            {
+                RequestStop();
+            }
+        }
+
+        void OnRecordingStopped(object? sender, StoppedEventArgs e)
+        {
+            try
+            {
+                DisposeWriter();
+                if (Volatile.Read(ref cancelled) != 0)
+                    completion.TrySetCanceled(cancellationToken);
+                else if (e.Exception is not null)
+                    completion.TrySetException(e.Exception);
+                else if (Volatile.Read(ref speechHeard) == 0)
+                    completion.TrySetResult(null);
+                else
+                    completion.TrySetResult(stream.ToArray());
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        }
+
+        waveIn.DataAvailable += OnDataAvailable;
+        waveIn.RecordingStopped += OnRecordingStopped;
+        using var registration = cancellationToken.Register(() =>
+        {
+            Interlocked.Exchange(ref cancelled, 1);
+            RequestStop();
+        });
+
+        try
+        {
+            waveIn.StartRecording();
+            return await completion.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            waveIn.DataAvailable -= OnDataAvailable;
+            waveIn.RecordingStopped -= OnRecordingStopped;
+            DisposeWriter();
+        }
     }
 
-    private static async Task ReleaseEngineAsync(SpeechRecognitionEngine engine)
+    private async Task<string?> TranscribeAsync(byte[] wave, CancellationToken cancellationToken)
     {
-        var release = Task.Run(() =>
-        {
-            try { engine.RecognizeAsyncCancel(); } catch { }
-            try { engine.Dispose(); } catch { }
-        });
-        MicrophoneCoordinator.TrackBackgroundRelease(release);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TranscriptionTimeout);
 
-        try { await release.WaitAsync(ReleaseTimeout).ConfigureAwait(false); }
-        catch (TimeoutException) { }
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_apiBase}/v1/transcribe");
+        request.Content = new ByteArrayContent(wave);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+        request.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
+        if (!string.IsNullOrWhiteSpace(_apiKey)) request.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
+
+        using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
+            return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("音声認識サービスの応答形式が不正です。", ex);
+        }
+    }
+
+    private static double CalculatePeak(byte[] buffer, int count)
+    {
+        var peak = 0;
+        for (var i = 0; i + 1 < count; i += 2)
+        {
+            var sample = (short)(buffer[i] | (buffer[i + 1] << 8));
+            var value = Math.Abs(sample == short.MinValue ? short.MaxValue : sample);
+            if (value > peak) peak = value;
+        }
+        return Math.Clamp(peak / 32767d, 0d, 1d);
+    }
+
+    private void RaiseProgress(string stage, string message, double level, string? text = null)
+    {
+        try { ProgressChanged?.Invoke(this, new SpeechInputProgressEventArgs(stage, message, level, text)); }
+        catch { }
     }
 
     public void Dispose()
     {
-        SpeechRecognitionEngine? engine;
-        lock (_gate)
-        {
-            engine = _engine;
-            _engine = null;
-        }
-        if (engine is null) return;
-        var release = Task.Run(() =>
-        {
-            try { engine.RecognizeAsyncCancel(); } catch { }
-            try { engine.Dispose(); } catch { }
-        });
-        MicrophoneCoordinator.TrackBackgroundRelease(release);
+        if (_disposed) return;
+        _disposed = true;
+        _http.Dispose();
     }
+
+    private sealed record TranscriptionResponse(string? Text);
 }
