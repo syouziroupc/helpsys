@@ -18,7 +18,10 @@ public sealed class LessonProgress
 
 public sealed class ProgressStore
 {
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     private readonly string _path;
+    private readonly string _backupPath;
     private Dictionary<string, LessonProgress> _items = new(StringComparer.OrdinalIgnoreCase);
 
     public ProgressStore()
@@ -26,6 +29,7 @@ public sealed class ProgressStore
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HelpSys.Education");
         Directory.CreateDirectory(root);
         _path = Path.Combine(root, "progress.json");
+        _backupPath = Path.Combine(root, "progress.backup.json");
         Load();
     }
 
@@ -84,19 +88,76 @@ public sealed class ProgressStore
         Save();
     }
 
-    public void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_items, new JsonSerializerOptions { WriteIndented = true }));
+    public void Save()
+    {
+        var directory = Path.GetDirectoryName(_path) ?? throw new InvalidOperationException("進捗保存先を確認できません。");
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $"progress.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+        var json = JsonSerializer.Serialize(_items, JsonOptions);
+
+        try
+        {
+            File.WriteAllText(tempPath, json);
+            if (File.Exists(_path))
+            {
+                try
+                {
+                    File.Replace(tempPath, _path, _backupPath, ignoreMetadataErrors: true);
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    File.Copy(_path, _backupPath, overwrite: true);
+                    File.Move(tempPath, _path, overwrite: true);
+                }
+            }
+            else
+            {
+                File.Move(tempPath, _path);
+                File.Copy(_path, _backupPath, overwrite: true);
+            }
+        }
+        finally
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+            catch { }
+        }
+    }
 
     private void Load()
     {
-        if (!File.Exists(_path)) return;
+        if (TryLoad(_path, out var primary))
+        {
+            _items = primary;
+            return;
+        }
+
+        if (TryLoad(_backupPath, out var backup))
+        {
+            _items = backup;
+            // Restore the valid backup through the same atomic save path so the next
+            // launch does not repeatedly encounter the damaged primary file.
+            try { Save(); }
+            catch { }
+            return;
+        }
+
+        _items = new Dictionary<string, LessonProgress>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool TryLoad(string path, out Dictionary<string, LessonProgress> loaded)
+    {
+        loaded = new Dictionary<string, LessonProgress>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(path)) return false;
+
         try
         {
-            var loaded = JsonSerializer.Deserialize<Dictionary<string, LessonProgress>>(File.ReadAllText(_path));
-            if (loaded is not null) _items = new Dictionary<string, LessonProgress>(loaded, StringComparer.OrdinalIgnoreCase);
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, LessonProgress>>(File.ReadAllText(path));
+            if (parsed is null) return false;
+            loaded = new Dictionary<string, LessonProgress>(parsed, StringComparer.OrdinalIgnoreCase);
+            return true;
         }
-        catch
-        {
-            _items = new Dictionary<string, LessonProgress>(StringComparer.OrdinalIgnoreCase);
-        }
+        catch (JsonException) { return false; }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 }
