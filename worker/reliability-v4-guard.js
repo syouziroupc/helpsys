@@ -1,5 +1,6 @@
 import base from './deliberation-guard.js';
 import education from './education.js';
+import quality from './quality-guide.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
 const APP_RULES = [
@@ -18,10 +19,13 @@ export default {
     try { url = new URL(request.url); }
     catch { return base.fetch(request, env, ctx); }
 
-    // Public Education downloads must work without asking beginners to configure a
-    // second Worker URL. The standalone helpsys-education config remains available for
-    // development/optional isolation, while production also exposes the same endpoint
-    // through the Git-integrated HelpSys Worker.
+    // Quality-first normal HelpSys planning always receives the current screenshot and
+    // UI structure together. It owns its own deterministic validation and secret guard.
+    if (url.pathname === '/v1/quality-guide') {
+      return quality.fetch(request, env, ctx);
+    }
+
+    // Keep Education routing available, but normal HelpSys development is prioritized.
     if (url.pathname === '/v1/education/assist') {
       return education.fetch(request, env, ctx);
     }
