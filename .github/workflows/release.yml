@@ -31,7 +31,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v5-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v7-win-x64.zip'
+          $stableAssetName = 'HelpSys-latest-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -42,6 +43,7 @@ jobs:
             -o $out
           Copy-Item README.md (Join-Path $out 'README.md')
           Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
+          Copy-Item (Join-Path $PWD $assetName) (Join-Path $PWD $stableAssetName) -Force
 
       - name: Update preview release
         shell: pwsh
@@ -50,33 +52,44 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v5-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v7-win-x64.zip'
+          $stableAssetName = 'HelpSys-latest-win-x64.zip'
           $asset = Join-Path $PWD $assetName
+          $stableAsset = Join-Path $PWD $stableAssetName
+          $allowedAssets = @($assetName, $stableAssetName)
           $notes = @"
-          HelpSys Windows Preview — Reliability v5
+          HelpSys Windows Preview — Reliability v7
 
           - Windows 10 / 11 (64-bit)
           - Self-contained build
-          - Package: $assetName
-          - Reliability v5: 前面アプリ切替時のUI Automation監視競合を修正
-          - 起動直後のWindow購読を再試行し、同一プロセスではフォーカス中の可視Windowを優先
+          - Versioned package: $assetName
+          - Stable site download alias: $stableAssetName
+          - Commander: 「ねえコマンダー」で音声起動し、用件を1回認識して案内を開始
+          - マイクは手動音声・確認回答・Commander本認識を優先し、wake待機は競合時に完全解放
+          - Quality First: 毎ステップで現在のスクリーンショットを主要証拠としてUIA・system context・historyと同時評価
+          - screenshot/UIA/systemが矛盾する場合は推測で進めず、done/targetにも可視証拠とconfidence閾値を要求
+          - Reliability v6の安定ダウンロード導線、Education API接続、Reliability v5の前面監視修正も維持
           - 操作代行ではなく、現在状態を確認して人間が行う次の1手を案内する開発版です。
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            # Do not leave a differently named old HelpSys ZIP next to the current build.
             $oldAssets = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
             foreach ($oldAsset in $oldAssets) {
-              if ($oldAsset -like 'HelpSys*.zip' -and $oldAsset -ne $assetName) {
+              if ($oldAsset -like 'HelpSys*.zip' -and $allowedAssets -notcontains $oldAsset) {
                 gh release delete-asset $tag $oldAsset --yes --repo $env:GITHUB_REPOSITORY
                 if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
               }
             }
-            gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview asset.' }
+            gh release upload $tag $asset $stableAsset --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
             gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $asset --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $asset $stableAsset --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+          }
+
+          $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
+          foreach ($expected in $allowedAssets) {
+            if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
           }

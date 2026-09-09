@@ -29,6 +29,9 @@ jobs:
           node --check worker/deliberation-selftest.mjs
           node --check worker/reliability-v4-guard.js
           node --check worker/reliability-v4-selftest.mjs
+          node --check worker/quality-guide.js
+          node --check worker/quality-guide-selftest.mjs
+          node --check tests/site-release-contract.mjs
 
       - name: Test Worker contract
         run: |
@@ -37,6 +40,10 @@ jobs:
           node worker/visible-first-selftest.mjs
           node worker/deliberation-selftest.mjs
           node worker/reliability-v4-selftest.mjs
+          node worker/quality-guide-selftest.mjs
+
+      - name: Test site and release contract
+        run: node tests/site-release-contract.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
@@ -56,13 +63,10 @@ jobs:
 
           $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
           Start-Sleep -Seconds 3
-          $shell = New-Object -ComObject WScript.Shell
-          $null = $shell.AppActivate($target.Id)
-          Start-Sleep -Seconds 1
 
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
           $process = Start-Process $exe -PassThru
-          Start-Sleep -Seconds 4
+          Start-Sleep -Seconds 5
 
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
@@ -119,30 +123,43 @@ jobs:
 
             $requestBox = Find-HelpSysElement 'RequestBox'
             $guideButton = Find-HelpSysElement 'GuideButton'
-            if ($null -eq $requestBox -or $null -eq $guideButton) {
-              throw 'HelpSys UI Automation controls were not exposed.'
+            $commanderButton = Find-HelpSysElement 'CommanderButton'
+            if ($null -eq $requestBox -or $null -eq $guideButton -or $null -eq $commanderButton) {
+              throw 'HelpSys core or Commander UI Automation controls were not exposed.'
             }
 
             $valuePattern = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
             $valuePattern.SetValue('open the test target')
 
-            $null = $shell.AppActivate($target.Id)
-            Start-Sleep -Milliseconds 300
-
             $invokePattern = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
             $invokePattern.Invoke()
-            Start-Sleep -Seconds 6
-            if ($process.HasExited) { throw 'HelpSys exited while producing guidance.' }
+            Start-Sleep -Seconds 10
+            if ($process.HasExited) { throw 'HelpSys exited while producing quality-first guidance.' }
+
+            if (-not (Test-Path 'artifacts/mock-last-request.json')) {
+              Save-DesktopScreenshot 'artifacts/helpsys-quality-request-failure.png'
+              throw 'Quality-first planner did not reach the mock API.'
+            }
+            $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($diagnostics.path -ne '/v1/quality-guide') {
+              throw "Normal HelpSys used the wrong planning route: $($diagnostics.path)"
+            }
+            if ($diagnostics.hasScreenshot -ne $true) {
+              throw 'Normal HelpSys planning request did not include the current screenshot.'
+            }
+            if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
+              Write-Host '--- mock quality-first diagnostics ---'
+              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
+              throw 'Quality-first scan did not use the dedicated smoke work surface.'
+            }
 
             $names = @(Get-HelpSysNames)
             $instruction = '青い枠の場所で、マウスの左ボタンを1回押してください。'
             if (-not ($names | Where-Object { $_ -like '手順*' -or $_ -eq $instruction })) {
               Save-DesktopScreenshot 'artifacts/helpsys-guidance-failure.png'
-              if (Test-Path 'artifacts/mock-last-request.json') {
-                Write-Host '--- mock candidate diagnostics ---'
-                Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
-              }
-              throw "HelpSys did not expose an actionable guidance step. UIA names: $($names -join ' | ')"
+              Write-Host '--- mock quality-first diagnostics ---'
+              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
+              throw "HelpSys did not expose an actionable quality-first guidance step. UIA names: $($names -join ' | ')"
             }
 
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'

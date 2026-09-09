@@ -59,12 +59,23 @@ h1 span { color: var(--accent-2); }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 34px; }
 .download-button {
   display: inline-flex; align-items: center; justify-content: center;
-  min-height: 52px; padding: 0 24px; border-radius: 13px;
+  min-height: 52px; padding: 0 24px; border: 1px solid transparent; border-radius: 13px;
   background: #f7f9ff; color: #0a1020; text-decoration: none; font-weight: 750;
   box-shadow: 0 12px 34px rgba(0,0,0,.3);
-  transition: transform .15s ease, box-shadow .15s ease;
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .download-button:hover { transform: translateY(-2px); box-shadow: 0 18px 40px rgba(0,0,0,.34); }
+.download-button:focus-visible, .github-link:focus-visible, .brand:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+.download-button.ghost {
+  border-color: rgba(168,198,255,.35);
+  background: rgba(117,167,255,.09);
+  color: var(--text);
+  box-shadow: none;
+}
+.download-button.ghost:hover { background: rgba(117,167,255,.16); }
 .download-note { color: var(--muted); font-size: 13px; }
 
 .demo { position: relative; }
@@ -131,6 +142,20 @@ h2 { margin: 0; font-size: clamp(32px, 4.2vw, 50px); line-height: 1.18; letter-s
 .card p { margin: 0; color: var(--muted); font-size: 14px; }
 kbd { padding: 2px 6px; border: 1px solid rgba(255,255,255,.17); border-bottom-color: rgba(255,255,255,.28); border-radius: 5px; background: rgba(255,255,255,.06); font: inherit; font-size: 11px; }
 
+.download-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.download-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 310px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(117,167,255,.08), rgba(255,255,255,.018));
+}
+.download-card h3 { margin: 0 0 12px; font-size: 27px; }
+.download-card > p:not(.eyebrow) { flex: 1; margin: 0 0 28px; color: var(--muted); font-size: 14px; }
+
 .split-section { display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; align-items: start; }
 .feature-list { border-top: 1px solid var(--line); }
 .feature-list > div { display: grid; grid-template-columns: 180px 1fr; gap: 22px; padding: 24px 0; border-bottom: 1px solid var(--line); }
@@ -146,19 +171,26 @@ kbd { padding: 2px 6px; border: 1px solid rgba(255,255,255,.17); border-bottom-c
 .download-panel { display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-top: 26px; margin-bottom: 95px; }
 .download-panel h2 { font-size: clamp(28px, 4vw, 42px); }
 .download-panel p:last-child { color: var(--muted); margin-bottom: 0; }
+.download-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
 .secondary { white-space: nowrap; }
 
 footer { min-height: 90px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; color: #77839a; font-size: 13px; }
 footer a { color: #8995aa; text-decoration: none; }
 
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .download-button { transition: none; }
+}
+
 @media (max-width: 860px) {
   .hero { grid-template-columns: 1fr; min-height: auto; gap: 46px; padding-top: 45px; }
   .demo { max-width: 620px; }
-  .steps { grid-template-columns: 1fr; }
+  .steps, .download-options { grid-template-columns: 1fr; }
   .card { min-height: auto; }
   .card h3 { margin-top: 24px; }
   .split-section, .privacy { grid-template-columns: 1fr; gap: 34px; }
   .download-panel { align-items: flex-start; flex-direction: column; }
+  .download-panel-actions { justify-content: flex-start; }
 }
 
 @media (max-width: 560px) {
@@ -168,11 +200,11 @@ footer a { color: #8995aa; text-decoration: none; }
   h1 { font-size: 44px; }
   .lead { font-size: 16px; }
   .download-button { width: 100%; }
-  .actions { align-items: flex-start; flex-direction: column; }
+  .actions, .download-panel-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .guide-message { left: 34%; bottom: 43%; font-size: 11px; padding: 10px 12px; }
   .guide-arrow { left: 23%; bottom: 42%; font-size: 34px; }
   .section { padding: 68px 0; }
   .feature-list > div { grid-template-columns: 1fr; gap: 6px; }
-  .privacy, .download-panel { padding: 27px; }
+  .privacy, .download-panel, .download-card { padding: 27px; }
   footer { align-items: flex-start; flex-direction: column; justify-content: center; gap: 6px; }
 }

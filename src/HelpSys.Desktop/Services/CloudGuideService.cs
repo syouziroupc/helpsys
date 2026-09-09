@@ -26,6 +26,37 @@ public sealed class CloudGuideService : IDisposable
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
     }
 
+    public async Task<QualityGuideDecision> PlanQualityAsync(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken = default)
+    {
+        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var body = new
+        {
+            request,
+            history,
+            systemContext,
+            elements = relevantElements.Select(CompactElement),
+            image = frame.ImageDataUri,
+            imageWidth = frame.ImageWidth,
+            imageHeight = frame.ImageHeight
+        };
+
+        // Screen capture and inference are intentionally allowed to take longer than the
+        // old UI-only route. Freshness is checked on both sides of the model call so higher
+        // quality never means displaying an answer for a screen that has already changed.
+        EnsurePlanningContextCurrent(systemContext);
+        var decision = await SendAsync<QualityGuideDecision>(
+            () => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/quality-guide", body),
+            cancellationToken);
+        EnsurePlanningContextCurrent(systemContext);
+        return decision;
+    }
+
     public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
@@ -37,24 +68,7 @@ public sealed class CloudGuideService : IDisposable
             request,
             history,
             systemContext,
-            elements = relevantElements.Select(x => new
-            {
-                id = x.Id,
-                name = x.Name,
-                automationId = x.AutomationId,
-                className = x.ClassName,
-                controlType = x.ControlType,
-                processName = x.ProcessName,
-                interactable = x.Interactable,
-                enabled = x.Enabled,
-                keyboardFocusable = x.KeyboardFocusable,
-                focused = x.Focused,
-                password = x.Password,
-                x = x.X,
-                y = x.Y,
-                width = x.Width,
-                height = x.Height
-            })
+            elements = relevantElements.Select(CompactElement)
         };
 
         EnsurePlanningContextCurrent(systemContext);
@@ -80,6 +94,25 @@ public sealed class CloudGuideService : IDisposable
         EnsurePlanningContextCurrent(systemContext);
         return decision;
     }
+
+    private static object CompactElement(UiElementCandidate x) => new
+    {
+        id = x.Id,
+        name = x.Name,
+        automationId = x.AutomationId,
+        className = x.ClassName,
+        controlType = x.ControlType,
+        processName = x.ProcessName,
+        interactable = x.Interactable,
+        enabled = x.Enabled,
+        keyboardFocusable = x.KeyboardFocusable,
+        focused = x.Focused,
+        password = x.Password,
+        x = x.X,
+        y = x.Y,
+        width = x.Width,
+        height = x.Height
+    };
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
     {

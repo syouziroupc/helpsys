@@ -12,6 +12,19 @@ def field(obj, name, default=None):
     return obj.get(pascal, default)
 
 
+def eligible_elements(payload):
+    elements = field(payload, "elements", []) or []
+    return [
+        item
+        for item in elements
+        if field(item, "interactable", True) is not False
+        and field(item, "enabled", True) is not False
+        and float(field(item, "width", 0) or 0) >= 8
+        and float(field(item, "height", 0) or 0) >= 8
+        and field(item, "id")
+    ]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -64,26 +77,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "invalid_json"}, 400)
             return
 
-        if self.path == "/v1/guide":
-            elements = field(payload, "elements", []) or []
+        if self.path in ("/v1/guide", "/v1/quality-guide"):
             system_context = field(payload, "systemContext", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
-
-            eligible = [
-                item
-                for item in elements
-                if field(item, "interactable", True) is not False
-                and field(item, "enabled", True) is not False
-                and float(field(item, "width", 0) or 0) >= 8
-                and float(field(item, "height", 0) or 0) >= 8
-                and field(item, "id")
-            ]
+            eligible = eligible_elements(payload)
+            has_image = str(field(payload, "image", "") or "").startswith("data:image/png;base64,")
 
             diagnostics = {
+                "path": self.path,
                 "payloadKeys": list(payload.keys()) if isinstance(payload, dict) else [],
                 "systemContextKeys": list(system_context.keys()) if isinstance(system_context, dict) else [],
                 "foreground": foreground,
                 "foregroundProcessId": field(system_context, "foregroundProcessId"),
+                "hasScreenshot": has_image,
                 "eligible": [
                     {
                         "id": field(item, "id"),
@@ -99,6 +105,10 @@ class Handler(BaseHTTPRequestHandler):
             Path("artifacts/mock-last-request.json").write_text(
                 json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+
+            if self.path == "/v1/quality-guide" and not has_image:
+                self._json({"error": "missing_screenshot"}, 400)
+                return
 
             target = next(
                 (
@@ -120,15 +130,54 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             if target is None:
+                if self.path == "/v1/quality-guide":
+                    self._json(
+                        {
+                            "status": "not_found",
+                            "targetId": None,
+                            "action": "none",
+                            "instruction": "テスト対象がありません。",
+                            "question": None,
+                            "key": None,
+                            "confidence": 0,
+                            "x": 0,
+                            "y": 0,
+                            "width": 0,
+                            "height": 0,
+                            "screenConfirmed": False,
+                            "visualEvidence": "",
+                        }
+                    )
+                else:
+                    self._json(
+                        {
+                            "status": "not_found",
+                            "targetId": None,
+                            "action": "none",
+                            "instruction": "テスト対象がありません。",
+                            "question": None,
+                            "key": None,
+                            "confidence": 0,
+                        }
+                    )
+                return
+
+            if self.path == "/v1/quality-guide":
                 self._json(
                     {
-                        "status": "not_found",
-                        "targetId": None,
-                        "action": "none",
-                        "instruction": "テスト対象がありません。",
+                        "status": "target",
+                        "targetId": str(field(target, "id")),
+                        "action": "left_click",
+                        "instruction": "青い枠の場所で、マウスの左ボタンを1回押してください。",
                         "question": None,
                         "key": None,
-                        "confidence": 0,
+                        "confidence": 0.99,
+                        "x": 0,
+                        "y": 0,
+                        "width": 0,
+                        "height": 0,
+                        "screenConfirmed": True,
+                        "visualEvidence": "テスト対象のボタンが現在画面に見えます。",
                     }
                 )
                 return

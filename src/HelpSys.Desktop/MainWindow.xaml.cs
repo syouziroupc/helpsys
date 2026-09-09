@@ -191,7 +191,7 @@ public partial class MainWindow : Window
         await AdvanceGuideAsync();
     }
 
-    private async Task AdvanceGuideAsync()
+    private async Task AdvanceGuideLegacyAsync()
     {
         if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
         if (!_sessionState.TryBeginOperation(out var generation, GuidanceSessionState.Capturing)) return;

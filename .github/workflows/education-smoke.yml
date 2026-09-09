@@ -7,6 +7,8 @@ on:
       - "src/HelpSys.Education/**"
       - "worker/education.js"
       - "worker/education-selftest.mjs"
+      - "worker/reliability-v4-guard.js"
+      - "worker/reliability-v4-selftest.mjs"
       - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
   pull_request:
@@ -15,6 +17,8 @@ on:
       - "HelpSys.sln"
       - "worker/education.js"
       - "worker/education-selftest.mjs"
+      - "worker/reliability-v4-guard.js"
+      - "worker/reliability-v4-selftest.mjs"
       - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
 
@@ -31,7 +35,10 @@ jobs:
         run: |
           node --check worker/education.js
           node --check worker/education-selftest.mjs
+          node --check worker/reliability-v4-guard.js
+          node --check worker/reliability-v4-selftest.mjs
           node worker/education-selftest.mjs
+          node worker/reliability-v4-selftest.mjs
 
       - name: Restore and build
         run: |
@@ -105,7 +112,7 @@ jobs:
 
             Invoke-ByName $window '練習'
             $names = Get-Names $window
-            foreach ($required in @('安全な練習エリア','練習完了 → テストへ')) {
+            foreach ($required in @('安全な練習エリア','練習完了 → テストへ','教育AIは接続済みです。練習時だけ、段階的なヒントを利用できます。')) {
               if (-not ($names -contains $required)) { Save-Screenshot 'artifacts/education-practice-failure.png'; throw "Education practice UI missing: $required" }
             }
 

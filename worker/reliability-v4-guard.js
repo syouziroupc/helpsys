@@ -1,4 +1,6 @@
 import base from './deliberation-guard.js';
+import education from './education.js';
+import quality from './quality-guide.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
 const APP_RULES = [
@@ -13,9 +15,23 @@ const APP_RULES = [
 
 export default {
   async fetch(request, env, ctx) {
+    let url;
+    try { url = new URL(request.url); }
+    catch { return base.fetch(request, env, ctx); }
+
+    // Quality-first normal HelpSys planning always receives the current screenshot and
+    // UI structure together. It owns its own deterministic validation and secret guard.
+    if (url.pathname === '/v1/quality-guide') {
+      return quality.fetch(request, env, ctx);
+    }
+
+    // Keep Education routing available, but normal HelpSys development is prioritized.
+    if (url.pathname === '/v1/education/assist') {
+      return education.fetch(request, env, ctx);
+    }
+
     let bodyPromise = null;
     try {
-      const url = new URL(request.url);
       if (request.method === 'POST' && (url.pathname === '/v1/guide' || url.pathname === '/v1/vision-guide'))
         bodyPromise = request.clone().json();
     } catch { }
@@ -39,7 +55,6 @@ export default {
     return override ? replaceJson(response, override) : response;
   }
 };
-
 
 export function guardSecretClarification(decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
