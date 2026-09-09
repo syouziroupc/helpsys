@@ -75,7 +75,10 @@ public sealed class SpeechOutputService : IDisposable
         EventHandler<SpeakCompletedEventArgs>? handler = null;
         handler = (_, e) =>
         {
-            if (prompt is null || ReferenceEquals(e.Prompt, prompt)) completion.TrySetResult(true);
+            // A completion event from a previously cancelled utterance may arrive after this
+            // handler is subscribed but before SpeakAsync returns the new Prompt. Never let that
+            // stale event make Commander open the microphone while its own prompt is still playing.
+            if (prompt is not null && ReferenceEquals(e.Prompt, prompt)) completion.TrySetResult(true);
         };
 
         try
