@@ -88,4 +88,28 @@ const oversized = await guard.fetch(new Request('https://example.test/v1/educati
 assert(oversized.status === 413, 'oversized Education request must be rejected before parsing/inference');
 assert(oversizedAiCalls === 0, 'oversized Education request must not reach AI');
 
+let chunkedAiCalls = 0;
+const oversizedChunk = new Uint8Array(40_000).fill(0x61);
+let sent = false;
+const chunkedBody = new ReadableStream({
+  pull(controller) {
+    if (sent) {
+      controller.close();
+      return;
+    }
+    sent = true;
+    controller.enqueue(oversizedChunk.subarray(0, 20_000));
+    controller.enqueue(oversizedChunk.subarray(20_000));
+    controller.close();
+  }
+});
+const chunked = await guard.fetch(new Request('https://example.test/v1/education/assist', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: chunkedBody,
+  duplex: 'half'
+}), { AI: { async run() { chunkedAiCalls++; } } }, {});
+assert(chunked.status === 413, 'chunked Education body over 32KB must be rejected without Content-Length');
+assert(chunkedAiCalls === 0, 'oversized chunked body must not reach AI');
+
 console.log('runtime hardening self-test passed.');
