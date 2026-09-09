@@ -1,0 +1,31 @@
+name: Advanced UI probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  advanced-ui-probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: dotnet restore HelpSys.sln
+      - run: dotnet build HelpSys.sln -c Release --no-restore
+      - name: Run advanced UI probe
+        shell: pwsh
+        run: tests/advanced_ui_probe.ps1
+      - name: Upload advanced UI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: advanced-ui-probe
+          path: |
+            artifacts/mock-last-request.json
+            artifacts/mock-last-image.png
+          if-no-files-found: warn
