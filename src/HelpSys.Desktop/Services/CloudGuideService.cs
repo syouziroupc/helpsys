@@ -66,12 +66,13 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
-        var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, systemContext);
+        var cloudContext = SanitizeSystemContextForCloud(systemContext);
+        var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, cloudContext);
         var body = new
         {
             request,
             history,
-            systemContext,
+            systemContext = cloudContext,
             evidence,
             recoveryMode,
             routeIssue = ShortValue(routeIssue),
@@ -95,12 +96,13 @@ public sealed class CloudGuideService : IDisposable
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
 
-        var evidence = GuidanceEvidenceService.Build(false, relevantElements, history, systemContext);
+        var cloudContext = SanitizeSystemContextForCloud(systemContext);
+        var evidence = GuidanceEvidenceService.Build(false, relevantElements, history, cloudContext);
         var body = new
         {
             request,
             history,
-            systemContext,
+            systemContext = cloudContext,
             evidence,
             elements = relevantElements.Select(CompactElement)
         };
@@ -113,12 +115,13 @@ public sealed class CloudGuideService : IDisposable
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
-        var evidence = GuidanceEvidenceService.Build(true, [], history, systemContext);
+        var cloudContext = SanitizeSystemContextForCloud(systemContext);
+        var evidence = GuidanceEvidenceService.Build(true, [], history, cloudContext);
         var body = new
         {
             request,
             history,
-            systemContext,
+            systemContext = cloudContext,
             evidence,
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
@@ -153,6 +156,36 @@ public sealed class CloudGuideService : IDisposable
         width = x.Width,
         height = x.Height
     };
+
+    private static SystemContextSnapshot SanitizeSystemContextForCloud(SystemContextSnapshot context)
+    {
+        if (context.Browser is null) return context;
+        var browser = context.Browser with { Url = SanitizeBrowserUrl(context.Browser.Url) };
+        return context with { Browser = browser };
+    }
+
+    private static string? SanitizeBrowserUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var raw = value.Trim();
+
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var uri) &&
+            (uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) ||
+             uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)))
+        {
+            var searchLike = !string.IsNullOrWhiteSpace(uri.Query) ||
+                             uri.AbsolutePath.Contains("search", StringComparison.OrdinalIgnoreCase);
+            var host = uri.IdnHost.ToLowerInvariant();
+            var port = uri.IsDefaultPort ? string.Empty : $":{uri.Port}";
+            return $"{uri.Scheme.ToLowerInvariant()}://{host}{port}/{(searchLike ? "?search=1" : string.Empty)}";
+        }
+
+        // Internal new-tab/about URLs are useful state markers but may still contain fragments or
+        // query data. Keep only the scheme/path-like portion needed to distinguish the browser state.
+        var cut = raw.IndexOfAny(['?', '#']);
+        if (cut >= 0) raw = raw[..cut];
+        return raw.Length <= 180 ? raw : raw[..180];
+    }
 
     private static string? ShortValue(string? value)
     {
@@ -269,13 +302,17 @@ public sealed class CloudGuideService : IDisposable
 
     private void RememberRateLimit(HttpResponseMessage response)
     {
-        var seconds = 60;
-        if (response.Headers.TryGetValues("Retry-After", out var values))
+        var wait = TimeSpan.FromSeconds(60);
+        if (response.Headers.RetryAfter?.Delta is { } delta)
         {
-            var raw = values.FirstOrDefault();
-            if (int.TryParse(raw, out var parsed)) seconds = Math.Clamp(parsed, 1, 300);
+            wait = delta;
         }
-        Interlocked.Exchange(ref _rateLimitedUntilUtcTicks, DateTime.UtcNow.AddSeconds(seconds).Ticks);
+        else if (response.Headers.RetryAfter?.Date is { } date)
+        {
+            wait = date - DateTimeOffset.UtcNow;
+        }
+        wait = TimeSpan.FromSeconds(Math.Clamp(wait.TotalSeconds, 1, 300));
+        Interlocked.Exchange(ref _rateLimitedUntilUtcTicks, DateTime.UtcNow.Add(wait).Ticks);
     }
 
     private void ThrowIfLocallyRateLimited()
