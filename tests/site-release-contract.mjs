@@ -14,11 +14,17 @@ const headers = read('site/_headers');
 const wrangler = read('wrangler.jsonc');
 const normalRelease = read('.github/workflows/release.yml');
 const educationRelease = read('.github/workflows/education-preview.yml');
+const educationService = read('src/HelpSys.Education/EducationGuideService.cs');
+const productionGuard = read('worker/reliability-v4-guard.js');
+const educationDoc = read('EDUCATION.md');
 
+const PRODUCTION_BASE = 'https://helpsys.syouziroupc.workers.dev';
 const NORMAL_ROUTE = '/download';
 const EDUCATION_ROUTE = '/download/education';
 const NORMAL_ALIAS = 'HelpSys-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
+const NORMAL_VERSIONED = 'HelpSys-Reliability-v6-win-x64.zip';
+const EDUCATION_VERSIONED = 'HelpSys-Education-v2.2-preview-win-x64.zip';
 const NORMAL_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${NORMAL_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
 
@@ -45,14 +51,20 @@ assert(index.includes(`href="${NORMAL_ROUTE}"`), 'Public site does not expose th
 assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site does not expose the stable Education download route.');
 assert(!index.includes('HelpSys-win-x64.zip'), 'Removed broken HelpSys-win-x64.zip URL has reappeared in the public site.');
 assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not couple directly to a versioned GitHub ZIP URL; use stable local routes.');
-assert(index.includes('https://helpsys.syouziroupc.workers.dev/'), 'Canonical production HelpSys URL is missing from the public site.');
+assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing from the public site.');
 
 assert(normalRelease.includes(NORMAL_ALIAS), 'Normal release workflow does not publish the stable alias used by /download.');
-assert(normalRelease.includes("HelpSys-Reliability-v5-win-x64.zip"), 'Normal release workflow lost the traceable versioned package.');
+assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v6 package.');
 assert(normalRelease.includes('Release asset missing after publish'), 'Normal release workflow does not verify its published assets.');
 assert(educationRelease.includes(EDUCATION_ALIAS), 'Education release workflow does not publish the stable alias used by /download/education.');
-assert(educationRelease.includes('HelpSys-Education-v2.1-preview-win-x64.zip'), 'Education release workflow lost the traceable versioned package.');
+assert(educationRelease.includes(EDUCATION_VERSIONED), 'Education release workflow lost the traceable v2.2 package.');
 assert(educationRelease.includes('Education release asset missing after publish'), 'Education release workflow does not verify its published assets.');
+
+assert(educationService.includes(`DefaultApiBase = "${PRODUCTION_BASE}"`), 'Education desktop does not default to the deployed production HelpSys API.');
+assert(educationService.includes('/v1/education/assist'), 'Education desktop lost its assist API route.');
+assert(productionGuard.includes("import education from './education.js'"), 'Production HelpSys Worker is not wired to the Education handler.');
+assert(productionGuard.includes("url.pathname === '/v1/education/assist'"), 'Production HelpSys Worker does not expose the Education assist route.');
+assert(educationDoc.includes(`${PRODUCTION_BASE}${EDUCATION_ROUTE}`), 'Education documentation lost the stable public download URL.');
 
 const config = JSON.parse(wrangler);
 assert(config?.assets?.directory === './site', 'wrangler.jsonc must deploy ./site as Worker static assets.');
@@ -75,6 +87,7 @@ for (const match of index.matchAll(/(?:href|src)="([^"]+)"/gi)) {
   assert(!/^javascript:/i.test(value), `Unsafe javascript: URL found: ${value}`);
 }
 
-console.log('HelpSys site/release contract passed.');
+console.log('HelpSys site/release/API contract passed.');
 console.log(`normal: ${NORMAL_ROUTE} -> ${NORMAL_DEST}`);
 console.log(`education: ${EDUCATION_ROUTE} -> ${EDUCATION_DEST}`);
+console.log(`education API: ${PRODUCTION_BASE}/v1/education/assist`);
