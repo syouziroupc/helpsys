@@ -21,9 +21,14 @@ public static class MicrophoneCoordinator
 
     public static void TrackBackgroundRelease(Task? releaseTask)
     {
+        if (releaseTask is null) return;
         lock (Gate)
         {
-            _backgroundReleaseTask = releaseTask ?? Task.CompletedTask;
+            // Never let a newer release hide an older recognizer that is still disposing.
+            // Commander may reacquire the microphone only after every outstanding release finishes.
+            _backgroundReleaseTask = _backgroundReleaseTask.IsCompleted
+                ? releaseTask
+                : Task.WhenAll(_backgroundReleaseTask, releaseTask);
         }
     }
 
