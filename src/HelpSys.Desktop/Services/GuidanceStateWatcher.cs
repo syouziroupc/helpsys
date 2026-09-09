@@ -86,6 +86,7 @@ public sealed class GuidanceStateWatcher : IDisposable
             if (processId <= 0) return;
 
             AutomationElement? root = null;
+            AutomationElement? fallbackRoot = null;
             try
             {
                 var condition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
@@ -100,6 +101,9 @@ public sealed class GuidanceStateWatcher : IDisposable
                         if (current.IsOffscreen) continue;
                         var bounds = current.BoundingRectangle;
                         if (bounds.IsEmpty || bounds.Width < 80 || bounds.Height < 60) continue;
+
+                        fallbackRoot ??= candidate;
+                        if (!current.HasKeyboardFocus) continue;
                         root = candidate;
                         break;
                     }
@@ -111,6 +115,7 @@ public sealed class GuidanceStateWatcher : IDisposable
             catch (InvalidOperationException) { }
 
             if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
+            root ??= fallbackRoot;
 
             // A just-launched application can expose its process before its top-level window.
             // Keep the PID but leave the subscription marked false so the next heartbeat retries.
