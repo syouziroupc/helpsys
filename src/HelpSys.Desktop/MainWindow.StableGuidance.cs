@@ -329,7 +329,10 @@ public partial class MainWindow
                 var by = (int)Math.Round(x.Y / 24d);
                 var bw = (int)Math.Round(x.Width / 24d);
                 var bh = (int)Math.Round(x.Height / 24d);
-                return $"{x.ProcessName}|{x.AutomationId}|{x.ClassName}|{NormalizeStableName(x.Name)}|{bx},{by},{bw},{bh}";
+                // Window titles are dynamic user/content data (document names, tab titles, subjects).
+                // They are not stable window identity and must not turn a harmless title refresh into
+                // a modal/window transition. Use process/class/automation identity plus geometry.
+                return $"{x.ProcessName}|{x.AutomationId}|{x.ClassName}|{bx},{by},{bw},{bh}";
             })
             .ToHashSet(StringComparer.Ordinal);
 
