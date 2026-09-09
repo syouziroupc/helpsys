@@ -30,6 +30,18 @@ public static class MonitorPlacementService
         SetWindowPos(hwnd, nint.Zero, x, y, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate);
     }
 
+    public static void MoveWindowToCursorMonitorTopCenter(Window window, int margin = 24)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == nint.Zero || !GetWindowRect(hwnd, out var rect)) return;
+
+        var work = GetWorkAreaForCursor();
+        var width = Math.Max(1, rect.Right - rect.Left);
+        var x = work.Left + Math.Max(0, (work.Width - width) / 2);
+        var y = work.Top + Math.Max(0, margin);
+        SetWindowPos(hwnd, nint.Zero, x, y, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate);
+    }
+
     public static WorkArea GetWorkAreaForCursor()
     {
         if (!GetCursorPos(out var point)) point = new PointNative { X = 0, Y = 0 };

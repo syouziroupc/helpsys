@@ -100,15 +100,16 @@ public partial class MainWindow
                 return;
             }
 
-            interactionCts = new CancellationTokenSource(TimeSpan.FromSeconds(16));
+            // Cloud transcription adds a bounded network phase after local recording.
+            // Keep the whole wake interaction bounded, but do not cut off a normal utterance
+            // merely because the old local recognizer completed faster.
+            interactionCts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
             _commanderInteractionCts = interactionCts;
             var token = interactionCts.Token;
 
             _speechOutput.Stop();
             SetState("コマンダーを呼び出しました。用件を話してください。", speak: false);
 
-            // Do not guess how long TTS takes. Dictation starts only after the short
-            // acknowledgement has actually finished (or its bounded timeout expires).
             await _speechOutput.SpeakPromptAsync("はい。どうしましたか？", token);
             token.ThrowIfCancellationRequested();
 
@@ -138,10 +139,11 @@ public partial class MainWindow
             RequestBox.CaretIndex = RequestBox.Text.Length;
             SetState($"「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
 
-            // Audio capture is finished here. Do not keep the wake recognizer disabled for the
-            // potentially much longer screen capture/model-planning phase. Start planning first
-            // (which synchronously marks PlannerInFlight), then release this interaction guard so
-            // a new wake gets a bounded "案内中" response instead of looking frozen.
+            // Keep the recognized text readable for a short moment, then remove the listening
+            // overlay before screen capture so it cannot contaminate visual guidance.
+            await Task.Delay(900, token);
+            _speechInput.HideOverlay();
+
             _commander.CompleteWakeInteraction();
             wakeReleased = true;
             var planningTask = StartOrContinueSessionAsync();
@@ -151,11 +153,13 @@ public partial class MainWindow
         }
         catch (OperationCanceledException)
         {
+            _speechInput.HideOverlay();
             if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 SetState("音声入力を終了しました。", speak: false);
         }
         catch (Exception ex)
         {
+            _speechInput.HideOverlay();
             if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 SetState($"音声入力を開始できません: {ex.Message}", speak: false);
         }

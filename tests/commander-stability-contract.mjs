@@ -9,12 +9,15 @@ const coordinator = read('src/HelpSys.Desktop/Services/MicrophoneCoordinator.cs'
 const input = read('src/HelpSys.Desktop/Services/SpeechInputService.cs');
 const output = read('src/HelpSys.Desktop/Services/SpeechOutputService.cs');
 const window = read('src/HelpSys.Desktop/MainWindow.Commander.cs');
+const qualityWindow = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
+const listeningOverlay = read('src/HelpSys.Desktop/ListeningOverlayWindow.xaml');
 const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
 const systemContext = read('src/HelpSys.Desktop/Services/SystemContextService.cs');
 const legacyWorker = read('worker/index.js');
 const qualityWorker = read('worker/quality-guide.js');
+const transcribeWorker = read('worker/transcribe.js');
 const educationWorker = read('worker/education.js');
 const wrangler = read('wrangler.jsonc');
 const educationWrangler = read('wrangler.education.jsonc');
@@ -27,15 +30,28 @@ assert(!wake.includes('normalized.Contains("ねえコマンダー"'), 'Wake phra
 
 assert(coordinator.includes('WaitForBackgroundReleaseAsync'), 'Microphone coordinator must expose an awaitable wake-release barrier.');
 assert(input.includes('await MicrophoneCoordinator.WaitForBackgroundReleaseAsync'), 'Foreground dictation must wait until Commander actually releases the microphone.');
-assert(input.includes('TimeSpan.FromSeconds(8)'), 'Foreground dictation must have a bounded recognition window.');
+assert(input.includes('new WaveFormat(16000, 16, 1)'), 'Commander dictation must record a compact 16 kHz mono PCM stream.');
+assert(input.includes('MaximumCaptureTime = TimeSpan.FromSeconds(12)'), 'Commander dictation must keep a bounded local capture window.');
+assert(input.includes('/v1/transcribe'), 'Commander dictation must use the dedicated transcription endpoint.');
+assert(input.includes('ListeningOverlayWindow'), 'Commander dictation must expose a listening/transcription overlay.');
+assert(listeningOverlay.includes('聞き取り中'), 'Listening overlay must clearly show the active listening state.');
+assert(listeningOverlay.includes('TranscriptText'), 'Listening overlay must expose the recognized text prominently.');
 
 assert(output.includes('SpeakPromptAsync'), 'Commander acknowledgement must be awaitable.');
 assert(!window.includes('Task.Delay(2300)'), 'Fixed Commander TTS delay must not return.');
 assert(window.includes('SpeakPromptAsync("はい。どうしましたか？"'), 'Commander should begin dictation from actual acknowledgement completion.');
+assert(window.includes('TimeSpan.FromSeconds(40)'), 'Commander wake interaction must leave room for bounded cloud transcription.');
+assert(window.includes('_speechInput.HideOverlay();'), 'Commander must remove the listening overlay before screen planning begins.');
 assert(!window.includes('終わったらもう一度「ねえコマンダー」'), 'Spoken busy text must not contain the wake phrase.');
 assert(!window.includes('もう一度「ねえコマンダー」と呼'), 'Spoken retry text must not contain the wake phrase.');
 assert(window.includes('wakeReleased = true'), 'Commander must release wake listening before a potentially long planning pass.');
 assert(window.indexOf('_commander.CompleteWakeInteraction();\n            wakeReleased = true;') < window.indexOf('var planningTask = StartOrContinueSessionAsync();'), 'Commander wake release must occur before long planning begins.');
+
+assert(qualityWindow.includes('TryStructuredFallbackAsync'), 'Quality-first guidance must have a fresh UIA fallback when image confirmation is unavailable.');
+assert(qualityWindow.includes('MinimumStructuredFallbackConfidence = 0.88'), 'Structured fallback confidence threshold regression.');
+assert(qualityWindow.includes('string.IsNullOrWhiteSpace(fallback.TargetId)'), 'Structured fallback must require a concrete UIA target.');
+assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'Structured fallback must revalidate the target immediately before showing guidance.');
+assert(qualityWindow.includes('_speechInput.HideOverlay();'), 'Screen capture must remove the speech overlay first.');
 
 assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(9)'), 'Cloud guidance calls must have a short per-attempt timeout.');
 assert(cloud.includes('x-helpsys-request-id'), 'Guidance calls must carry request IDs for production debugging.');
@@ -52,16 +68,21 @@ const educationConfig = JSON.parse(educationWrangler);
 assert(config?.vars?.HELPSYS_MODEL === '@cf/zai-org/glm-4.7-flash', 'Normal HelpSys text model must be GLM-4.7 Flash.');
 assert(config?.vars?.HELPSYS_VISION_MODEL === '@cf/zai-org/glm-5.3-flash', 'Legacy vision route must be pinned to GLM-5.3 Flash.');
 assert(config?.vars?.HELPSYS_QUALITY_MODEL === '@cf/zai-org/glm-5.3-flash', 'Multimodal quality model must be GLM-5.3 Flash.');
+assert(config?.vars?.HELPSYS_ASR_MODEL === '@cf/openai/whisper-large-v3-turbo', 'Commander ASR model must be Whisper large-v3-turbo.');
 assert(educationConfig?.vars?.HELPSYS_EDUCATION_MODEL === '@cf/zai-org/glm-4.7-flash', 'Education text model must be GLM-4.7 Flash.');
 assert(legacyWorker.includes("DEFAULT_TEXT_MODEL = '@cf/zai-org/glm-4.7-flash'"), 'Legacy structured route must default only to GLM-4.7 Flash.');
 assert(legacyWorker.includes("DEFAULT_VISION_MODEL = '@cf/zai-org/glm-5.3-flash'"), 'Legacy vision route must default only to GLM-5.3 Flash.');
 assert(legacyWorker.includes('selectVisionModel(env.HELPSYS_VISION_MODEL || env.HELPSYS_QUALITY_MODEL)'), 'Legacy vision must never reuse the text-only model variable.');
 assert(qualityWorker.includes("DEFAULT_MODEL = '@cf/zai-org/glm-5.3-flash'"), 'Quality route must use GLM-5.3 Flash.');
+assert(transcribeWorker.includes("DEFAULT_MODEL = '@cf/openai/whisper-large-v3-turbo'"), 'Transcription route must use Whisper large-v3-turbo.');
+assert(transcribeWorker.includes("language: 'ja'"), 'Transcription route must explicitly request Japanese recognition.');
+assert(transcribeWorker.includes('vad_filter: true'), 'Transcription route must use voice activity detection.');
 assert(educationWorker.includes("DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash'"), 'Education route must use GLM-4.7 Flash.');
 
 const allowedModels = new Set([
   '@cf/zai-org/glm-4.7-flash',
-  '@cf/zai-org/glm-5.3-flash'
+  '@cf/zai-org/glm-5.3-flash',
+  '@cf/openai/whisper-large-v3-turbo'
 ]);
 
 const runtimeFiles = [
@@ -86,8 +107,9 @@ for (const [file, models] of foundModels) {
 
 assert([...foundModels.values()].flat().includes('@cf/zai-org/glm-4.7-flash'), 'Runtime scan did not find the GLM-4.7 text model.');
 assert([...foundModels.values()].flat().includes('@cf/zai-org/glm-5.3-flash'), 'Runtime scan did not find the GLM-5.3 vision model.');
+assert([...foundModels.values()].flat().includes('@cf/openai/whisper-large-v3-turbo'), 'Runtime scan did not find the Commander ASR model.');
 
-console.log('HelpSys Commander/GLM/freeze stability contract passed.');
+console.log('HelpSys Commander/GLM/ASR/freeze stability contract passed.');
 console.log('Runtime model refs:', Object.fromEntries(foundModels));
 
 function walkFiles(root, include) {

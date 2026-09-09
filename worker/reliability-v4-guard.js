@@ -1,6 +1,7 @@
 import base from './deliberation-guard.js';
 import education from './education.js';
 import quality from './quality-guide.js';
+import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
 const APP_RULES = [
@@ -18,6 +19,10 @@ export default {
     let url;
     try { url = new URL(request.url); }
     catch { return base.fetch(request, env, ctx); }
+
+    if (url.pathname === '/v1/transcribe') {
+      return transcribe.fetch(request, env, ctx);
+    }
 
     // Quality-first normal HelpSys planning always receives the current screenshot and
     // UI structure together. It owns its own deterministic validation and secret guard.

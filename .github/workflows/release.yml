@@ -31,7 +31,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v8-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
           $stableAssetName = 'HelpSys-latest-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
@@ -52,25 +52,24 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v8-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
           $stableAssetName = 'HelpSys-latest-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $stableAsset = Join-Path $PWD $stableAssetName
           $allowedAssets = @($assetName, $stableAssetName)
           $notes = @"
-          HelpSys Windows Preview — Reliability v8
+          HelpSys Windows Preview — Reliability v9
 
           - Windows 10 / 11 (64-bit)
           - Self-contained build
           - Versioned package: $assetName
           - Stable site download alias: $stableAssetName
-          - GLM: Quality FirstをGLM-5.3 Flash、通常テキスト経路をGLM-4.7 Flashへ移行
-          - 速度: quality入力を圧縮し、reasoning effortをlow、API 1試行9秒上限へ変更
-          - Commander: recognizerのcancel/disposeを状態lockから分離し、マイク解放完了後だけ本認識へ移行
-          - Commander: 固定2.3秒待機を廃止し、短い応答音声の実終了後に即座に用件認識を開始
-          - 誤起動抑制: wake phrase完全一致 + confidence 0.72、読み上げ文からwake phraseを除去
-          - 誤案内修正: デスクトップショートカットを起動するときは1クリックではなくダブルクリックへ物理補正
-          - Quality Firstの画面確認、秘密情報ガード、stale response破棄は維持
+          - Commander: 起動語の軽量ローカル待機は維持し、用件の文字起こしをWorkers AI Whisper large-v3-turboへ変更
+          - Commander: 16 kHz mono録音、無音区間で自動終了、日本語指定・VAD付きASR
+          - Commander UI: 聞き取り中・文字起こし中・確定文字列を画面上端中央のオーバーレイへ表示
+          - 画面確認: 画像取得または視覚確認が弱い場合、同じ前面プロセスのUI Automationを再走査して具体的な操作対象だけ継続可能に変更
+          - 安全性: 完了判定、画像だけの座標、秘密情報ガード、stale response破棄は従来どおり厳格に維持
+          - GLM: Quality FirstはGLM-5.3 Flash、通常テキスト経路はGLM-4.7 Flashを維持
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null

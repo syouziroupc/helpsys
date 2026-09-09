@@ -1,0 +1,56 @@
+<Window x:Class="HelpSys.ListeningOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="720"
+        Height="176"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ShowActivated="False"
+        Focusable="False">
+  <Border Background="#F2181A1F"
+          BorderBrush="#40FFFFFF"
+          BorderThickness="1"
+          CornerRadius="18"
+          Padding="26,22"
+          IsHitTestVisible="False">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="12" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <TextBlock x:Name="StatusText"
+                 Grid.Row="0"
+                 FontFamily="Yu Gothic UI"
+                 FontSize="20"
+                 FontWeight="SemiBold"
+                 Foreground="White"
+                 Text="聞き取り中…" />
+
+      <ProgressBar x:Name="LevelBar"
+                   Grid.Row="2"
+                   Height="8"
+                   Minimum="0"
+                   Maximum="1"
+                   Value="0"
+                   BorderThickness="0" />
+
+      <TextBlock x:Name="TranscriptText"
+                 Grid.Row="3"
+                 Margin="0,14,0,0"
+                 FontFamily="Yu Gothic UI"
+                 FontSize="27"
+                 FontWeight="SemiBold"
+                 Foreground="White"
+                 TextWrapping="Wrap"
+                 TextTrimming="CharacterEllipsis"
+                 MaxHeight="76" />
+    </Grid>
+  </Border>
+</Window>
