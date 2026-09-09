@@ -36,11 +36,13 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken = default)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
+        var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, systemContext);
         var body = new
         {
             request,
             history,
             systemContext,
+            evidence,
             elements = relevantElements.Select(CompactElement),
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
@@ -61,11 +63,13 @@ public sealed class CloudGuideService : IDisposable
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
 
+        var evidence = GuidanceEvidenceService.Build(false, relevantElements, history, systemContext);
         var body = new
         {
             request,
             history,
             systemContext,
+            evidence,
             elements = relevantElements.Select(CompactElement)
         };
 
@@ -77,11 +81,13 @@ public sealed class CloudGuideService : IDisposable
 
     public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
     {
+        var evidence = GuidanceEvidenceService.Build(true, [], history, systemContext);
         var body = new
         {
             request,
             history,
             systemContext,
+            evidence,
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
             imageHeight = frame.ImageHeight
@@ -106,11 +112,22 @@ public sealed class CloudGuideService : IDisposable
         keyboardFocusable = x.KeyboardFocusable,
         focused = x.Focused,
         password = x.Password,
+        value = x.Password ? null : ShortValue(x.Value),
+        toggleState = x.ToggleState,
+        selected = x.Selected,
+        expandCollapseState = x.ExpandCollapseState,
         x = x.X,
         y = x.Y,
         width = x.Width,
         height = x.Height
     };
+
+    private static string? ShortValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        return text.Length <= 180 ? text : text[..180];
+    }
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
     {
