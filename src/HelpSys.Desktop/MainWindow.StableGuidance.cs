@@ -73,11 +73,29 @@ public partial class MainWindow
         try
         {
             var token = _sessionCts.IsCancellationRequested ? CancellationToken.None : _sessionCts.Token;
-            IReadOnlyList<UiElementCandidate> nowElements;
-            try { nowElements = await _scanner.CaptureCandidatesAsync(320, token); }
-            catch (OperationCanceledException) { return; }
             var nowSystem = _systemContext.Capture();
+            if (!HasUsableForeground(nowSystem))
+            {
+                ClearStableLiveChangeCandidate();
+                await _liveWatcher.SetForegroundProcessAsync(0, token);
+                return;
+            }
+
             await _liveWatcher.SetForegroundProcessAsync(nowSystem.ForegroundProcessId, token);
+            IReadOnlyList<UiElementCandidate> nowElements;
+            try { nowElements = await _scanner.CaptureCandidatesForProcessAsync(nowSystem.ForegroundProcessId, 320, token); }
+            catch (OperationCanceledException) { return; }
+
+            var afterScanSystem = _systemContext.Capture();
+            if (HasHardStableLiveChange(nowSystem, afterScanSystem))
+            {
+                ClearStableLiveChangeCandidate();
+                _liveElements = [];
+                _liveSystem = null;
+                if (_sessionState.PlannerInFlight) InvalidatePlannerForLiveContextChange();
+                return;
+            }
+            nowSystem = afterScanSystem;
 
             if (_liveSystem is null || _liveElements.Count == 0)
             {
@@ -179,6 +197,18 @@ public partial class MainWindow
         return _stableLiveChangeSamples >= 2 && (now - _stableLiveChangeSinceUtc) >= TimeSpan.FromMilliseconds(650);
     }
 
+    private void InvalidatePlannerForLiveContextChange()
+    {
+        if (!_sessionState.PlannerInFlight) return;
+        _sessionState.Invalidate(GuidanceSessionState.Idle);
+        _speechOutput.Stop();
+        InvalidateCurrentGuidanceForLiveChange();
+        _liveRestartAfterPlanCancel = true;
+        try { _sessionCts?.Cancel(); } catch { }
+        _liveReplanPending = true;
+        SetState("操作中の画面が切り替わったため、古い案内を破棄しました。新しい画面が落ち着いてから案内を作り直します…", speak: false);
+    }
+
     private void ClearStableLiveChangeCandidate()
     {
         _stableLiveChangeSignature = null;
@@ -188,6 +218,7 @@ public partial class MainWindow
 
     private static bool HasHardStableLiveChange(SystemContextSnapshot before, SystemContextSnapshot after)
     {
+        if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
 
         var beforeUrl = before.Browser?.Url ?? string.Empty;

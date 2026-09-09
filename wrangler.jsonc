@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "helpsys",
-  "main": "worker/deliberation-guard.js",
+  "main": "worker/reliability-v4-guard.js",
   "compatibility_date": "2026-09-08",
   "assets": {
     "directory": "./site"

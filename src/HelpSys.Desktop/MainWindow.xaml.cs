@@ -228,7 +228,7 @@ public partial class MainWindow : Window
             }
 
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
-            var candidates = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
             if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
@@ -306,8 +306,13 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var freshTarget = await _scanner.RevalidateCandidateAsync(target, cancellationToken);
+            var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
+            if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
+            {
+                StopWithMessage("操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。");
+                return;
+            }
             if (freshTarget is null)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
@@ -413,9 +418,10 @@ public partial class MainWindow : Window
         {
             throw;
         }
-        catch (GuideServiceException)
+        catch (GuideServiceException error)
         {
-            return false;
+            if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
+            return true;
         }
 
         if (!_sessionState.IsCurrent(generation)) return false;
@@ -438,6 +444,11 @@ public partial class MainWindow : Window
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
         var snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken);
         if (!_sessionState.IsCurrent(generation)) return false;
+        if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
+        {
+            StopWithMessage("画像確認中に操作対象の画面が切り替わったため、古い画像案内を表示せず破棄しました。");
+            return true;
+        }
 
         if (snapped is not { } accessible || accessible.IsEmpty)
         {
@@ -466,161 +477,6 @@ public partial class MainWindow : Window
         ShowInstruction(instruction);
         return true;
     }
-
-    private async void OnObservedLeftClick(Point point)
-    {
-        if (_planning || _verifyingAction || _currentDecision is null || _guidedBounds is null) return;
-        var action = _currentDecision.Action;
-        if (!action.Equals("left_click", StringComparison.OrdinalIgnoreCase) && !action.Equals("double_click", StringComparison.OrdinalIgnoreCase)) return;
-
-        var bounds = _guidedBounds.Value;
-        bounds.Inflate(7, 7);
-        if (!bounds.Contains(point)) return;
-
-        if (action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-        {
-            var now = DateTime.UtcNow;
-            if ((now - _lastGuidedClickUtc).TotalMilliseconds > 1100) _doubleClickCount = 0;
-            _lastGuidedClickUtc = now;
-            _doubleClickCount++;
-            if (_doubleClickCount < 2)
-            {
-                SetState("同じ青い枠の場所で、マウスの左ボタンをもう1回すぐに押してください。", speak: true);
-                return;
-            }
-        }
-
-        await CompleteCurrentStepAsync();
-    }
-
-    private async void OnObservedKeyReleased(KeyObservation observation)
-    {
-        if (_planning || _verifyingAction || _currentDecision is null) return;
-        if (_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-        {
-            var expected = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
-            if (MatchesKeySpec(expected, observation)) await CompleteCurrentStepAsync();
-        }
-        else if (_currentDecision.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && MatchesKeySpec(_currentDecision.Key, observation))
-        {
-            await CompleteCurrentStepAsync();
-        }
-    }
-
-    private Task CompleteCurrentStepAsync() => CompleteCurrentStepV3Async();
-
-    private async Task<bool> WaitForStateTransitionAsync(string action, IReadOnlyList<UiElementCandidate> before, SystemContextSnapshot? systemBefore, CancellationToken cancellationToken)
-    {
-        var needsStrongChange = action.Equals("double_click", StringComparison.OrdinalIgnoreCase);
-        var allowFocusOnly = action.Equals("press_key", StringComparison.OrdinalIgnoreCase) ||
-                             (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
-                              _currentTarget?.ControlType is "Edit" or "ComboBox");
-        await Task.Delay(needsStrongChange ? 1400 : 500, cancellationToken);
-
-        var stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < TimeSpan.FromSeconds(7.5))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var after = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
-            var systemAfter = _systemContext.Capture();
-            if (HasMeaningfulSystemChange(systemBefore, systemAfter)) return true;
-            var changed = needsStrongChange ? HasStrongContentChange(before, after) : HasMeaningfulChange(before, after, allowFocusOnly);
-            if (changed)
-            {
-                await Task.Delay(needsStrongChange ? 700 : 400, cancellationToken);
-                return true;
-            }
-            await Task.Delay(350, cancellationToken);
-        }
-        return false;
-    }
-
-    private static bool HasMeaningfulSystemChange(SystemContextSnapshot? before, SystemContextSnapshot after)
-    {
-        if (before is null) return false;
-        if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
-        var beforeUrl = before.Browser?.Url ?? string.Empty;
-        var afterUrl = after.Browser?.Url ?? string.Empty;
-        if (!beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(afterUrl)) return true;
-        return false;
-    }
-
-    private static bool HasMeaningfulChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after, bool allowFocusOnly)
-    {
-        if (before.Count == 0) return after.Count > 0;
-        if (HasWindowSetChange(before, after)) return true;
-        if (allowFocusOnly)
-        {
-            var beforeFocus = before.FirstOrDefault(x => x.Focused);
-            var afterFocus = after.FirstOrDefault(x => x.Focused);
-            if (beforeFocus is not null && afterFocus is not null && !StableKey(beforeFocus).Equals(StableKey(afterFocus), StringComparison.Ordinal)) return true;
-        }
-        return HasLargeContentChange(before, after);
-    }
-
-    private static bool HasStrongContentChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
-    {
-        if (before.Count == 0) return after.Count > 0;
-        if (HasWindowSetChange(before, after)) return true;
-        var beforeFocusedProcess = before.FirstOrDefault(x => x.Focused)?.ProcessName ?? string.Empty;
-        var afterFocusedProcess = after.FirstOrDefault(x => x.Focused)?.ProcessName ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(afterFocusedProcess) && !beforeFocusedProcess.Equals(afterFocusedProcess, StringComparison.OrdinalIgnoreCase)) return true;
-        return HasLargeContentChange(before, after);
-    }
-
-    private static bool HasWindowSetChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
-    {
-        var beforeWindows = before.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase)).Select(StableKey).ToHashSet(StringComparer.Ordinal);
-        var afterWindows = after.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase)).Select(StableKey).ToHashSet(StringComparer.Ordinal);
-        return !beforeWindows.SetEquals(afterWindows);
-    }
-
-    private static bool HasLargeContentChange(IReadOnlyList<UiElementCandidate> before, IReadOnlyList<UiElementCandidate> after)
-    {
-        var beforeKeys = before.Select(StateKey).ToHashSet(StringComparer.Ordinal);
-        var afterKeys = after.Select(StateKey).ToHashSet(StringComparer.Ordinal);
-        if (Math.Abs(beforeKeys.Count - afterKeys.Count) >= 10) return true;
-        if (beforeKeys.Count == 0 || afterKeys.Count == 0) return beforeKeys.Count != afterKeys.Count;
-        var overlap = beforeKeys.Count(x => afterKeys.Contains(x));
-        var similarity = overlap / (double)Math.Max(beforeKeys.Count, afterKeys.Count);
-        return similarity < 0.82;
-    }
-
-    private static string StableKey(UiElementCandidate x) => $"{x.ProcessName}|{x.ControlType}|{x.ClassName}|{x.Name}";
-    private static string StateKey(UiElementCandidate x) => $"{x.ProcessName}|{x.ControlType}|{x.Name}|{x.AutomationId}|{x.ClassName}";
-
-    private static bool MatchesKeySpec(string? keySpec, KeyObservation observation)
-    {
-        if (string.IsNullOrWhiteSpace(keySpec)) return false;
-        var parts = keySpec.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => x.ToLowerInvariant()).ToArray();
-        if (parts.Length == 0) return false;
-        var needCtrl = parts.Any(x => x is "ctrl" or "control");
-        var needAlt = parts.Contains("alt");
-        var needShift = parts.Contains("shift");
-        var needWindows = parts.Any(x => x is "windows" or "win");
-        if (needCtrl && !observation.Control || needAlt && !observation.Alt || needShift && !observation.Shift || needWindows && !observation.Windows) return false;
-
-        var main = parts.LastOrDefault(x => x is not ("ctrl" or "control" or "alt" or "shift" or "windows" or "win"));
-        if (main is null) return needWindows && observation.VirtualKey is 0x5B or 0x5C;
-        return VirtualKey(main) == observation.VirtualKey;
-    }
-
-    private static int VirtualKey(string key) => key switch
-    {
-        "enter" or "return" => 0x0D,
-        "tab" => 0x09,
-        "escape" or "esc" => 0x1B,
-        "space" => 0x20,
-        "delete" or "del" => 0x2E,
-        "backspace" => 0x08,
-        "left" => 0x25,
-        "up" => 0x26,
-        "right" => 0x27,
-        "down" => 0x28,
-        _ when key.Length == 1 && key[0] is >= 'a' and <= 'z' => char.ToUpperInvariant(key[0]),
-        _ when key.Length == 1 && char.IsDigit(key[0]) => key[0],
-        _ => -1
-    };
 
     private static string DefaultInstruction(string action) => action.ToLowerInvariant() switch
     {
@@ -683,6 +539,7 @@ public partial class MainWindow : Window
             GuideFailureKind.ServiceUnavailable => "案内サービスが一時的に応答できませんでした。通信回線が切れているとは断定せず、案内を停止します。",
             GuideFailureKind.Rejected => "案内サービスがこの要求を受け付けませんでした。現在の画面を推測せず、案内を停止します。",
             GuideFailureKind.InvalidResponse => "案内サービスから利用できる形式の応答を受け取れませんでした。現在の画面を推測せず、案内を停止します。",
+            GuideFailureKind.ContextChanged => "操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。",
             _ => "案内サービスを利用できませんでした。"
         };
         StopWithMessage(message);

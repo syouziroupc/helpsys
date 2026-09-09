@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -11,10 +12,6 @@ namespace HelpSys.Services;
 
 public sealed class ScreenCaptureService
 {
-    private const int SmXVirtualScreen = 76;
-    private const int SmYVirtualScreen = 77;
-    private const int SmCxVirtualScreen = 78;
-    private const int SmCyVirtualScreen = 79;
     private const uint Srccopy = 0x00CC0020;
     private const uint CaptureBlt = 0x40000000;
     private const uint Blackness = 0x00000042;
@@ -33,11 +30,13 @@ public sealed class ScreenCaptureService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
-        // Scan independently before pixels are copied and again immediately afterwards.
-        var passwordRedactionsBefore = CapturePasswordBounds(cancellationToken);
         var captureArea = ResolveCaptureArea();
         if (captureArea.Width <= 0 || captureArea.Height <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
+
+        // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
+        // Independently inspect the UIA trees of windows that intersect only the monitor being captured.
+        // If this bounded privacy scan cannot finish, fail closed instead of sending a partial image.
+        var passwordRedactionsBefore = CapturePasswordBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
         if (desktopDc == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャーを開始できませんでした。");
@@ -59,7 +58,7 @@ public sealed class ScreenCaptureService
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
             cancellationToken.ThrowIfCancellationRequested();
-            var passwordRedactionsAfter = CapturePasswordBounds(cancellationToken);
+            var passwordRedactionsAfter = CapturePasswordBounds(captureArea, cancellationToken);
             var allRedactions = redactions
                 .Concat(passwordRedactionsBefore)
                 .Concat(passwordRedactionsAfter)
@@ -130,11 +129,7 @@ public sealed class ScreenCaptureService
             }
         }
 
-        return new CaptureArea(
-            GetSystemMetrics(SmXVirtualScreen),
-            GetSystemMetrics(SmYVirtualScreen),
-            GetSystemMetrics(SmCxVirtualScreen),
-            GetSystemMetrics(SmCyVirtualScreen));
+        throw new InvalidOperationException("操作中のモニターを特定できないため、複数画面をまとめて送信せずVision案内を停止します。");
     }
 
     private bool BelongsToSelf(IntPtr hwnd)
@@ -144,27 +139,58 @@ public sealed class ScreenCaptureService
         return unchecked((int)pid) == _selfProcessId;
     }
 
-    private IReadOnlyList<Rect> CapturePasswordBounds(CancellationToken cancellationToken)
+    private IReadOnlyList<Rect> CapturePasswordBounds(CaptureArea captureArea, CancellationToken cancellationToken)
     {
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var condition = new PropertyCondition(AutomationElement.IsPasswordProperty, true);
-            var fields = AutomationElement.RootElement.FindAll(TreeScope.Descendants, condition);
-            var result = new List<Rect>(fields.Count);
+            var captureRect = new Rect(captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height);
+            var walker = TreeWalker.ControlViewWalker;
+            var queue = new Queue<AutomationElement>();
+            var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, System.Windows.Automation.Condition.TrueCondition);
 
-            foreach (AutomationElement field in fields)
+            foreach (AutomationElement root in roots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var current = field.Current;
+                    var current = root.Current;
                     if (current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
                     var bounds = current.BoundingRectangle;
-                    if (!bounds.IsEmpty && bounds.Width >= 1 && bounds.Height >= 1) result.Add(bounds);
+                    if (!bounds.IsEmpty && captureRect.IntersectsWith(bounds)) queue.Enqueue(root);
                 }
                 catch (ElementNotAvailableException) { }
-                catch (InvalidOperationException) { }
+            }
+
+            const int maxVisited = 12000;
+            var stopwatch = Stopwatch.StartNew();
+            var visited = 0;
+            var result = new List<Rect>();
+
+            while (queue.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++visited > maxVisited || stopwatch.Elapsed > TimeSpan.FromSeconds(1.8))
+                    throw new InvalidOperationException("パスワード欄の安全確認を規定範囲内で完了できませんでした。");
+
+                var element = queue.Dequeue();
+                try
+                {
+                    var current = element.Current;
+                    if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
+                    {
+                        var bounds = current.BoundingRectangle;
+                        if (current.IsPassword && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
+                    }
+
+                    var child = walker.GetFirstChild(element);
+                    while (child is not null)
+                    {
+                        queue.Enqueue(child);
+                        child = walker.GetNextSibling(child);
+                    }
+                }
+                catch (ElementNotAvailableException) { }
             }
 
             return result;
@@ -220,9 +246,6 @@ public sealed class ScreenCaptureService
         public RectNative Work;
         public uint Flags;
     }
-
-    [DllImport("user32.dll")]
-    private static extern int GetSystemMetrics(int index);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr window);
