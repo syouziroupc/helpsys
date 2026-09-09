@@ -22,14 +22,17 @@ public sealed class UiAutomationScanner
         => Task.Run(() => FindBestTarget(hints, cancellationToken), cancellationToken);
 
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, CancellationToken cancellationToken = default)
-        => Task.Run(() => RevalidateCandidate(candidate, cancellationToken), cancellationToken);
+        => Task.Run(() => RevalidateCandidate(candidate, null, cancellationToken), cancellationToken);
+
+    public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, int rootProcessId, CancellationToken cancellationToken = default)
+        => Task.Run(() => RevalidateCandidate(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken), cancellationToken);
 
     public Task<Rect?> SnapToAccessibleBoundsAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
         => Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
 
-    private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, CancellationToken cancellationToken)
+    private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, int? rootProcessId, CancellationToken cancellationToken)
     {
-        var current = CaptureCandidates(700, cancellationToken, candidate.ProcessId > 0 ? candidate.ProcessId : null).Where(x => x.Interactable).ToArray();
+        var current = CaptureCandidates(700, cancellationToken, rootProcessId).Where(x => x.Interactable).ToArray();
         UiElementCandidate? best = null;
         var bestScore = double.NegativeInfinity;
         var oldCenterX = candidate.X + candidate.Width / 2d;
@@ -151,7 +154,7 @@ public sealed class UiAutomationScanner
 
         if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
 
-        var candidates = CaptureCandidates(700, cancellationToken, visibleProcessId)
+        var candidates = CaptureCandidates(700, cancellationToken)
             .Where(x => x.Interactable && !x.Bounds.IsEmpty && x.ProcessId == visibleProcessId)
             .ToArray();
         UiElementCandidate? best = null;

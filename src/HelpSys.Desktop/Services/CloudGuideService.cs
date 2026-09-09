@@ -90,9 +90,8 @@ public sealed class CloudGuideService : IDisposable
 
         return elements
             .Where(x =>
-                (foregroundId > 0
-                    ? x.ProcessId == foregroundId
-                    : !string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
+                (foregroundId > 0 && x.ProcessId == foregroundId) ||
+                (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
                 ShellProcesses.Contains(x.ProcessName))
             .Take(420)
             .ToArray();

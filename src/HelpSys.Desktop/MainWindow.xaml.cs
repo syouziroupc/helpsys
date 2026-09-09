@@ -228,7 +228,7 @@ public partial class MainWindow : Window
             }
 
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
-            var candidates = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
             if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
@@ -306,7 +306,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var freshTarget = await _scanner.RevalidateCandidateAsync(target, cancellationToken);
+            var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
             if (freshTarget is null)
             {
