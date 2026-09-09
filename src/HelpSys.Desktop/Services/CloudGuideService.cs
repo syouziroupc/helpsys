@@ -9,6 +9,7 @@ public sealed class CloudGuideService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
     private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
+    private const string InputPresentSentinel = "<input-present>";
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
@@ -139,11 +140,9 @@ public sealed class CloudGuideService : IDisposable
         keyboardFocusable = x.KeyboardFocusable,
         focused = x.Focused,
         password = x.Password,
-        // UIA ValuePattern contents can contain names, addresses, email, customer data or tokens even
-        // when Windows does not mark the field as a password. Keep the raw value local and send only
-        // whether the field currently contains something. This is enough for state reasoning without
-        // transmitting arbitrary typed text.
-        valuePresent = !string.IsNullOrEmpty(x.Value),
+        // The Worker already understands the `value` field. Preserve only the boolean fact that
+        // an input has content by using a fixed sentinel; never transmit the actual UIA value.
+        value = x.Password || string.IsNullOrEmpty(x.Value) ? null : InputPresentSentinel,
         toggleState = x.ToggleState,
         selected = x.Selected,
         expandCollapseState = x.ExpandCollapseState,
