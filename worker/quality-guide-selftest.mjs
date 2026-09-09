@@ -118,6 +118,54 @@ value = await ask({
 });
 assert(value.status === 'not_found', 'ambiguous structured target below the high-confidence threshold must be rejected');
 
+const detourElements = [
+  { id: 'excel-target', name: 'Excel', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true },
+  { id: 'close-dialog', name: '閉じる', controlType: 'Button', processName: 'installer', interactable: true, enabled: true }
+];
+nextDecision = {
+  status: 'target', targetId: 'close-dialog', action: 'left_click', instruction: '手前の不要な画面を閉じます。「閉じる」を1回押してください。',
+  question: null, key: null, confidence: 0.96, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '手前に別のダイアログと閉じるボタンが見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: 'Excelを開いて',
+  systemContext: { foregroundProcess: 'installer', foregroundProcessId: 71, runningApps: [] },
+  elements: detourElements
+});
+assert(value.status === 'not_found', 'normal launch route must keep its canonical target guard');
+
+value = await ask({
+  request: 'Excelを開いて',
+  recoveryMode: true,
+  routeIssue: 'ユーザーが別のダイアログを開いた',
+  history: [{ step: 1, action: 'failed_left_click', targetName: 'Excel', instruction: 'Excelを押したが画面が変わらなかった' }],
+  systemContext: { foregroundProcess: 'installer', foregroundProcessId: 71, runningApps: [] },
+  elements: detourElements
+});
+assert(value.status === 'target' && value.targetId === 'close-dialog',
+  'recovery mode must allow a grounded bridge action outside the originally imagined launch route');
+assert(payload().recoveryMode === true && payload().routeIssue.includes('別のダイアログ'),
+  'recovery mode and route issue must reach the model');
+assert(payload().canonicalConstraint?.role === 'route_reference',
+  'launch canonical path must become a route reference during recovery');
+
+nextDecision = {
+  status: 'target', targetId: 'unsafe-close', action: 'left_click', instruction: '警告を閉じます。',
+  question: null, key: null, confidence: 0.99, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: 'Privacy error の警告が見える', observedDomain: 'example.test', sponsored: false
+};
+value = await ask({
+  request: 'このサイトを見たい',
+  recoveryMode: true,
+  routeIssue: '安全警告の画面へ逸脱した',
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 80, foregroundTitle: 'Privacy error', runningApps: ['chrome'], browser: { domain: 'example.test', url: 'https://example.test' } },
+  elements: [
+    { id: 'unsafe-close', name: '閉じる', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'warning', name: 'Privacy error 安全ではありません', controlType: 'Text', processName: 'chrome', interactable: false, enabled: true }
+  ]
+});
+assert(value.status === 'not_found', 'recovery mode must never relax a browser safety warning guard');
+
 nextDecision = {
   status: 'target', targetId: 'chrome-desktop', action: 'left_click',
   instruction: '青い枠のインターネットを見るアプリで、マウスの左ボタンを1回押してください。',
@@ -161,4 +209,4 @@ value = await ask({
 });
 assert(value.status === 'not_found', 'quality planner must never ask HelpSys to receive a secret');
 
-console.log('HelpSys multisource evidence-fusion guidance self-test passed.');
+console.log('HelpSys multisource evidence-fusion and route-recovery self-test passed.');

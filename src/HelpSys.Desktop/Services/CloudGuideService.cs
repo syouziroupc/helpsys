@@ -35,6 +35,31 @@ public sealed class CloudGuideService : IDisposable
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
     {
+        return await PlanQualityCoreAsync(request, frame, elements, history, systemContext, false, null, cancellationToken);
+    }
+
+    public async Task<QualityGuideDecision> PlanRecoveryAsync(
+        string request,
+        string routeIssue,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken = default)
+    {
+        return await PlanQualityCoreAsync(request, frame, elements, history, systemContext, true, routeIssue, cancellationToken);
+    }
+
+    private async Task<QualityGuideDecision> PlanQualityCoreAsync(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        bool recoveryMode,
+        string? routeIssue,
+        CancellationToken cancellationToken)
+    {
         var relevantElements = SelectRelevantElements(elements, systemContext);
         var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, systemContext);
         var body = new
@@ -43,6 +68,8 @@ public sealed class CloudGuideService : IDisposable
             history,
             systemContext,
             evidence,
+            recoveryMode,
+            routeIssue = ShortValue(routeIssue),
             elements = relevantElements.Select(CompactElement),
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
