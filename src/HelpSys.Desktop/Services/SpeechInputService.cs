@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -93,7 +94,7 @@ public sealed class SpeechInputService : IDisposable
 
     private async Task<byte[]?> CaptureUtteranceAsync(CancellationToken cancellationToken)
     {
-        using var waveIn = new WaveInEvent
+        using var waveIn = new WaveIn
         {
             WaveFormat = new WaveFormat(16000, 16, 1),
             BufferMilliseconds = 100,
