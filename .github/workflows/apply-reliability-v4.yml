@@ -4,7 +4,7 @@ on:
   push:
     branches: [audit/reliability-v4-deep]
     paths:
-      - "tools/apply_reliability_v4_patch.py"
+      - "tools/apply_reliability_v4_followup.py"
       - ".github/workflows/apply-reliability-v4.yml"
 
 permissions:
@@ -27,23 +27,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Keep workflow changes out of Actions push
-        shell: pwsh
-        run: |
-          @'
-          from pathlib import Path
-          p = Path('tools/apply_reliability_v4_patch.py')
-          text = p.read_text(encoding='utf-8')
-          start = text.index('workflow = ".github/workflows/windows-smoke.yml"')
-          end = text.index('# Remove obsolete offline keyword planner')
-          text = text[:start] + text[end:]
-          text = text.replace('Path("tools/apply_reliability_v4_patch.py").unlink(missing_ok=True)\n', '')
-          text = text.replace('Path(".github/workflows/apply-reliability-v4.yml").unlink(missing_ok=True)\n', '')
-          p.write_text(text, encoding='utf-8')
-          '@ | python -
-
-      - name: Apply audited patch
-        run: python tools/apply_reliability_v4_patch.py
+      - name: Apply subtree follow-up
+        run: python tools/apply_reliability_v4_followup.py
 
       - name: Verify Worker
         run: |
@@ -68,5 +53,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if (git diff --cached --quiet) { throw 'Patch produced no changes.' }
-          git commit -m "Reliability v4: close deep audit gaps"
+          git commit -m "Reliability v4: scope planning to foreground subtree"
           git push origin HEAD:audit/reliability-v4-deep
