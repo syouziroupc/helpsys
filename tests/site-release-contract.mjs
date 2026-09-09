@@ -1,3 +1,4 @@
+import './commander-stability-contract.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -69,6 +70,7 @@ assert(educationDoc.includes(`${PRODUCTION_BASE}${EDUCATION_ROUTE}`), 'Education
 const config = JSON.parse(wrangler);
 assert(config?.assets?.directory === './site', 'wrangler.jsonc must deploy ./site as Worker static assets.');
 assert(config?.vars?.HELPSYS_MODEL === '@cf/zai-org/glm-4.7-flash', 'Production normal guidance model must be GLM-4.7 Flash.');
+assert(config?.vars?.HELPSYS_VISION_MODEL === '@cf/zai-org/glm-5.3-flash', 'Production legacy vision model must be GLM-5.3 Flash.');
 assert(config?.vars?.HELPSYS_QUALITY_MODEL === '@cf/zai-org/glm-5.3-flash', 'Production multimodal quality model must be GLM-5.3 Flash.');
 assert(exists('site/favicon.svg'), 'favicon.svg referenced by the public site is missing.');
 assert(exists('site/style.css'), 'style.css referenced by the public site is missing.');
