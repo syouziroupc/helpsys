@@ -106,9 +106,9 @@ jobs:
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
           Add-Type -AssemblyName UIAutomationClient
 
-          function Find-Element([int] $pid, [string] $automationId) {
+          function Find-Element([int] $processId, [string] $automationId) {
             $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $pid)
+            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
             $ic = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
             return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($pc,$ic)))
           }
@@ -168,9 +168,9 @@ jobs:
           $p = Start-Process $exe -PassThru
           Add-Type -AssemblyName UIAutomationClient
 
-          function Find-Element([int] $pid, [string] $automationId) {
+          function Find-Element([int] $processId, [string] $automationId) {
             $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $pid)
+            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
             $ic = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
             return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($pc,$ic)))
           }
