@@ -117,8 +117,6 @@ public sealed class GuidanceStateWatcher : IDisposable
             if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
             root ??= fallbackRoot;
 
-            // A just-launched application can expose its process before its top-level window.
-            // Keep the PID but leave the subscription marked false so the next heartbeat retries.
             if (root is null) return;
 
             try
@@ -234,22 +232,33 @@ public sealed class GuidanceStateWatcher : IDisposable
             }
         }
 
-        if (pump is not null && (!Task.CurrentId.HasValue || pump.Id != Task.CurrentId.Value))
-        {
-            try { pump.GetAwaiter().GetResult(); }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-        }
-
         Interlocked.Exchange(ref _queued, 0);
-        cts.Dispose();
+
+        // Stop may run from WPF Closing. Never synchronously wait for the background pump there;
+        // UIA callbacks can be delayed during window teardown. Drain and dispose off-thread.
+        _ = DrainStoppedPumpAsync(pump, cts);
+    }
+
+    private static async Task DrainStoppedPumpAsync(Task? pump, CancellationTokenSource cts)
+    {
+        try
+        {
+            if (pump is not null) await pump.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch { }
+        finally
+        {
+            try { cts.Dispose(); } catch { }
+        }
     }
 
     public void Dispose()
     {
         if (_disposed) return;
-        Stop();
         _disposed = true;
+        Stop();
         _signal.Dispose();
     }
 }
