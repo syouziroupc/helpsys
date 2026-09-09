@@ -12,6 +12,7 @@ namespace HelpSys.Services;
 public sealed class SpeechInputService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const string CloudflareCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
     private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
@@ -31,6 +32,8 @@ public sealed class SpeechInputService : IDisposable
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CloudflareCompatibleUserAgent);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("x-helpsys-client", "desktop-speech");
     }
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
@@ -264,7 +267,6 @@ public sealed class SpeechInputService : IDisposable
         dispatcher.BeginInvoke(new Action(() =>
         {
             if (_disposed) return;
-            _overlayHideTimer?.Stop();
             action();
         }));
     }
@@ -273,16 +275,10 @@ public sealed class SpeechInputService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        try { _overlayHideTimer?.Stop(); } catch { }
+        try { _listeningOverlay.Close(); } catch { }
         _http.Dispose();
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-        dispatcher.BeginInvoke(new Action(() =>
-        {
-            _overlayHideTimer?.Stop();
-            _overlayHideTimer = null;
-            try { _listeningOverlay.Close(); } catch { }
-        }));
     }
 
-    private sealed record TranscriptionResponse(string? Text);
+    private sealed record TranscriptionResponse(string? Text, string? Model);
 }
