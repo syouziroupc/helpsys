@@ -31,6 +31,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\education-win-x64'
           $assetName = 'HelpSys-Education-v2.1-preview-win-x64.zip'
+          $stableAssetName = 'HelpSys-Education-latest-win-x64.zip'
           dotnet publish src/HelpSys.Education/HelpSys.Education.csproj `
             -c Release `
             -r win-x64 `
@@ -41,6 +42,7 @@ jobs:
             -o $out
           Copy-Item EDUCATION.md (Join-Path $out 'EDUCATION.md')
           Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
+          Copy-Item (Join-Path $PWD $assetName) (Join-Path $PWD $stableAssetName) -Force
 
       - name: Update Education preview release
         shell: pwsh
@@ -50,12 +52,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = 'education-preview-latest'
           $assetName = 'HelpSys-Education-v2.1-preview-win-x64.zip'
+          $stableAssetName = 'HelpSys-Education-latest-win-x64.zip'
           $asset = Join-Path $PWD $assetName
+          $stableAsset = Join-Path $PWD $stableAssetName
+          $allowedAssets = @($assetName, $stableAssetName)
           $notes = @"
           HelpSys Education Preview — Foundations v2.1
 
           - Windows 10 / 11 (64-bit)
           - 通常版HelpSysとは別アプリ
+          - Versioned package: $assetName
+          - Stable site download alias: $stableAssetName
           - PC未経験から始める段階制基礎課程
           - 難易度1/5「はじめて」→ 5/5「総合マスター」
           - 前単元の教育 → 実習 → 100%正解テスト合格で次単元を解放
@@ -69,14 +76,22 @@ jobs:
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            $oldAssets = gh release view $tag --json assets --jq '.assets[].name' --repo $env:GITHUB_REPOSITORY
+            $oldAssets = @(gh release view $tag --json assets --jq '.assets[].name' --repo $env:GITHUB_REPOSITORY)
             foreach ($old in $oldAssets) {
-              if ($old -ne $assetName) { gh release delete-asset $tag $old --yes --repo $env:GITHUB_REPOSITORY }
+              if ($old -like 'HelpSys*.zip' -and $allowedAssets -notcontains $old) {
+                gh release delete-asset $tag $old --yes --repo $env:GITHUB_REPOSITORY
+                if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale Education release asset: $old" }
+              }
             }
-            gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Education preview asset.' }
+            gh release upload $tag $asset $stableAsset --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Education preview assets.' }
             gh release edit $tag --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $asset --target main --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $asset $stableAsset --target main --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+          }
+
+          $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
+          foreach ($expected in $allowedAssets) {
+            if ($published -notcontains $expected) { throw "Education release asset missing after publish: $expected" }
           }
