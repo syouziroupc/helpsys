@@ -30,7 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v3-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v4-win-x64.zip'
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -49,15 +49,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v3-win-x64.zip'
+          $assetName = 'HelpSys-Reliability-v4-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $notes = @"
-          HelpSys Windows Preview
+          HelpSys Windows Preview — Reliability v4
 
           - Windows 10 / 11 (64-bit)
           - Self-contained build
           - Package: $assetName
-          - 操作代行ではなく、画面上で次の操作を案内する開発版です。
+          - 操作代行ではなく、現在状態を確認して人間が行う次の1手を案内する開発版です。
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
