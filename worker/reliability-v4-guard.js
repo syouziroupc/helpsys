@@ -20,6 +20,9 @@ export default {
     try { url = new URL(request.url); }
     catch { return base.fetch(request, env, ctx); }
 
+    const rateLimited = await enforceInferenceRateLimit(request, env, url.pathname);
+    if (rateLimited) return rateLimited;
+
     if (url.pathname === '/v1/transcribe') {
       return transcribe.fetch(request, env, ctx);
     }
@@ -60,6 +63,40 @@ export default {
     return override ? replaceJson(response, override) : response;
   }
 };
+
+async function enforceInferenceRateLimit(request, env, pathname) {
+  if (request.method !== 'POST') return null;
+
+  let limiter = null;
+  if (pathname === '/v1/transcribe') limiter = env?.ASR_RATE_LIMITER;
+  else if (pathname === '/v1/education/assist') limiter = env?.EDUCATION_RATE_LIMITER;
+  else if (pathname === '/v1/quality-guide' || pathname === '/v1/guide' || pathname === '/v1/vision-guide')
+    limiter = env?.GUIDE_RATE_LIMITER;
+  else return null;
+
+  // Local/self-test environments may intentionally omit Cloudflare bindings. Production
+  // declares all three bindings in wrangler.jsonc; do not make unit tests depend on Cloudflare.
+  if (!limiter || typeof limiter.limit !== 'function') return null;
+
+  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  try {
+    const { success } = await limiter.limit({ key: ip });
+    if (success) return null;
+    return new Response(JSON.stringify({ error: 'rate_limited' }), {
+      status: 429,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'retry-after': '60',
+        'cache-control': 'no-store'
+      }
+    });
+  } catch (error) {
+    // Guidance availability is more important than a false outage if the limiter backend
+    // itself is temporarily unavailable. Cloudflare still retains its outer security controls.
+    console.error('rate limiter failed', error);
+    return null;
+  }
+}
 
 export function guardSecretClarification(decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
