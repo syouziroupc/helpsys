@@ -4,6 +4,7 @@ public static class MicrophoneCoordinator
 {
     private static readonly object Gate = new();
     private static int _foregroundCaptureCount;
+    private static Task _backgroundReleaseTask = Task.CompletedTask;
 
     public static event EventHandler<bool>? ForegroundCaptureChanged;
 
@@ -16,6 +17,31 @@ public static class MicrophoneCoordinator
         }
         if (changed) Raise(true);
         return new Lease();
+    }
+
+    public static void TrackBackgroundRelease(Task? releaseTask)
+    {
+        lock (Gate)
+        {
+            _backgroundReleaseTask = releaseTask ?? Task.CompletedTask;
+        }
+    }
+
+    public static async Task<bool> WaitForBackgroundReleaseAsync(CancellationToken cancellationToken = default)
+    {
+        Task releaseTask;
+        lock (Gate) releaseTask = _backgroundReleaseTask;
+        if (releaseTask.IsCompleted) return true;
+
+        try
+        {
+            await releaseTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
     }
 
     private static void EndForegroundCapture()
