@@ -51,6 +51,10 @@ public sealed class EducationGuideService : IDisposable
             {
                 throw;
             }
+            catch (OperationCanceledException ex)
+            {
+                throw new InvalidOperationException("教育AIの応答が時間内に返りませんでした。", ex);
+            }
             catch (HttpRequestException ex)
             {
                 if (attempt > 0) throw new InvalidOperationException("教育AIへの通信に失敗しました。", ex);
