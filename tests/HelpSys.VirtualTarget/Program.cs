@@ -20,7 +20,7 @@ internal sealed class VirtualTargetForm : Form
     public VirtualTargetForm()
     {
         Name = "VirtualTargetWindow";
-        Text = "HelpSys Virtual Target";
+        Text = "PRIVATE-WINDOW-TITLE-319751";
         Width = 920;
         Height = 500;
         StartPosition = FormStartPosition.Manual;
@@ -74,7 +74,20 @@ internal sealed class VirtualTargetForm : Form
             Width = 150,
             Height = 38
         };
-        modalButton.Click += (_, _) => ShowProbeModal();
+        modalButton.Click += (_, _) => BeginInvoke(new Action(ShowProbeModal));
+
+        var titleButton = new Button
+        {
+            Name = "ChangeTitleButton",
+            Text = "Change title only",
+            Left = 416,
+            Top = 184,
+            Width = 170,
+            Height = 38
+        };
+        titleButton.Click += (_, _) => Text = Text.EndsWith("-ALT", StringComparison.Ordinal)
+            ? "PRIVATE-WINDOW-TITLE-319751"
+            : "PRIVATE-WINDOW-TITLE-319751-ALT";
 
         var wrong = new Button
         {
@@ -96,7 +109,7 @@ internal sealed class VirtualTargetForm : Form
             Top = 250
         };
 
-        Controls.AddRange([heading, input, smokeButton, toggle, modalButton, wrong, _statusLabel]);
+        Controls.AddRange([heading, input, smokeButton, toggle, modalButton, titleButton, wrong, _statusLabel]);
         Shown += (_, _) => Activate();
     }
 
@@ -106,9 +119,10 @@ internal sealed class VirtualTargetForm : Form
         {
             Name = "ProbeModalWindow",
             Text = "HelpSys Probe Modal",
-            Width = 420,
-            Height = 220,
-            StartPosition = FormStartPosition.CenterParent,
+            Width = 520,
+            Height = 280,
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(45, 260),
             TopMost = true
         };
 
