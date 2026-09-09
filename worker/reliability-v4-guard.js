@@ -4,6 +4,8 @@ import quality from './quality-guide.js';
 import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
+const JSON_AI_PATHS = new Set(['/v1/quality-guide', '/v1/guide', '/v1/vision-guide', '/v1/education/assist']);
+const AI_PATHS = new Set([...JSON_AI_PATHS, '/v1/transcribe']);
 const APP_RULES = [
   { goal: /(excel|エクセル)/i, processes: ['excel'], search: 'Excel' },
   { goal: /(word|ワード)/i, processes: ['winword'], search: 'Word' },
@@ -19,6 +21,9 @@ export default {
     let url;
     try { url = new URL(request.url); }
     catch { return base.fetch(request, env, ctx); }
+
+    const transportRejected = guardInferenceTransport(request, url.pathname);
+    if (transportRejected) return transportRejected;
 
     const rateLimited = await enforceInferenceRateLimit(request, env, url.pathname);
     if (rateLimited) return rateLimited;
@@ -64,6 +69,34 @@ export default {
   }
 };
 
+function guardInferenceTransport(request, pathname) {
+  if (!AI_PATHS.has(pathname)) return null;
+
+  // The Windows clients do not use browser CORS. Refuse preflights so arbitrary websites cannot
+  // turn a visitor's browser into a relay for our AI endpoints.
+  if (request.method === 'OPTIONS') return apiError('not_found', 404);
+  if (request.method !== 'POST') return null;
+
+  const contentType = (request.headers.get('content-type') || '').toLowerCase();
+  if (JSON_AI_PATHS.has(pathname) && !contentType.startsWith('application/json'))
+    return apiError('unsupported_media_type', 415);
+  if (pathname === '/v1/transcribe' &&
+      !contentType.startsWith('audio/wav') && !contentType.startsWith('audio/x-wav'))
+    return apiError('unsupported_audio', 415);
+
+  const length = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(length) && length > 0) {
+    const max = pathname === '/v1/transcribe'
+      ? 1_000_000
+      : pathname === '/v1/education/assist'
+        ? 32_000
+        : 8_000_000;
+    if (length > max) return apiError('request_too_large', 413);
+  }
+
+  return null;
+}
+
 async function enforceInferenceRateLimit(request, env, pathname) {
   if (request.method !== 'POST') return null;
 
@@ -96,6 +129,16 @@ async function enforceInferenceRateLimit(request, env, pathname) {
     console.error('rate limiter failed', error);
     return null;
   }
+}
+
+function apiError(error, status) {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    }
+  });
 }
 
 export function guardSecretClarification(decision) {
