@@ -23,7 +23,7 @@ const NORMAL_ROUTE = '/download';
 const EDUCATION_ROUTE = '/download/education';
 const NORMAL_ALIAS = 'HelpSys-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
-const NORMAL_VERSIONED = 'HelpSys-Reliability-v7-win-x64.zip';
+const NORMAL_VERSIONED = 'HelpSys-Reliability-v8-win-x64.zip';
 const EDUCATION_VERSIONED = 'HelpSys-Education-v2.2-preview-win-x64.zip';
 const NORMAL_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${NORMAL_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
@@ -54,7 +54,7 @@ assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not co
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing from the public site.');
 
 assert(normalRelease.includes(NORMAL_ALIAS), 'Normal release workflow does not publish the stable alias used by /download.');
-assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v7 package.');
+assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v8 package.');
 assert(normalRelease.includes('Release asset missing after publish'), 'Normal release workflow does not verify its published assets.');
 assert(educationRelease.includes(EDUCATION_ALIAS), 'Education release workflow does not publish the stable alias used by /download/education.');
 assert(educationRelease.includes(EDUCATION_VERSIONED), 'Education release workflow lost the traceable v2.2 package.');
@@ -68,6 +68,8 @@ assert(educationDoc.includes(`${PRODUCTION_BASE}${EDUCATION_ROUTE}`), 'Education
 
 const config = JSON.parse(wrangler);
 assert(config?.assets?.directory === './site', 'wrangler.jsonc must deploy ./site as Worker static assets.');
+assert(config?.vars?.HELPSYS_MODEL === '@cf/zai-org/glm-4.7-flash', 'Production normal guidance model must be GLM-4.7 Flash.');
+assert(config?.vars?.HELPSYS_QUALITY_MODEL === '@cf/zai-org/glm-5.3-flash', 'Production multimodal quality model must be GLM-5.3 Flash.');
 assert(exists('site/favicon.svg'), 'favicon.svg referenced by the public site is missing.');
 assert(exists('site/style.css'), 'style.css referenced by the public site is missing.');
 assert(index.includes('href="favicon.svg"'), 'favicon should use a deployment-portable relative URL.');
