@@ -140,7 +140,9 @@ public partial class MainWindow
                 return;
             }
 
-            var expectedText = NormalizeExpectedInputTextDeepAudit(decision.InputText) ?? ExtractExpectedInputTextDeepAudit(decision.Instruction);
+            var expectedText = NormalizeExpectedInputTextDeepAudit(decision.InputText)
+                               ?? NormalizeExpectedInputTextDeepAudit(_cloudGuide.ResolveExpectedInputText(decision))
+                               ?? ExtractExpectedInputTextDeepAudit(decision.Instruction);
             if (string.IsNullOrWhiteSpace(expectedText) || fresh.Value is null)
             {
                 RecordTypeTextDeviation("type_text_unverifiable", fresh,
