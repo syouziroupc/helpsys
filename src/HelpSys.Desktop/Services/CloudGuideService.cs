@@ -8,6 +8,7 @@ namespace HelpSys.Services;
 public sealed class CloudGuideService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
@@ -46,9 +47,6 @@ public sealed class CloudGuideService : IDisposable
             imageHeight = frame.ImageHeight
         };
 
-        // Screen capture and inference are intentionally allowed to take longer than the
-        // old UI-only route. Freshness is checked on both sides of the model call so higher
-        // quality never means displaying an answer for a screen that has already changed.
         EnsurePlanningContextCurrent(systemContext);
         var decision = await SendAsync<QualityGuideDecision>(
             () => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/quality-guide", body),
@@ -126,7 +124,7 @@ public sealed class CloudGuideService : IDisposable
                 (foregroundId > 0 && x.ProcessId == foregroundId) ||
                 (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
                 ShellProcesses.Contains(x.ProcessName))
-            .Take(420)
+            .Take(280)
             .ToArray();
     }
 
@@ -149,6 +147,7 @@ public sealed class CloudGuideService : IDisposable
     private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)
     {
         var message = new HttpRequestMessage(method, url) { Content = JsonContent.Create(body) };
+        message.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
         if (!string.IsNullOrWhiteSpace(_apiKey)) message.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
         return message;
     }
@@ -160,12 +159,14 @@ public sealed class CloudGuideService : IDisposable
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            attemptCts.CancelAfter(AttemptTimeout);
 
             try
             {
                 using var message = createMessage();
-                using var response = await _http.SendAsync(message, cancellationToken);
-                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var response = await _http.SendAsync(message, attemptCts.Token);
+                var body = await response.Content.ReadAsStringAsync(attemptCts.Token);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -190,6 +191,12 @@ public sealed class CloudGuideService : IDisposable
             {
                 throw new OperationCanceledException(cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が9秒を超えました。");
+                if (attempt > 0) throw timeoutError;
+                lastTransientError = timeoutError;
+            }
             catch (HttpRequestException ex)
             {
                 var networkError = new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
@@ -197,7 +204,7 @@ public sealed class CloudGuideService : IDisposable
                 lastTransientError = networkError;
             }
 
-            await Task.Delay(350, cancellationToken);
+            await Task.Delay(250, cancellationToken);
         }
 
         throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
