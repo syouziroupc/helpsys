@@ -97,6 +97,9 @@ class Handler(BaseHTTPRequestHandler):
             image = str(field(payload, "image", "") or "")
             has_image = image.startswith("data:image/png;base64,")
             history = field(payload, "history", []) or []
+            # Do not persist the raw payload: it may contain a screenshot. Audit only deterministic
+            # canary strings to prove that sensitive input/window-title text did not cross the API boundary.
+            raw_payload_text = json.dumps(payload, ensure_ascii=False)
 
             diagnostics = {
                 "requestCount": request_count,
@@ -112,6 +115,8 @@ class Handler(BaseHTTPRequestHandler):
                 "hasScreenshot": has_image,
                 "imageWidth": field(payload, "imageWidth"),
                 "imageHeight": field(payload, "imageHeight"),
+                "rawContainsPrivateInput": "PRIVATE-PROBE-847251" in raw_payload_text,
+                "rawContainsPrivateWindowTitle": "PRIVATE-WINDOW-TITLE-319751" in raw_payload_text,
                 "recoveryMode": field(payload, "recoveryMode", False) is True,
                 "routeIssue": field(payload, "routeIssue"),
                 "history": [
@@ -156,8 +161,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "missing_screenshot"}, 400)
                 return
 
-            # A same-process modal is intentionally preferred over a control behind it. This gives
-            # the desktop smoke test a deterministic recovery target when the modal is present.
             target = next(
                 (
                     item
