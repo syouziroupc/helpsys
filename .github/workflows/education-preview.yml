@@ -30,7 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\education-win-x64'
-          $assetName = 'HelpSys-Education-preview-win-x64.zip'
+          $assetName = 'HelpSys-Education-v2-preview-win-x64.zip'
           dotnet publish src/HelpSys.Education/HelpSys.Education.csproj `
             -c Release `
             -r win-x64 `
@@ -49,19 +49,27 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'education-preview-latest'
-          $assetName = 'HelpSys-Education-preview-win-x64.zip'
+          $assetName = 'HelpSys-Education-v2-preview-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $notes = @"
-          HelpSys Education Preview
+          HelpSys Education Preview — Foundations v2
 
           - Windows 10 / 11 (64-bit)
           - 通常版HelpSysとは別アプリ
-          - 教育 → 練習 → テストの初期学習フロー
-          - タイピング単元は外部教材を開く方式に対応
+          - PC未経験から始める25単元以上の基礎課程
+          - 教育 → 実習 → 100%正解テスト → 次単元
+          - マウス / キーボード / 文字入力のアプリ内実技練習
+          - 検索可能な用語集と全体進捗
+          - タイピングはアプリ内課題 + e-typing連携
+          - テスト中は教育AIを呼び出さない
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
+            $oldAssets = gh release view $tag --json assets --jq '.assets[].name' --repo $env:GITHUB_REPOSITORY
+            foreach ($old in $oldAssets) {
+              if ($old -ne $assetName) { gh release delete-asset $tag $old --yes --repo $env:GITHUB_REPOSITORY }
+            }
             gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Education preview asset.' }
             gh release edit $tag --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
