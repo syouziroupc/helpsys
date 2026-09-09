@@ -20,6 +20,11 @@ public sealed class CommanderWakeService : IDisposable
     public event EventHandler? WakeDetected;
     public event EventHandler? StatusChanged;
 
+    public CommanderWakeService()
+    {
+        MicrophoneCoordinator.ForegroundCaptureChanged += MicrophoneCoordinator_ForegroundCaptureChanged;
+    }
+
     public bool Enabled
     {
         get { lock (_gate) return _enabled; }
@@ -90,6 +95,12 @@ public sealed class CommanderWakeService : IDisposable
         }
         RaiseStatusChanged();
         if (shouldStart) TryStartListening();
+    }
+
+    private void MicrophoneCoordinator_ForegroundCaptureChanged(object? sender, bool active)
+    {
+        if (active) Suspend();
+        else Resume();
     }
 
     private void TryStartListening()
@@ -296,6 +307,7 @@ public sealed class CommanderWakeService : IDisposable
 
     public void Dispose()
     {
+        MicrophoneCoordinator.ForegroundCaptureChanged -= MicrophoneCoordinator_ForegroundCaptureChanged;
         lock (_gate)
         {
             if (_disposed) return;
