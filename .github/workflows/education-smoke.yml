@@ -38,6 +38,14 @@ jobs:
           dotnet restore src/HelpSys.Education/HelpSys.Education.csproj
           dotnet build src/HelpSys.Education/HelpSys.Education.csproj -c Release --no-restore
 
+      - name: Validate curriculum contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'src/HelpSys.Education/bin/Release/net10.0-windows/HelpSys.Education.exe'
+          $selfTest = Start-Process $exe -ArgumentList '--self-test' -PassThru -Wait
+          if ($selfTest.ExitCode -ne 0) { throw "Education curriculum self-test failed with exit code $($selfTest.ExitCode)." }
+
       - name: Launch Education UI
         shell: pwsh
         run: |
@@ -59,18 +67,45 @@ jobs:
             finally { $graphics.Dispose(); $bitmap.Dispose() }
           }
 
+          function Get-Names($window) {
+            $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            $names = @($window.Current.Name)
+            foreach ($node in $nodes) { try { if (-not [string]::IsNullOrWhiteSpace($node.Current.Name)) { $names += $node.Current.Name } } catch { } }
+            return $names
+          }
+
+          function Invoke-ByName($window, [string] $name) {
+            $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $name)
+            $node = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+            if ($null -eq $node) { throw "Education UI missing invokable element: $name" }
+            $pattern = $node.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+            $pattern.Invoke()
+            Start-Sleep -Milliseconds 500
+          }
+
           try {
             if ($process.HasExited) { throw 'HelpSys Education exited during startup.' }
             $root = [System.Windows.Automation.AutomationElement]::RootElement
             $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
             $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
             if ($null -eq $window) { throw 'HelpSys Education top-level window was not exposed to UI Automation.' }
-            $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-            $names = @($window.Current.Name)
-            foreach ($node in $nodes) { try { if (-not [string]::IsNullOrWhiteSpace($node.Current.Name)) { $names += $node.Current.Name } } catch { } }
-            foreach ($required in @('HelpSys Education','教育','練習','テスト')) {
+
+            $names = Get-Names $window
+            foreach ($required in @('HelpSys Education','教育','練習','テスト','全体進捗','用語集','0-1. パソコンは何をする道具か')) {
               if (-not ($names -contains $required)) { Save-Screenshot 'artifacts/education-failure.png'; throw "Education UI missing required element: $required" }
             }
+
+            Invoke-ByName $window '練習'
+            $names = Get-Names $window
+            foreach ($required in @('安全な練習エリア','練習完了 → テストへ')) {
+              if (-not ($names -contains $required)) { Save-Screenshot 'artifacts/education-practice-failure.png'; throw "Education practice UI missing: $required" }
+            }
+
+            Invoke-ByName $window 'テスト'
+            $names = Get-Names $window
+            if (-not ($names -contains 'テストはまだ開始できません。')) { Save-Screenshot 'artifacts/education-gating-failure.png'; throw 'Education test gating did not block an unpracticed lesson.' }
+
+            Invoke-ByName $window '教育'
             Save-Screenshot 'artifacts/education-home.png'
           }
           finally { if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force } }

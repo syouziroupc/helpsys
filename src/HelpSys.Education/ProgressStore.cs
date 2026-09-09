@@ -8,6 +8,12 @@ public sealed class LessonProgress
     public bool EducationCompleted { get; set; }
     public bool PracticeCompleted { get; set; }
     public bool TestPassed { get; set; }
+    public int QuizAttempts { get; set; }
+    public int BestQuizScore { get; set; }
+    public int HintRequests { get; set; }
+    public DateTime? EducationCompletedAtUtc { get; set; }
+    public DateTime? PracticeCompletedAtUtc { get; set; }
+    public DateTime? TestPassedAtUtc { get; set; }
 }
 
 public sealed class ProgressStore
@@ -31,6 +37,51 @@ public sealed class ProgressStore
             _items[lessonId] = progress;
         }
         return progress;
+    }
+
+    public int CompletedLessons(IReadOnlyList<LessonDefinition> lessons)
+        => lessons.Count(x => Get(x.Id).TestPassed);
+
+    public int CompletedStages(IReadOnlyList<LessonDefinition> lessons)
+        => lessons.Sum(x =>
+        {
+            var p = Get(x.Id);
+            return (p.EducationCompleted ? 1 : 0) + (p.PracticeCompleted ? 1 : 0) + (p.TestPassed ? 1 : 0);
+        });
+
+    public void MarkEducationCompleted(string lessonId)
+    {
+        var p = Get(lessonId);
+        p.EducationCompleted = true;
+        p.EducationCompletedAtUtc ??= DateTime.UtcNow;
+        Save();
+    }
+
+    public void MarkPracticeCompleted(string lessonId)
+    {
+        var p = Get(lessonId);
+        p.PracticeCompleted = true;
+        p.PracticeCompletedAtUtc ??= DateTime.UtcNow;
+        Save();
+    }
+
+    public void RecordHint(string lessonId)
+    {
+        Get(lessonId).HintRequests++;
+        Save();
+    }
+
+    public void RecordQuizResult(string lessonId, int score)
+    {
+        var p = Get(lessonId);
+        p.QuizAttempts++;
+        p.BestQuizScore = Math.Max(p.BestQuizScore, score);
+        if (score >= 100)
+        {
+            p.TestPassed = true;
+            p.TestPassedAtUtc ??= DateTime.UtcNow;
+        }
+        Save();
     }
 
     public void Save() => File.WriteAllText(_path, JsonSerializer.Serialize(_items, new JsonSerializerOptions { WriteIndented = true }));
