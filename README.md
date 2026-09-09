@@ -16,9 +16,17 @@ HelpSys の目的は監視範囲を狭くすることではなく、**現在の�
 - UIAだけで安全に対象を決められない場合のみVisionを使う。
 - 分からない状態を「たぶん成功した」と扱わない。
 
-## Reliability v4
+## Reliability v5
 
-Reliability v4 では「見えている情報」よりも「その情報が現在も有効か」を重視します。
+Reliability v5 は v4 の鮮度検証・操作結果検証・Vision安全策を維持した上で、**前面アプリが素早く切り替わる場面のUI Automation監視競合**を追加で潰しています。
+
+### 前面アプリ監視の競合防止
+
+前面PIDへの監視切替要求には世代番号を持たせます。たとえばアプリAからBへ素早く切り替わり、古いA向けの非同期処理がBより遅れて戻ってきても、Aへ監視対象を巻き戻しません。
+
+また、アプリ起動直後はプロセスが存在してもトップレベルWindowがUIAへまだ公開されていないことがあります。この場合は「購読済み」と誤認せず、次のheartbeatで同じPIDへの購読を再試行します。
+
+同一プロセスが複数のトップレベルWindowを持つ場合は、可視Windowのうちキーボードフォーカスを持つものを優先します。HelpSys終了時には未完了の監視切替要求を無効化し、終了後に古い購読が復活しないようにします。
 
 ### 計画の鮮度
 
@@ -148,10 +156,12 @@ $env:HELPSYS_API_BASE="https://example.workers.dev"
 Windows smoke では以下を確認します。
 
 - Worker JavaScript の構文
-- Worker contract / visible-first / deliberation / Reliability v4 guards
+- Worker contract / visible-first / deliberation / reliability guards
 - Windows Release build
 - UI Automationを使った実際の案内表示
 - smoke実行時の画面キャプチャ保存
+
+Preview release はDesktopコード、solution、release workflow、READMEの変更で再生成します。同梱READMEと配布バイナリの説明がずれないようにします。
 
 ## 今後の改善候補
 

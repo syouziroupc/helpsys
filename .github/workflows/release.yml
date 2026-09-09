@@ -6,6 +6,7 @@ on:
     paths:
       - "src/HelpSys.Desktop/**"
       - "HelpSys.sln"
+      - "README.md"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
