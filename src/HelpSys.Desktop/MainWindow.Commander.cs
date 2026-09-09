@@ -87,6 +87,8 @@ public partial class MainWindow
 
         CancellationTokenSource? interactionCts = null;
         CancellationTokenSource? localVoiceCts = null;
+        var wakeReleased = false;
+        var busyReleased = false;
         try
         {
             if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
@@ -94,7 +96,7 @@ public partial class MainWindow
 
             if (_planning || _verifyingAction)
             {
-                SetState("現在の案内を確認中です。処理が終わってから呼び出してください。", speak: false);
+                SetState("現在の案内を確認中です。処理が終わってから呼び出してください。", speak: true);
                 return;
             }
 
@@ -136,9 +138,16 @@ public partial class MainWindow
             RequestBox.CaretIndex = RequestBox.Text.Length;
             SetState($"「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
 
-            // Keep the wake recognizer released through the initial planning pass. This avoids
-            // a new wake callback racing the same microphone/UI while the current request starts.
-            await StartOrContinueSessionAsync();
+            // Audio capture is finished here. Do not keep the wake recognizer disabled for the
+            // potentially much longer screen capture/model-planning phase. Start planning first
+            // (which synchronously marks PlannerInFlight), then release this interaction guard so
+            // a new wake gets a bounded "案内中" response instead of looking frozen.
+            _commander.CompleteWakeInteraction();
+            wakeReleased = true;
+            var planningTask = StartOrContinueSessionAsync();
+            Interlocked.Exchange(ref _commanderWakeBusy, 0);
+            busyReleased = true;
+            await planningTask;
         }
         catch (OperationCanceledException)
         {
@@ -158,8 +167,8 @@ public partial class MainWindow
             if (ReferenceEquals(_commanderInteractionCts, interactionCts)) _commanderInteractionCts = null;
             try { interactionCts?.Dispose(); } catch { }
 
-            _commander.CompleteWakeInteraction();
-            Interlocked.Exchange(ref _commanderWakeBusy, 0);
+            if (!wakeReleased) _commander.CompleteWakeInteraction();
+            if (!busyReleased) Interlocked.Exchange(ref _commanderWakeBusy, 0);
 
             if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
             {
