@@ -5,7 +5,19 @@ HelpSys Education は、通常版 HelpSys とは別の Windows アプリです�
 - **通常版 HelpSys**: 現在のPC状態から、目的達成のための正しい次の1手を案内する。
 - **HelpSys Education**: PC未経験者が0から始め、段階的に日常利用の基本操作を自力で行えるところまで練習する。
 
-別実行ファイル `HelpSys.Education.exe`、別preview release、別教育AI Workerとして運用します。
+別実行ファイル `HelpSys.Education.exe`、別preview releaseとして配布します。教育AIのAPIは配布版が追加設定なしで使えるよう、通常の本番HelpSys Workerにも `/v1/education/assist` を公開します。必要な場合は別 `helpsys-education` Workerへ切り替えることもできます。
+
+公開サイト:
+
+```text
+https://helpsys.syouziroupc.workers.dev/
+```
+
+Education版の安定ダウンロード導線:
+
+```text
+https://helpsys.syouziroupc.workers.dev/download/education
+```
 
 ## 基本方針
 
@@ -94,31 +106,38 @@ HelpSys Education は、通常版 HelpSys とは別の Windows アプリです�
 
 ## 教育AI
 
-通常版HelpSysとは別の `helpsys-education` Workerです。
+配布版は既定で次の本番APIを利用します。
+
+```text
+https://helpsys.syouziroupc.workers.dev/v1/education/assist
+```
+
+通常版の `/v1/guide`・`/v1/vision-guide` とは別ルートで、教育専用のプロンプト・出力ガードを使います。
 
 - `education`: 初心者向け説明
 - `practice`: 3段階ヒント
 - `test`: AIを呼ばない
 - 秘密情報をHelpSysへ入力させる出力は最終ガードで拒否
 - モデルは `HELPSYS_EDUCATION_MODEL` で通常版と独立して交換可能
+- 一時通信失敗はデスクトップ側で1回だけ再試行
 
-ローカル:
+ローカルのWorker単体検査:
 
 ```powershell
 npm run test:education
 npm run dev:education
 ```
 
-Cloudflareへ別Workerとしてデプロイ:
+必要なら別Education Workerとしてデプロイできます。
 
 ```powershell
 npm run deploy:education
 ```
 
-デスクトップ側でAIヒントを使う場合のみ:
+別Workerやローカル環境へ切り替える場合だけ、デスクトップ側を上書きします。
 
 ```powershell
-$env:HELPSYS_EDUCATION_API_BASE="https://<education-worker>"
+$env:HELPSYS_EDUCATION_API_BASE="https://example.workers.dev"
 ```
 
 APIキーを使う場合はWorker側とWindows側の `HELPSYS_EDUCATION_API_KEY` を合わせます。
@@ -128,6 +147,7 @@ APIキーを使う場合はWorker側とWindows側の `HELPSYS_EDUCATION_API_KEY`
 Education smokeでは以下を自動確認します。
 
 - 教育AI Workerのself-test
+- 本番HelpSys Worker経由のEducation APIルーティング契約
 - Windows Releaseビルド
 - `--self-test` によるカリキュラム整合性検査
 - 単元ID重複、学習目標、練習項目、確認問題、用語集の最低件数
@@ -135,6 +155,7 @@ Education smokeでは以下を自動確認します。
 - 難易度がカリキュラム途中で下がらないこと
 - 最終単元が難易度5であること
 - 実際のEducation UI起動
+- 配布版で教育AIが既定接続済み表示になること
 - 全体進捗・用語集・教育/練習/テスト画面のUIA検出
 - 練習未完了状態ではテスト開始がブロックされること
 
