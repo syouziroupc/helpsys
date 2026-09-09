@@ -12,52 +12,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-
       - name: Parse every JavaScript test and Worker module
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Get-ChildItem worker,tests -Recurse -File | Where-Object { $_.Extension -in '.js','.mjs' } | Sort-Object FullName | ForEach-Object {
-            Write-Host "node --check $($_.FullName)"
-            node --check $_.FullName
-          }
-
+          Get-ChildItem worker,tests -Recurse -File | Where-Object { $_.Extension -in '.js','.mjs' } | Sort-Object FullName | ForEach-Object { node --check $_.FullName }
       - name: Run every Worker selftest and test contract
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Get-ChildItem worker -File -Filter '*selftest.mjs' | Sort-Object Name | ForEach-Object {
-            Write-Host "RUN $($_.Name)"
-            node $_.FullName
-          }
-          Get-ChildItem tests -File -Filter '*.mjs' | Sort-Object Name | ForEach-Object {
-            Write-Host "RUN $($_.Name)"
-            node $_.FullName
-          }
-
+          Get-ChildItem worker -File -Filter '*selftest.mjs' | Sort-Object Name | ForEach-Object { Write-Host "RUN $($_.Name)"; node $_.FullName }
+          Get-ChildItem tests -File -Filter '*.mjs' | Sort-Object Name | ForEach-Object { Write-Host "RUN $($_.Name)"; node $_.FullName }
       - name: Compile every Python helper
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Get-ChildItem worker,tests -Recurse -File -Filter '*.py' | ForEach-Object {
-            Write-Host "PY_COMPILE $($_.FullName)"
-            python -m py_compile $_.FullName
-          }
-
+          Get-ChildItem worker,tests -Recurse -File -Filter '*.py' | ForEach-Object { python -m py_compile $_.FullName }
       - name: Parse every PowerShell helper
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $failed = $false
           Get-ChildItem tests -Recurse -File -Filter '*.ps1' | ForEach-Object {
-            $tokens = $null
-            $errors = $null
+            $tokens = $null; $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
-            if ($errors.Count -gt 0) {
-              $failed = $true
-              Write-Host "PS_PARSE_FAILURE $($_.FullName)"
-              $errors | ForEach-Object { Write-Host $_.Message }
-            }
+            if ($errors.Count -gt 0) { $failed = $true; Write-Host "PS_PARSE_FAILURE $($_.FullName)"; $errors | ForEach-Object { Write-Host $_.Message } }
           }
           if ($failed) { throw 'PowerShell parse failures found.' }
 
@@ -68,8 +47,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Restore
-        run: dotnet restore HelpSys.sln
+      - run: dotnet restore HelpSys.sln
       - name: Build Release
         run: dotnet build HelpSys.sln -c Release --no-restore
       - name: Build Debug
@@ -78,8 +56,7 @@ jobs:
         run: dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
       - name: Verify published executable
         shell: pwsh
-        run: |
-          if (-not (Test-Path 'artifacts/publish/HelpSys.exe')) { throw 'Published HelpSys.exe is missing.' }
+        run: if (-not (Test-Path 'artifacts/publish/HelpSys.exe')) { throw 'Published HelpSys.exe is missing.' }
 
   repeated-ui:
     runs-on: windows-latest
@@ -93,53 +70,9 @@ jobs:
           python-version: '3.13'
       - run: dotnet restore HelpSys.sln
       - run: dotnet build HelpSys.sln -c Release --no-restore
-      - name: Repeat startup and quality guidance five times
+      - name: Repeat real UI guidance five times
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
-          $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
-          Start-Sleep -Seconds 1
-          $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
-          Start-Sleep -Seconds 2
-          $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
-          Add-Type -AssemblyName UIAutomationClient
-
-          function Find-Element([int] $processId, [string] $automationId) {
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
-            $ic = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
-            return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($pc,$ic)))
-          }
-
-          try {
-            1..5 | ForEach-Object {
-              Write-Host "UI_CYCLE $_"
-              $p = Start-Process $exe -PassThru
-              Start-Sleep -Seconds 4
-              if ($p.HasExited) { throw "HelpSys exited during startup cycle $_." }
-              $box = Find-Element $p.Id 'RequestBox'
-              $button = Find-Element $p.Id 'GuideButton'
-              if ($null -eq $box -or $null -eq $button) { throw "Core UIA controls missing in cycle $_." }
-              $vp = $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-              $vp.SetValue('open the test target')
-              $ip = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-              $ip.Invoke()
-              Start-Sleep -Seconds 7
-              if ($p.HasExited) { throw "HelpSys exited during planner cycle $_." }
-              if (-not (Test-Path 'artifacts/mock-last-request.json')) { throw "Mock planner was not reached in cycle $_." }
-              Stop-Process -Id $p.Id -Force
-              $p.WaitForExit()
-              Start-Sleep -Milliseconds 500
-            }
-          }
-          finally {
-            if ($null -ne $p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-            if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
-            if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
-          }
-
+        run: tests/repeated_ui_probe.ps1
       - name: Upload repeated UI diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -159,38 +92,7 @@ jobs:
       - run: dotnet build HelpSys.sln -c Release --no-restore
       - name: Planner outage must not crash desktop
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:HELPSYS_API_BASE = 'http://127.0.0.1:9'
-          $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
-          Start-Sleep -Seconds 2
-          $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
-          $p = Start-Process $exe -PassThru
-          Add-Type -AssemblyName UIAutomationClient
-
-          function Find-Element([int] $processId, [string] $automationId) {
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
-            $ic = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
-            return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($pc,$ic)))
-          }
-
-          try {
-            Start-Sleep -Seconds 4
-            if ($p.HasExited) { throw 'HelpSys exited before outage test.' }
-            $box = Find-Element $p.Id 'RequestBox'
-            $button = Find-Element $p.Id 'GuideButton'
-            if ($null -eq $box -or $null -eq $button) { throw 'Core UIA controls missing before outage test.' }
-            $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('open the test target')
-            $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-            Start-Sleep -Seconds 25
-            if ($p.HasExited) { throw 'HelpSys crashed while planner API was unavailable.' }
-            if ($null -eq (Find-Element $p.Id 'RequestBox')) { throw 'HelpSys UI became unavailable after planner outage.' }
-          }
-          finally {
-            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-            if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
-          }
+        run: tests/network_failure_probe.ps1
 
   advanced-ui:
     runs-on: windows-latest
@@ -206,128 +108,7 @@ jobs:
       - run: dotnet build HelpSys.sln -c Release --no-restore
       - name: Verify live privacy redaction and off-route recovery
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
-          $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
-          Start-Sleep -Seconds 1
-          $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/advanced_virtual_target.ps1' -PassThru
-          Start-Sleep -Seconds 3
-          $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
-          $p = Start-Process $exe -PassThru
-
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName WindowsBase
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          Add-Type @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class HelpSysMouseProbe {
-              [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-              [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
-          }
-          '@
-
-          function Find-Element([int] $processId, [string] $automationId) {
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $processId)
-            $ic = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $automationId)
-            return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($pc,$ic)))
-          }
-
-          function Is-CoveredByHelpSys([int] $helpProcessId, [double] $x, [double] $y) {
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $helpProcessId)
-            $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $pc)
-            foreach ($window in $windows) {
-              try {
-                $r = $window.Current.BoundingRectangle
-                if (-not $r.IsEmpty -and $x -ge $r.Left -and $x -le $r.Right -and $y -ge $r.Top -and $y -le $r.Bottom) { return $true }
-              } catch { }
-            }
-            return $false
-          }
-
-          try {
-            Start-Sleep -Seconds 4
-            if ($p.HasExited) { throw 'HelpSys exited before advanced UI test.' }
-            $box = Find-Element $p.Id 'RequestBox'
-            $guide = Find-Element $p.Id 'GuideButton'
-            if ($null -eq $box -or $null -eq $guide) { throw 'HelpSys core controls missing.' }
-            $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('open the test target')
-            $guide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-            Start-Sleep -Seconds 10
-
-            if (-not (Test-Path 'artifacts/mock-last-request.json')) { throw 'Advanced planner request was not captured.' }
-            if (-not (Test-Path 'artifacts/mock-last-image.png')) { throw 'Advanced planner screenshot was not captured.' }
-            $jsonText = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8
-            if ($jsonText.Contains('PRIVATE-PROBE-847251')) { throw 'Raw populated input value leaked into structured planner diagnostics.' }
-            $diag = $jsonText | ConvertFrom-Json
-            $probe = @($diag.eligible | Where-Object { $_.automationId -eq 'ProbeInput' }) | Select-Object -First 1
-            if ($null -eq $probe) { throw 'ProbeInput was not present in planner UIA evidence.' }
-            if ($probe.value -ne '<input-present>') { throw "Planner did not receive the privacy-safe populated marker. value=$($probe.value)" }
-
-            $probeElement = Find-Element $target.Id 'ProbeInput'
-            if ($null -eq $probeElement) { throw 'ProbeInput UIA element missing from target.' }
-            $rect = $probeElement.Current.BoundingRectangle
-            $bitmap = New-Object System.Drawing.Bitmap((Resolve-Path 'artifacts/mock-last-image.png'))
-            try {
-              $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-              $scaleX = $bitmap.Width / [double]$screen.Width
-              $scaleY = $bitmap.Height / [double]$screen.Height
-              $left = [Math]::Max(0, [int](($rect.Left + $rect.Width * 0.20) * $scaleX))
-              $right = [Math]::Min($bitmap.Width - 1, [int](($rect.Right - $rect.Width * 0.20) * $scaleX))
-              $top = [Math]::Max(0, [int](($rect.Top + $rect.Height * 0.25) * $scaleY))
-              $bottom = [Math]::Min($bitmap.Height - 1, [int](($rect.Bottom - $rect.Height * 0.25) * $scaleY))
-              $black = 0
-              $total = 0
-              for ($x = $left; $x -le $right; $x += 3) {
-                for ($y = $top; $y -le $bottom; $y += 2) {
-                  $pixel = $bitmap.GetPixel($x,$y)
-                  $total++
-                  if ($pixel.R -le 12 -and $pixel.G -le 12 -and $pixel.B -le 12) { $black++ }
-                }
-              }
-              if ($total -le 0) { throw 'Privacy pixel sample was empty.' }
-              $ratio = $black / [double]$total
-              Write-Host "PRIVATE_INPUT_BLACK_RATIO=$ratio"
-              if ($ratio -lt 0.85) { throw "Populated input was not black-redacted in the actual planner screenshot. ratio=$ratio" }
-            }
-            finally { $bitmap.Dispose() }
-
-            $wrong = Find-Element $target.Id 'WrongButton'
-            if ($null -eq $wrong) { throw 'WrongButton UIA element missing.' }
-            $candidates = @($wrong, $probeElement)
-            $clickPoint = $null
-            foreach ($candidate in $candidates) {
-              $r = $candidate.Current.BoundingRectangle
-              $cx = $r.Left + $r.Width / 2
-              $cy = $r.Top + $r.Height / 2
-              if (-not (Is-CoveredByHelpSys $p.Id $cx $cy)) {
-                $clickPoint = [System.Drawing.Point]::new([int]$cx,[int]$cy)
-                break
-              }
-            }
-            if ($null -eq $clickPoint) { throw 'Could not find an off-route physical click point outside HelpSys windows.' }
-            [HelpSysMouseProbe]::SetCursorPos($clickPoint.X, $clickPoint.Y) | Out-Null
-            [HelpSysMouseProbe]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
-            Start-Sleep -Milliseconds 80
-            [HelpSysMouseProbe]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
-            Start-Sleep -Seconds 8
-
-            $recovery = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($recovery.recoveryMode -ne $true) { throw 'Physical off-route click did not trigger recoveryMode.' }
-            if ([string]::IsNullOrWhiteSpace([string]$recovery.routeIssue)) { throw 'Recovery request did not carry a routeIssue.' }
-            Write-Host "OFF_ROUTE_RECOVERY_ISSUE=$($recovery.routeIssue)"
-          }
-          finally {
-            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-            if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
-            if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
-          }
-
+        run: tests/advanced_ui_probe.ps1
       - name: Upload advanced UI diagnostics
         if: always()
         uses: actions/upload-artifact@v4
