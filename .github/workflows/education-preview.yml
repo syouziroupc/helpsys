@@ -1,0 +1,71 @@
+name: Publish HelpSys Education preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/HelpSys.Education/**"
+      - "EDUCATION.md"
+      - ".github/workflows/education-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore src/HelpSys.Education/HelpSys.Education.csproj
+
+      - name: Publish self-contained Windows build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'publish\education-win-x64'
+          $assetName = 'HelpSys-Education-preview-win-x64.zip'
+          dotnet publish src/HelpSys.Education/HelpSys.Education.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=false `
+            -o $out
+          Copy-Item EDUCATION.md (Join-Path $out 'EDUCATION.md')
+          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
+
+      - name: Update Education preview release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'education-preview-latest'
+          $assetName = 'HelpSys-Education-preview-win-x64.zip'
+          $asset = Join-Path $PWD $assetName
+          $notes = @"
+          HelpSys Education Preview
+
+          - Windows 10 / 11 (64-bit)
+          - 通常版HelpSysとは別アプリ
+          - 教育 → 練習 → テストの初期学習フロー
+          - タイピング単元は外部教材を開く方式に対応
+          "@
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Education preview asset.' }
+            gh release edit $tag --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+          }
+          else {
+            gh release create $tag $asset --target main --title "HelpSys Education Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+          }

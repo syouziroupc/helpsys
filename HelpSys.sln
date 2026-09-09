@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HelpSys.Desktop", "src\HelpSys.Desktop\HelpSys.Desktop.csproj", "{C19C8F37-C58E-4EB2-AE0F-F9147DC707B5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HelpSys.Education", "src\HelpSys.Education\HelpSys.Education.csproj", "{3593B4FC-8AAE-4FBE-9D02-154F7102277A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -14,5 +16,9 @@ Global
 		{C19C8F37-C58E-4EB2-AE0F-F9147DC707B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C19C8F37-C58E-4EB2-AE0F-F9147DC707B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C19C8F37-C58E-4EB2-AE0F-F9147DC707B5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3593B4FC-8AAE-4FBE-9D02-154F7102277A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3593B4FC-8AAE-4FBE-9D02-154F7102277A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3593B4FC-8AAE-4FBE-9D02-154F7102277A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3593B4FC-8AAE-4FBE-9D02-154F7102277A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
