@@ -29,11 +29,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def do_POST(self):
+    def read_body(self):
+        transfer_encoding = (self.headers.get('Transfer-Encoding') or '').lower()
+        if 'chunked' in transfer_encoding:
+            chunks = []
+            while True:
+                size_line = self.rfile.readline().strip()
+                if not size_line:
+                    continue
+                size = int(size_line.split(b';', 1)[0], 16)
+                if size == 0:
+                    while True:
+                        trailer = self.rfile.readline()
+                        if trailer in (b'\r\n', b'\n', b''):
+                            break
+                    break
+                chunks.append(self.rfile.read(size))
+                if self.rfile.read(2) != b'\r\n':
+                    raise ValueError('invalid chunk terminator')
+            return b''.join(chunks)
+
         length = int(self.headers.get('content-length', '0') or 0)
-        raw = self.rfile.read(length) if length else b'{}'
+        return self.rfile.read(length) if length else b''
+
+    def do_POST(self):
         try:
-            body = json.loads(raw)
+            raw = self.read_body()
+            body = json.loads(raw or b'{}')
         except Exception:
             self.send_json({'error': 'invalid_json'}, 400)
             return
