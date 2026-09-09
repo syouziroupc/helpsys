@@ -14,6 +14,7 @@ public partial class MainWindow
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
     {
+        AttachDeepAuditGuards();
         if (_liveWatcherStarted) return;
         _liveWatcherStarted = true;
         _liveWatcher.Pulse += StableLiveWatcher_Pulse;
@@ -22,6 +23,7 @@ public partial class MainWindow
 
     private void MainWindow_StableClosing(object? sender, CancelEventArgs e)
     {
+        DetachDeepAuditGuards();
         if (!_liveWatcherStarted) return;
         _liveWatcherStarted = false;
         _liveWatcher.Pulse -= StableLiveWatcher_Pulse;
@@ -109,7 +111,7 @@ public partial class MainWindow
                 ClearStableLiveChangeCandidate();
                 _liveElements = [];
                 _liveSystem = null;
-                if (_sessionState.PlannerInFlight) InvalidatePlannerForLiveContextChange();
+                if (!_verifyingAction) InvalidatePlannerForLiveContextChange();
                 return;
             }
             nowSystem = afterScanSystem;
@@ -173,19 +175,7 @@ public partial class MainWindow
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
-                var plannerWasInFlight = _sessionState.PlannerInFlight;
-                _sessionState.Invalidate(GuidanceSessionState.Idle);
-                _speechOutput.Stop();
-                InvalidateCurrentGuidanceForLiveChange();
-
-                if (plannerWasInFlight)
-                {
-                    _liveRestartAfterPlanCancel = true;
-                    try { _sessionCts?.Cancel(); } catch { }
-                }
-
-                _liveReplanPending = true;
-                SetState("画面の切り替わりを確認しました。新しい画面が落ち着いてから案内を作り直しています…", speak: false);
+                InvalidatePlannerForLiveContextChange();
             }
 
             await ValidateCurrentVisionTargetAsync(token);
@@ -216,12 +206,20 @@ public partial class MainWindow
 
     private void InvalidatePlannerForLiveContextChange()
     {
-        if (!_sessionState.PlannerInFlight) return;
+        var plannerWasInFlight = _sessionState.PlannerInFlight;
+        var hadGuidance = _currentDecision is not null || _awaitingClarification;
+        if (!plannerWasInFlight && !hadGuidance && !_liveReplanPending) return;
+
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _speechOutput.Stop();
         InvalidateCurrentGuidanceForLiveChange();
-        _liveRestartAfterPlanCancel = true;
-        try { _sessionCts?.Cancel(); } catch { }
+
+        if (plannerWasInFlight)
+        {
+            _liveRestartAfterPlanCancel = true;
+            try { _sessionCts?.Cancel(); } catch { }
+        }
+
         _liveReplanPending = true;
         SetState("操作中の画面が切り替わったため、古い案内を破棄しました。新しい画面が落ち着いてから案内を作り直します…", speak: false);
     }
@@ -278,7 +276,10 @@ public partial class MainWindow
         var bw = (int)Math.Round(x.Width / 24d);
         var bh = (int)Math.Round(x.Height / 24d);
         var stableName = IsStableNamedControl(x.ControlType) ? NormalizeStableName(x.Name) : string.Empty;
-        return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
+        var semanticState = x.Interactable
+            ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
+            : string.Empty;
+        return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{semanticState}|{bx},{by},{bw},{bh}";
     }
 
     private static bool IsStableNamedControl(string controlType) => controlType.ToLowerInvariant() is
