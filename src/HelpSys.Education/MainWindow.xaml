@@ -1,7 +1,7 @@
 <Window x:Class="HelpSys.Education.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HelpSys Education" Width="1120" Height="760" MinWidth="920" MinHeight="620"
+        Title="HelpSys Education" Width="960" Height="700" MinWidth="840" MinHeight="600"
         WindowStartupLocation="CenterScreen" Background="#F5F6F8">
     <Window.Resources>
         <Style TargetType="Button">
