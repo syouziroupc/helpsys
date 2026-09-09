@@ -96,6 +96,17 @@ function Is-CoveredByHelpSys([int] $helpProcessId, [double] $x, [double] $y) {
   return $false
 }
 
+function Physical-LeftClick([System.Windows.Automation.AutomationElement] $element, [int] $helpProcessId) {
+  $r = $element.Current.BoundingRectangle
+  $cx = $r.Left + $r.Width / 2
+  $cy = $r.Top + $r.Height / 2
+  if (Is-CoveredByHelpSys $helpProcessId $cx $cy) { throw "Physical click target is covered by HelpSys: $($element.Current.AutomationId)" }
+  [HelpSysMouseProbeV2]::SetCursorPos([int]$cx, [int]$cy) | Out-Null
+  [HelpSysMouseProbeV2]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 100
+  [HelpSysMouseProbeV2]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+}
+
 try {
   $probeElement = Wait-Element $target.Id 'ProbeInput'
   if ($null -eq $probeElement) { throw "Deterministic ProbeInput was not exposed by target pid=$($target.Id)." }
@@ -179,6 +190,29 @@ try {
   }
   finally { $bitmap.Dispose() }
 
+  # Smoke an action whose only visible result is a changed status label. The local transition
+  # detector intentionally does not trust arbitrary text churn, so the safe behavior is to
+  # re-observe and recover, never to tell the user to press the same button again blindly.
+  $smoke = Wait-Element $target.Id 'SmokeButton'
+  if ($null -eq $smoke) { throw 'SmokeButton UIA element missing.' }
+  $unverifiedBaseline = Request-Count
+  Physical-LeftClick $smoke $help.Id
+  $deadline = [DateTime]::UtcNow.AddSeconds(18)
+  $unverified = $null
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if ((Request-Count) -gt $unverifiedBaseline) {
+      $candidate = Read-Diagnostics
+      if ($candidate.recoveryMode -eq $true -and @($candidate.history | Where-Object { $_.action -eq 'unverified_left_click' }).Count -gt 0) {
+        $unverified = $candidate
+        break
+      }
+    }
+    Start-Sleep -Milliseconds 180
+  }
+  if ($null -eq $unverified) { throw 'Unverified click result did not return to recovery planning.' }
+  Write-Host 'UNVERIFIED_ACTION_RECOVERY=PASS'
+  Start-Sleep -Seconds 2
+
   $titleBaseline = Request-Count
   Set-Content 'artifacts/virtual-target-title-flip.flag' '1' -Encoding ascii
   if (-not (Wait-FlagConsumed 'artifacts/virtual-target-title-flip.flag')) { throw 'Virtual target did not consume title flip command.' }
@@ -213,22 +247,12 @@ try {
   if (-not (Wait-ElementGone $target.Id 'CloseModalButton' 8)) { throw 'Probe modal did not close.' }
   $afterModalCloseBaseline = Request-Count
   $postClose = Wait-RequestAfter $afterModalCloseBaseline 10
-  if ($null -eq $postClose) {
-    Start-Sleep -Seconds 2
-  }
+  if ($null -eq $postClose) { Start-Sleep -Seconds 2 }
 
   $wrong = Wait-Element $target.Id 'WrongButton'
   if ($null -eq $wrong) { throw 'WrongButton UIA element missing.' }
-  $wrongRect = $wrong.Current.BoundingRectangle
-  $cx = $wrongRect.Left + $wrongRect.Width / 2
-  $cy = $wrongRect.Top + $wrongRect.Height / 2
-  if (Is-CoveredByHelpSys $help.Id $cx $cy) { throw 'WrongButton is covered by HelpSys; physical off-route click would be invalid.' }
-
   $offRouteBaseline = Request-Count
-  [HelpSysMouseProbeV2]::SetCursorPos([int]$cx, [int]$cy) | Out-Null
-  [HelpSysMouseProbeV2]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 100
-  [HelpSysMouseProbeV2]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  Physical-LeftClick $wrong $help.Id
 
   $deadline = [DateTime]::UtcNow.AddSeconds(14)
   $recovery = $null
