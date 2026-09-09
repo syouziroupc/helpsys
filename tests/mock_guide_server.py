@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -81,7 +82,8 @@ class Handler(BaseHTTPRequestHandler):
             system_context = field(payload, "systemContext", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
             eligible = eligible_elements(payload)
-            has_image = str(field(payload, "image", "") or "").startswith("data:image/png;base64,")
+            image = str(field(payload, "image", "") or "")
+            has_image = image.startswith("data:image/png;base64,")
 
             diagnostics = {
                 "path": self.path,
@@ -90,6 +92,10 @@ class Handler(BaseHTTPRequestHandler):
                 "foreground": foreground,
                 "foregroundProcessId": field(system_context, "foregroundProcessId"),
                 "hasScreenshot": has_image,
+                "imageWidth": field(payload, "imageWidth"),
+                "imageHeight": field(payload, "imageHeight"),
+                "recoveryMode": field(payload, "recoveryMode", False) is True,
+                "routeIssue": field(payload, "routeIssue"),
                 "eligible": [
                     {
                         "id": field(item, "id"),
@@ -97,6 +103,12 @@ class Handler(BaseHTTPRequestHandler):
                         "automationId": field(item, "automationId"),
                         "controlType": field(item, "controlType"),
                         "processName": field(item, "processName"),
+                        "value": field(item, "value"),
+                        "focused": field(item, "focused"),
+                        "x": field(item, "x"),
+                        "y": field(item, "y"),
+                        "width": field(item, "width"),
+                        "height": field(item, "height"),
                     }
                     for item in eligible[:80]
                 ],
@@ -105,6 +117,11 @@ class Handler(BaseHTTPRequestHandler):
             Path("artifacts/mock-last-request.json").write_text(
                 json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            if has_image:
+                try:
+                    Path("artifacts/mock-last-image.png").write_bytes(base64.b64decode(image.split(",", 1)[1], validate=True))
+                except Exception:
+                    pass
 
             if self.path == "/v1/quality-guide" and not has_image:
                 self._json({"error": "missing_screenshot"}, 400)
