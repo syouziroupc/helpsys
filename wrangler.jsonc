@@ -9,6 +9,32 @@
   "ai": {
     "binding": "AI"
   },
+  "ratelimits": [
+    {
+      "name": "GUIDE_RATE_LIMITER",
+      "namespace_id": "26090901",
+      "simple": {
+        "limit": 80,
+        "period": 60
+      }
+    },
+    {
+      "name": "ASR_RATE_LIMITER",
+      "namespace_id": "26090902",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "EDUCATION_RATE_LIMITER",
+      "namespace_id": "26090903",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ],
   "vars": {
     "HELPSYS_MODEL": "@cf/zai-org/glm-4.7-flash",
     "HELPSYS_VISION_MODEL": "@cf/zai-org/glm-5.3-flash",
