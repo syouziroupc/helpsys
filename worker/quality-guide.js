@@ -20,6 +20,7 @@ const qualityTool = {
       instruction: { type: 'string' },
       question: { type: ['string', 'null'] },
       key: { type: ['string', 'null'] },
+      inputText: { type: ['string', 'null'] },
       confidence: { type: 'number', minimum: 0, maximum: 1 },
       x: { type: 'number', minimum: 0, maximum: 1000 },
       y: { type: 'number', minimum: 0, maximum: 1000 },
@@ -31,7 +32,7 @@ const qualityTool = {
       sponsored: { type: 'boolean' }
     },
     required: [
-      'status', 'targetId', 'action', 'instruction', 'question', 'key', 'confidence',
+      'status', 'targetId', 'action', 'instruction', 'question', 'key', 'inputText', 'confidence',
       'x', 'y', 'width', 'height', 'screenConfirmed', 'visualEvidence', 'observedDomain', 'sponsored'
     ],
     additionalProperties: false
@@ -44,6 +45,7 @@ The human operates the computer. Return only ONE immediate next operation by cal
 MULTI-SOURCE EVIDENCE FUSION:
 - The screenshot is ONE source, not the master source. Do not make the whole decision depend on image recognition alone.
 - screenshot: evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
+- captureBounds: the physical Windows desktop rectangle represented by this screenshot. UIA x/y/width/height use physical desktop coordinates. Never claim screenConfirmed for a UIA target outside captureBounds.
 - uiElements: evidence for control identity, Name, AutomationId, ControlType, current value/state, focus, actionability and exact Windows bounds.
 - systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser URL/domain.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
@@ -70,6 +72,12 @@ PHYSICAL WINDOWS RULES:
 - If the requested goal is a website and a browser shortcut is visibly on the desktop, naming the real browser (for example Google Chrome) is better than saying a generic phrase such as “internet app”.
 - Do not assume a browser is already visible merely because its process is running.
 - Never point through a foreground window to an item behind it.
+
+TEXT INPUT CONTRACT:
+- For action=type_text, inputText MUST be the exact non-secret text the user should type. It is machine data for local verification, not prose.
+- For every other action, inputText MUST be null.
+- Never use type_text on a password UIA element. HelpSys must not receive, infer, repeat, or verify passwords, PINs, OTPs, recovery keys, CVVs, private keys, or other secrets.
+- The human-readable instruction may be rephrased, but inputText must stay exact.
 
 QUALITY AND SPEED:
 - Inspect only what is necessary to decide the next step; do not generate a long plan.
@@ -113,6 +121,7 @@ export default {
       : [];
     const systemContext = compactSystemContext(body?.systemContext);
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
+    const captureBounds = compactCaptureBounds(body?.captureBounds);
     const recoveryMode = body?.recoveryMode === true;
     const routeIssue = text(body?.routeIssue, 180);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
@@ -126,6 +135,7 @@ export default {
       completedSteps: history,
       systemContext,
       evidenceSummary: evidence,
+      captureBounds,
       windowsKnowledge: task?.knowledge || '',
       canonicalConstraint: canonical,
       uiElements: elements,
@@ -143,7 +153,7 @@ export default {
         image,
         reasoning_effort: 'low',
         temperature: 0.1,
-        max_completion_tokens: 520,
+        max_completion_tokens: 560,
         tools: [qualityTool],
         tool_choice: 'required',
         parallel_tool_calls: false
@@ -151,7 +161,7 @@ export default {
 
       const raw = extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
-      return json(validateQualityDecision(raw, elements, task, recoveryMode));
+      return json(validateQualityDecision(raw, elements, task, recoveryMode, captureBounds));
     } catch (error) {
       console.error('quality guide inference failed', error);
       return json({ error: 'quality_inference_failed' }, 502);
@@ -159,7 +169,7 @@ export default {
   }
 };
 
-export function validateQualityDecision(raw, elements, task, recoveryMode = false) {
+export function validateQualityDecision(raw, elements, task, recoveryMode = false, captureBounds = null) {
   const ids = new Set(elements.map(x => x.id));
   const statuses = new Set(['target', 'clarify', 'done', 'not_found']);
   const actions = new Set(['left_click', 'double_click', 'type_text', 'press_key', 'none']);
@@ -172,12 +182,13 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   const instruction = text(raw?.instruction, 420);
   const question = nullableText(raw?.question, 300);
   const key = nullableText(raw?.key, 80);
+  const inputText = nullableText(raw?.inputText, 160);
   const observedDomain = nullableText(raw?.observedDomain, 220);
   const sponsored = raw?.sponsored === true;
   const relaxedCanonical = recoveryMode && task?.kind === 'launch-app';
 
   const base = {
-    status, targetId, action, instruction, question, key, confidence,
+    status, targetId, action, instruction, question, key, inputText, confidence,
     x: clamp1000(raw?.x), y: clamp1000(raw?.y), width: clamp1000(raw?.width), height: clamp1000(raw?.height),
     screenConfirmed, visualEvidence, observedDomain, sponsored
   };
@@ -191,12 +202,12 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
       return notFound('既知サイトは現在のブラウザードメインが公式ドメインと一致した場合だけ完了扱いにします。');
     if (isStrictTask(task) && !relaxedCanonical && task?.deterministic && task.deterministic.status !== 'done')
       return notFound('画面上の状態と安全な標準手順が一致しないため、完了扱いにしません。');
-    return { ...base, targetId: null, action: 'none', key: null, question: null };
+    return { ...base, targetId: null, action: 'none', key: null, question: null, inputText: null };
   }
 
   if (status === 'clarify') {
     if (!question) return notFound('確認内容を特定できませんでした。');
-    return { ...base, targetId: null, action: 'none', key: null };
+    return { ...base, targetId: null, action: 'none', key: null, inputText: null };
   }
 
   if (status !== 'target') return notFound(instruction || '現在の情報を照合しましたが、次の操作を安全に決められませんでした。');
@@ -212,7 +223,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     return {
       ...base,
       status: 'clarify', targetId: null, action: 'none', instruction: '',
-      question: task.deterministic.question, key: null, confidence: Math.max(confidence, 0.95)
+      question: task.deterministic.question, key: null, inputText: null, confidence: Math.max(confidence, 0.95)
     };
   }
 
@@ -228,7 +239,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     if (isStrictTask(task) && !relaxedCanonical && task?.deterministic?.status === 'target' && task.deterministic.action === 'press_key' &&
         normalizeKey(key) !== normalizeKey(task.deterministic.key))
       return notFound('画面と安全な標準手順で次のキーが一致しませんでした。');
-    return { ...base, targetId: null };
+    return { ...base, targetId: null, inputText: null };
   }
 
   if (targetId === 'vision-target') {
@@ -244,16 +255,27 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
       if (guardedVision?.status !== 'target')
         return notFound(guardedVision?.instruction || '公式ドメインと確認できない画像候補は案内しません。');
     }
-    return base;
+    return { ...base, inputText: null };
   }
 
   if (!targetId || !ids.has(targetId)) return notFound('Windowsの操作対象と一致させられませんでした。');
   const target = elements.find(x => x.id === targetId);
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
+  if (screenConfirmed && captureBounds && !elementIntersectsCapture(target, captureBounds))
+    return notFound('このUIA対象は今回のスクリーンショット範囲外なので、画像で確認済みとは扱いません。');
   if (task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
     return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
-  if (action === 'type_text' && !(target.focused === true && target.keyboardFocusable === true))
-    return notFound('入力欄が実際に選ばれていることを確認できませんでした。');
+
+  if (action === 'type_text') {
+    if (target.password === true)
+      return notFound('パスワードなどの秘密入力欄へ具体的な文字列を入力する案内は行いません。');
+    if (!(target.focused === true && target.keyboardFocusable === true))
+      return notFound('入力欄が実際に選ばれていることを確認できませんでした。');
+    if (!inputText)
+      return notFound('入力する正確な文字列を機械データとして確定できないため、type_textを案内しません。');
+  } else if (inputText) {
+    return notFound('文字入力以外の操作にinputTextが含まれているため、この応答は使いません。');
+  }
 
   let physical = normalizePhysicalAction(base, target, task);
   if (task?.kind === 'site' && (physical.sponsored || /(?:広告|スポンサー|sponsored|\bad\b)/i.test(target.name || '')))
@@ -279,6 +301,7 @@ function normalizePhysicalAction(decision, target, task) {
   return {
     ...decision,
     action: 'double_click',
+    inputText: null,
     instruction: `青い枠の「${label}」で、マウスの左ボタンを間をあけずに2回押してください。`
   };
 }
@@ -318,7 +341,7 @@ function notFound(instruction) {
   return {
     status: 'not_found', targetId: null, action: 'none',
     instruction: instruction || '現在の情報を照合しましたが、次の操作を安全に決められませんでした。',
-    question: null, key: null, confidence: 0,
+    question: null, key: null, inputText: null, confidence: 0,
     x: 0, y: 0, width: 0, height: 0,
     screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
   };
@@ -423,6 +446,24 @@ function compactEvidence(value, elements, history, systemContext) {
     historyCount: finite(value?.historyCount ?? value?.HistoryCount ?? history.length),
     recentTargets: Array.isArray(recentValues) ? recentValues.slice(0, 5).map(x => text(x, 180)).filter(Boolean) : []
   };
+}
+
+function compactCaptureBounds(value) {
+  if (!value || typeof value !== 'object') return null;
+  const x = finite(value.x ?? value.X);
+  const y = finite(value.y ?? value.Y);
+  const width = finite(value.width ?? value.Width);
+  const height = finite(value.height ?? value.Height);
+  if (width <= 0 || height <= 0) return null;
+  return { x, y, width, height };
+}
+
+function elementIntersectsCapture(element, bounds) {
+  const left = finite(element.x);
+  const top = finite(element.y);
+  const right = left + Math.max(0, finite(element.width));
+  const bottom = top + Math.max(0, finite(element.height));
+  return right > bounds.x && left < bounds.x + bounds.width && bottom > bounds.y && top < bounds.y + bounds.height;
 }
 
 function normalizeKey(value) { return String(value || '').replace(/\s+/g, '').toLowerCase(); }
