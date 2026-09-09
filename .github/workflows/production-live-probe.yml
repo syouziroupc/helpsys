@@ -1,0 +1,16 @@
+name: Production live Worker probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  production-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Probe production health quality inference and transcription
+        run: python tests/production_live_probe.py
