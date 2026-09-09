@@ -1,0 +1,92 @@
+name: HelpSys Education smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/HelpSys.Education/**"
+      - ".github/workflows/education-smoke.yml"
+  pull_request:
+    paths:
+      - "src/HelpSys.Education/**"
+      - "HelpSys.sln"
+      - ".github/workflows/education-smoke.yml"
+
+jobs:
+  build-and-launch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore and build
+        run: |
+          dotnet restore src/HelpSys.Education/HelpSys.Education.csproj
+          dotnet build src/HelpSys.Education/HelpSys.Education.csproj -c Release --no-restore
+
+      - name: Launch Education UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $exe = Resolve-Path 'src/HelpSys.Education/bin/Release/net10.0-windows/HelpSys.Education.exe'
+          $process = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 4
+
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          function Save-Screenshot([string] $path) {
+            $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+              $bitmap.Save((Join-Path $PWD $path), [System.Drawing.Imaging.ImageFormat]::Png)
+            }
+            finally {
+              $graphics.Dispose()
+              $bitmap.Dispose()
+            }
+          }
+
+          try {
+            if ($process.HasExited) { throw 'HelpSys Education exited during startup.' }
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $condition = New-Object System.Windows.Automation.PropertyCondition(
+              [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+              $process.Id)
+            $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+            if ($null -eq $window) { throw 'HelpSys Education top-level window was not exposed to UI Automation.' }
+
+            $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            $names = @($window.Current.Name)
+            foreach ($node in $nodes) {
+              try {
+                if (-not [string]::IsNullOrWhiteSpace($node.Current.Name)) { $names += $node.Current.Name }
+              }
+              catch { }
+            }
+
+            foreach ($required in @('HelpSys Education','教育','練習','テスト')) {
+              if (-not ($names -contains $required)) {
+                Save-Screenshot 'artifacts/education-failure.png'
+                throw "Education UI missing required element: $required"
+              }
+            }
+            Save-Screenshot 'artifacts/education-home.png'
+          }
+          finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Upload Education smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helpsys-education-smoke
+          path: artifacts/*.png
+          if-no-files-found: warn
