@@ -9,6 +9,10 @@ public sealed class SpeechInputService : IDisposable
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
+        // Foreground dictation has priority over the low-duty Commander wake listener.
+        // The coordinator asks Commander to fully release its recognition engine first,
+        // then lets it resume only after this capture has finished.
+        using var microphoneLease = MicrophoneCoordinator.BeginForegroundCapture();
         DisposeEngine();
         var recognizer = SelectRecognizer();
         if (recognizer is null)
