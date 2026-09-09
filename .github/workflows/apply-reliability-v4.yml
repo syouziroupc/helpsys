@@ -27,6 +27,21 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Keep workflow changes out of Actions push
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path('tools/apply_reliability_v4_patch.py')
+          text = p.read_text(encoding='utf-8')
+          start = text.index('workflow = ".github/workflows/windows-smoke.yml"')
+          end = text.index('# Remove obsolete offline keyword planner')
+          text = text[:start] + text[end:]
+          text = text.replace('Path("tools/apply_reliability_v4_patch.py").unlink(missing_ok=True)\n', '')
+          text = text.replace('Path(".github/workflows/apply-reliability-v4.yml").unlink(missing_ok=True)\n', '')
+          p.write_text(text, encoding='utf-8')
+          '@ | python -
+
       - name: Apply audited patch
         run: python tools/apply_reliability_v4_patch.py
 
@@ -45,7 +60,7 @@ jobs:
           dotnet restore HelpSys.sln
           dotnet build HelpSys.sln -c Release --no-restore
 
-      - name: Commit verified patch
+      - name: Commit verified source patch
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
