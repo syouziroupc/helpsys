@@ -30,7 +30,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\education-win-x64'
-          $assetName = 'HelpSys-Education-v2.1-preview-win-x64.zip'
+          $assetName = 'HelpSys-Education-v2.2-preview-win-x64.zip'
           $stableAssetName = 'HelpSys-Education-latest-win-x64.zip'
           dotnet publish src/HelpSys.Education/HelpSys.Education.csproj `
             -c Release `
@@ -51,26 +51,26 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'education-preview-latest'
-          $assetName = 'HelpSys-Education-v2.1-preview-win-x64.zip'
+          $assetName = 'HelpSys-Education-v2.2-preview-win-x64.zip'
           $stableAssetName = 'HelpSys-Education-latest-win-x64.zip'
           $asset = Join-Path $PWD $assetName
           $stableAsset = Join-Path $PWD $stableAssetName
           $allowedAssets = @($assetName, $stableAssetName)
           $notes = @"
-          HelpSys Education Preview — Foundations v2.1
+          HelpSys Education Preview — Foundations v2.2
 
           - Windows 10 / 11 (64-bit)
           - 通常版HelpSysとは別アプリ
           - Versioned package: $assetName
           - Stable site download alias: $stableAssetName
+          - ダウンロード直後から本番HelpSys WorkerのEducation APIへ接続
+          - 一時通信失敗を1回だけ再試行
+          - 進捗保存を原子的書き換え + バックアップ復旧へ変更
           - PC未経験から始める段階制基礎課程
           - 難易度1/5「はじめて」→ 5/5「総合マスター」
           - 前単元の教育 → 実習 → 100%正解テスト合格で次単元を解放
           - 合格済み単元はいつでも復習可能
           - 未解放単元は選択不可
-          - マウス / キーボード / 文字入力のアプリ内実技練習
-          - 検索可能な用語集と全体進捗
-          - タイピングはアプリ内課題 + e-typing連携
           - テスト中は教育AIを呼び出さない
           "@
 
