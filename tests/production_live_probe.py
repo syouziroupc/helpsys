@@ -7,6 +7,19 @@ import urllib.request
 import wave
 
 BASE = 'https://helpsys.syouziroupc.workers.dev'
+BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36'
+
+
+def raw_status(path, *, user_agent=None, timeout=20):
+    headers = {'accept': 'application/json'}
+    if user_agent is not None:
+        headers['user-agent'] = user_agent
+    req = urllib.request.Request(BASE + path, headers=headers, method='GET')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.status, res.read().decode('utf-8', 'replace')
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode('utf-8', 'replace')
 
 
 def request_json(path, *, method='GET', body=None, headers=None, timeout=30):
@@ -43,10 +56,24 @@ def make_silence_wav(seconds=1.0, sample_rate=16000):
     return buf.getvalue()
 
 
-status, health = request_json('/health')
+# Reproduce the desktop/API-client signature problem first. urllib's default non-browser
+# signature is intentionally retained here because Cloudflare Browser Integrity Check treats
+# missing/non-standard user agents similarly.
+plain_status, plain_body = raw_status('/health')
+print('PRODUCTION_NON_BROWSER_HEALTH_STATUS=', plain_status)
+if plain_status == 403 and ('1010' in plain_body or 'browser' in plain_body.lower()):
+    print('PRODUCTION_BROWSER_INTEGRITY_BLOCK=REPRODUCED')
+else:
+    print('PRODUCTION_BROWSER_INTEGRITY_BLOCK=NOT_REPRODUCED')
+
+common_headers = {
+    'accept': 'application/json',
+    'user-agent': BROWSER_UA,
+}
+status, health = request_json('/health', headers=common_headers)
 if status != 200 or health.get('ok') is not True or health.get('service') != 'helpsys':
-    raise RuntimeError(f'health contract failed: HTTP {status} {health}')
-print('PRODUCTION_HEALTH=PASS', health.get('model'), health.get('visionModel'))
+    raise RuntimeError(f'health contract failed with browser-compatible signature: HTTP {status} {health}')
+print('PRODUCTION_HEALTH_WITH_BROWSER_UA=PASS', health.get('model'), health.get('visionModel'))
 
 quality_payload = {
     'request': '画面を確認し、操作対象がなければ推測せずnot_foundにしてください。',
@@ -86,9 +113,8 @@ status, quality = request_json(
     method='POST',
     body=quality_body,
     headers={
+        **common_headers,
         'content-type': 'application/json',
-        'accept': 'application/json',
-        'user-agent': 'HelpSys-production-live-probe/1.0',
         'x-helpsys-request-id': 'github-production-live-probe',
     },
     timeout=35,
@@ -97,7 +123,7 @@ if status != 200 or quality.get('status') not in {'target', 'clarify', 'done', '
     raise RuntimeError(f'quality live inference contract failed: HTTP {status} {quality}')
 if quality.get('error'):
     raise RuntimeError(f'quality live inference returned API error: {quality}')
-print('PRODUCTION_QUALITY_INFERENCE=PASS', quality.get('status'), quality.get('confidence'))
+print('PRODUCTION_QUALITY_INFERENCE_WITH_BROWSER_UA=PASS', quality.get('status'), quality.get('confidence'))
 
 wav = make_silence_wav()
 status, transcript = request_json(
@@ -105,9 +131,8 @@ status, transcript = request_json(
     method='POST',
     body=wav,
     headers={
+        **common_headers,
         'content-type': 'audio/wav',
-        'accept': 'application/json',
-        'user-agent': 'HelpSys-production-live-probe/1.0',
         'x-helpsys-request-id': 'github-production-asr-probe',
     },
     timeout=35,
@@ -116,4 +141,4 @@ if status != 200 or 'text' not in transcript or 'model' not in transcript:
     raise RuntimeError(f'transcribe live contract failed: HTTP {status} {transcript}')
 if transcript.get('error'):
     raise RuntimeError(f'transcribe live returned API error: {transcript}')
-print('PRODUCTION_TRANSCRIBE=PASS', transcript.get('model'), repr(transcript.get('text')))
+print('PRODUCTION_TRANSCRIBE_WITH_BROWSER_UA=PASS', transcript.get('model'), repr(transcript.get('text')))
