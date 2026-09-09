@@ -77,7 +77,8 @@ class Handler(BaseHTTPRequestHandler):
                 'status': 'done', 'targetId': None, 'action': 'none',
                 'instruction': '入力操作を確認しました。', 'question': None, 'key': None,
                 'confidence': 0.99, 'x': 0, 'y': 0, 'width': 0, 'height': 0,
-                'screenConfirmed': True, 'visualEvidence': '入力欄の状態変化を確認しました。'
+                'screenConfirmed': True, 'visualEvidence': '入力欄の状態変化を確認しました。',
+                'inputText': None
             })
             return
 
@@ -91,16 +92,17 @@ class Handler(BaseHTTPRequestHandler):
                 'status': 'not_found', 'targetId': None, 'action': 'none',
                 'instruction': 'ProbeInputがありません。', 'question': None, 'key': None,
                 'confidence': 0, 'x': 0, 'y': 0, 'width': 0, 'height': 0,
-                'screenConfirmed': False, 'visualEvidence': ''
+                'screenConfirmed': False, 'visualEvidence': '', 'inputText': None
             })
             return
 
         self.send_json({
             'status': 'target', 'targetId': str(field(target, 'id')), 'action': 'type_text',
-            'instruction': 'キーボードで「EXPECTED-INPUT-42」と入力し、最後に「Enter」と書かれたキーを1回押してください。',
+            'instruction': '青い枠の入力欄へ指定された検証文字列を入力し、最後にEnterを1回押してください。',
             'question': None, 'key': 'Enter', 'confidence': 0.99,
             'x': 0, 'y': 0, 'width': 0, 'height': 0,
-            'screenConfirmed': True, 'visualEvidence': '入力欄が現在画面に見えます。'
+            'screenConfirmed': True, 'visualEvidence': '入力欄が現在画面に見えます。',
+            'inputText': 'EXPECTED-INPUT-42'
         })
 
 
