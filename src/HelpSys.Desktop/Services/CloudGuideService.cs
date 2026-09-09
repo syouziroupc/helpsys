@@ -211,7 +211,7 @@ public sealed class CloudGuideService : IDisposable
     private static object CompactElement(UiElementCandidate x) => new
     {
         id = x.Id,
-        name = x.Name,
+        name = SanitizeElementNameForCloud(x),
         automationId = x.AutomationId,
         className = x.ClassName,
         controlType = x.ControlType,
@@ -230,6 +230,14 @@ public sealed class CloudGuideService : IDisposable
         width = x.Width,
         height = x.Height
     };
+
+    private static string SanitizeElementNameForCloud(UiElementCandidate element)
+    {
+        if (element.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase) ||
+            element.ControlType.Equals("TitleBar", StringComparison.OrdinalIgnoreCase))
+            return string.IsNullOrWhiteSpace(element.ProcessName) ? "<window>" : element.ProcessName;
+        return element.Name;
+    }
 
     private static SystemContextSnapshot SanitizeSystemContextForCloud(SystemContextSnapshot context, string request)
     {
@@ -250,14 +258,9 @@ public sealed class CloudGuideService : IDisposable
         if (string.IsNullOrWhiteSpace(title)) return string.Empty;
         var raw = title.Trim();
 
-        // Preserve only a fixed safety category, never the original warning/document/tab text.
-        // The Worker safety detector already recognizes this canonical phrase.
         if (SecurityTitleMarkers.Any(marker => raw.Contains(marker, StringComparison.OrdinalIgnoreCase)))
             return "Privacy error";
 
-        // Window titles often contain search queries, document names, email subjects or customer
-        // data. Process identity is sufficient as a coarse cloud hint; detailed local UIA remains
-        // available without transmitting the title.
         return string.IsNullOrWhiteSpace(processName) ? "<window-title-present>" : processName.Trim();
     }
 
