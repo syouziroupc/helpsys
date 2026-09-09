@@ -132,7 +132,8 @@ public sealed class CommanderWakeService : IDisposable
                 lock (_gate)
                 {
                     _starting = false;
-                    if (!_disposed && _enabled) {
+                    if (!_disposed && _enabled)
+                    {
                         SetStatusLocked("マイク解放待ち");
                         ScheduleRetryLocked();
                     }
@@ -231,12 +232,14 @@ public sealed class CommanderWakeService : IDisposable
         {
             lock (_gate)
             {
-                if (_disposed) return;
-                _interactionHeld = false;
-                SetStatusLocked("マイク再初期化待ち");
+                if (_disposed || !_enabled || !_interactionHeld) return;
+                SetStatusLocked("マイク切替待ち");
             }
             RaiseStatusChanged();
-            _ = RestartAfterSlowReleaseAsync(releaseTask);
+
+            // The wake phrase has already been recognized. A slow SpeechRecognitionEngine.Dispose
+            // must delay that interaction, not silently discard it and return to standby.
+            _ = CompleteDelayedWakeAfterReleaseAsync(releaseTask);
             return;
         }
         catch
@@ -245,23 +248,41 @@ public sealed class CommanderWakeService : IDisposable
             return;
         }
 
+        RaiseWakeDetectedIfReady();
+    }
+
+    private async Task CompleteDelayedWakeAfterReleaseAsync(Task releaseTask)
+    {
+        try
+        {
+            await releaseTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            CompleteWakeInteraction();
+            return;
+        }
+
+        RaiseWakeDetectedIfReady();
+    }
+
+    private void RaiseWakeDetectedIfReady()
+    {
         lock (_gate)
         {
             if (_disposed || !_enabled || !_interactionHeld) return;
+            if (_foregroundSuspendCount > 0)
+            {
+                _interactionHeld = false;
+                SetStatusLocked("他の音声入力を優先");
+                return;
+            }
             SetStatusLocked("呼び出し中");
         }
         RaiseStatusChanged();
 
         try { WakeDetected?.Invoke(this, EventArgs.Empty); }
         catch { CompleteWakeInteraction(); }
-    }
-
-    private async Task RestartAfterSlowReleaseAsync(Task releaseTask)
-    {
-        try { await releaseTask.ConfigureAwait(false); } catch { }
-        bool shouldStart;
-        lock (_gate) shouldStart = CanStartLocked();
-        if (shouldStart) QueueStart();
     }
 
     private void Engine_RecognizeCompleted(object? sender, RecognizeCompletedEventArgs e)
