@@ -51,7 +51,7 @@ public partial class MainWindow
 
             if (!HasUsableForeground(systemContext))
             {
-                StopWithMessage("操作中のウィンドウを特定できませんでした。操作したい画面を一度クリックしてから、もう一度「案内」を押してください。");
+                await TryRouteRecoveryAsync("前面ウィンドウを一時的に特定できない", generation, cancellationToken);
                 return;
             }
 
@@ -71,11 +71,11 @@ public partial class MainWindow
             {
                 throw;
             }
-            catch (Exception captureError)
+            catch
             {
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage($"画面画像は取得できませんでした。Windows上の操作対象でも次の場所を確定できませんでした: {captureError.Message}");
+                await TryRouteRecoveryAsync("画面画像を取得できないため他の情報源から現在位置を復元する", generation, cancellationToken);
                 return;
             }
 
@@ -84,7 +84,7 @@ public partial class MainWindow
             var afterCaptureContext = _systemContext.Capture();
             if (HasSystemTransitionV3(systemContext, afterCaptureContext))
             {
-                StopWithMessage("確認中に操作画面が切り替わりました。古い画面は使わず、現在の画面からやり直します。もう一度「案内」を押してください。");
+                await TryRouteRecoveryAsync("確認中に画面が切り替わった", generation, cancellationToken);
                 return;
             }
 
@@ -110,14 +110,15 @@ public partial class MainWindow
             catch (GuideServiceException error)
             {
                 if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
+                if (_sessionState.IsCurrent(generation))
+                    await TryRouteRecoveryAsync($"通常計画を継続できない: {error.Kind}", generation, cancellationToken);
                 return;
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("判断中に画面が変わりました。古い判断は使いません。現在の画面で、もう一度「案内」を押してください。");
+                await TryRouteRecoveryAsync("判断中に画面が変化した", generation, cancellationToken);
                 return;
             }
 
@@ -125,7 +126,7 @@ public partial class MainWindow
             {
                 if (!quality.ScreenConfirmed || quality.Confidence < MinimumQualityDoneConfidence || string.IsNullOrWhiteSpace(quality.VisualEvidence))
                 {
-                    StopWithMessage("目的達成を画面上で確認できていないため、完了扱いにはしません。現在の画面で案内を続けてください。");
+                    await TryRouteRecoveryAsync("完了を現在状態から確認できない", generation, cancellationToken);
                     return;
                 }
 
@@ -153,9 +154,12 @@ public partial class MainWindow
                 (!quality.ScreenConfirmed && !structuredFusionTarget))
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage(string.IsNullOrWhiteSpace(quality.Instruction)
-                    ? "複数の情報を照合しましたが、次の操作を十分な確度で決められませんでした。"
-                    : quality.Instruction);
+                await TryRouteRecoveryAsync(
+                    string.IsNullOrWhiteSpace(quality.Instruction)
+                        ? "通常ルート上の次操作を確定できない"
+                        : quality.Instruction,
+                    generation,
+                    cancellationToken);
                 return;
             }
 
@@ -172,7 +176,7 @@ public partial class MainWindow
             {
                 if (!quality.ScreenConfirmed)
                 {
-                    StopWithMessage("キーボード操作は画面でも確認できた場合だけ案内します。");
+                    await TryRouteRecoveryAsync("対象なしのキー操作を画面情報で確認できない", generation, cancellationToken);
                     return;
                 }
                 ShowKeyboardGuide(decision, candidates, systemContext, generation);
@@ -188,7 +192,7 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage("次の操作は候補になりましたが、実際に案内する場所を確定できませんでした。");
+                await TryRouteRecoveryAsync("操作内容は候補になったが対象を特定できない", generation, cancellationToken);
                 return;
             }
 
@@ -196,7 +200,7 @@ public partial class MainWindow
             if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage("候補と、現在操作できるWindowsの場所を一致させられませんでした。");
+                await TryRouteRecoveryAsync("選ばれた対象が現在は操作できない", generation, cancellationToken);
                 return;
             }
 
@@ -204,13 +208,13 @@ public partial class MainWindow
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("案内を表示する直前に画面が変わりました。古い青枠は表示しません。もう一度「案内」を押してください。");
+                await TryRouteRecoveryAsync("案内表示の直前に画面が変わった", generation, cancellationToken);
                 return;
             }
             if (freshTarget is null)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                StopWithMessage("案内しようとした場所が表示直前に変わりました。現在の場所を確定できませんでした。");
+                await TryRouteRecoveryAsync("案内対象が表示直前に消えた", generation, cancellationToken);
                 return;
             }
 
@@ -219,16 +223,36 @@ public partial class MainWindow
         catch (OperationCanceledException)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-                StopWithMessage("画面確認が規定時間内に終わりませんでした。現在の画面で、もう一度「案内」を押してください。");
+            {
+                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                try { await TryRouteRecoveryAsync("通常の画面確認が時間内に完了しなかった", generation, recoveryCts.Token); }
+                catch (OperationCanceledException)
+                {
+                    if (_sessionState.IsCurrent(generation))
+                        WaitForClarification("現在位置を特定するため、今いちばん手前に見えている画面の大きな見出しを1つ教えてください。そこから案内を続けます。", generation);
+                }
+            }
         }
         catch (InvalidOperationException ex)
         {
-            if (_sessionState.IsCurrent(generation))
-                StopWithMessage($"現在の操作対象を確定できませんでした: {ex.Message}");
+            if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
+            {
+                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                try { await TryRouteRecoveryAsync($"操作対象の構造確認に失敗: {ex.GetType().Name}", generation, recoveryCts.Token); }
+                catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
+            }
         }
         catch (Exception ex)
         {
-            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面と操作情報の照合中に問題が起きました: {ex.Message}");
+            if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
+            {
+                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                try { await TryRouteRecoveryAsync($"案内処理を現在状態から再構成: {ex.GetType().Name}", generation, recoveryCts.Token); }
+                catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
+            }
         }
         finally
         {
@@ -246,7 +270,7 @@ public partial class MainWindow
         if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
         if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
 
-        SetState("画像だけでは確定できなかったため、現在操作できるWindowsの部品を再確認しています…", speak: false);
+        SetState("画像だけでは確定できないため、Windowsの構造情報から次の操作を再確認しています…", speak: false);
 
         IReadOnlyList<UiElementCandidate> candidates;
         try
@@ -324,7 +348,7 @@ public partial class MainWindow
         var bounds = frame.MapNormalizedBounds(quality.X, quality.Y, quality.Width, quality.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8)
         {
-            StopWithMessage("画面上の押す場所を十分な大きさで特定できませんでした。");
+            await TryRouteRecoveryAsync("画像上の候補位置が有効な操作領域にならない", generation, cancellationToken);
             return;
         }
 
@@ -335,7 +359,7 @@ public partial class MainWindow
         if (!_sessionState.IsCurrent(generation)) return;
         if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
         {
-            StopWithMessage("画像上の場所を確認している間に画面が変わりました。古い位置は使いません。");
+            await TryRouteRecoveryAsync("画像上の候補を確認中に画面が変わった", generation, cancellationToken);
             return;
         }
 
@@ -345,7 +369,7 @@ public partial class MainWindow
         }
         else if (quality.Confidence < MinimumVisualOnlyTargetConfidence)
         {
-            StopWithMessage("画面には候補が見えますがWindowsの構造情報と一致せず、画像だけで案内するには確度が足りませんでした。");
+            await TryRouteRecoveryAsync("画像候補とWindows構造が一致しない", generation, cancellationToken);
             return;
         }
 
