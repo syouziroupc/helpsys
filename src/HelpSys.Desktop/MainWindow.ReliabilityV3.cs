@@ -40,7 +40,7 @@ public partial class MainWindow
             try
             {
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                    StopWithMessage("操作結果の確認中に予期しない問題が起きたため、古い案内を破棄しました。もう一度「案内」を押してください。");
+                    await RecoverFromObserverFailureAsync("マウス操作の結果監視で現在状態を確定できない");
             }
             catch { }
         }
@@ -86,7 +86,7 @@ public partial class MainWindow
             try
             {
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                    StopWithMessage("キー操作の確認中に予期しない問題が起きたため、古い案内を破棄しました。もう一度「案内」を押してください。");
+                    await RecoverFromObserverFailureAsync("キー操作の結果監視で現在状態を確定できない");
             }
             catch { }
         }
@@ -139,7 +139,7 @@ public partial class MainWindow
         var decision = _currentDecision;
         var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         string? retryMessage = null;
-        string? clarification = null;
+        string? routeRecoveryIssue = null;
         bool replan = false;
         bool advance = false;
         bool forceVision = false;
@@ -171,18 +171,23 @@ public partial class MainWindow
                         _stepSystemBaseline = _systemContext.Capture();
                         if (!HasUsableForeground(_stepSystemBaseline))
                         {
-                            StopWithMessage("現在操作しているアプリを確認できないため、操作結果を推測せず案内を停止しました。もう一度「案内」を押してください。");
-                            return;
+                            _history.Add(new GuideHistoryItem(_stepNumber, "foreground_lost", targetName, "操作後の前面アプリを一時的に特定できないため、停止せず現在位置を再取得して復帰経路を探す。"));
+                            if (_history.Count > 12) _history.RemoveAt(0);
+                            ClearCurrentGuidanceV3();
+                            routeRecoveryIssue = "操作後の前面アプリを一時的に特定できない";
                         }
-                        _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
-                        if (!_sessionState.IsCurrent(generation)) return;
-
-                        if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-                            retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
-                        else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-                            retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
                         else
-                            retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
+                        {
+                            _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
+                            if (!_sessionState.IsCurrent(generation)) return;
+
+                            if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
+                                retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
+                            else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
+                                retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
+                            else
+                                retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
+                        }
                     }
                 }
                 else
@@ -197,7 +202,7 @@ public partial class MainWindow
                     }
                     else
                     {
-                        clarification = "同じ操作をしても画面が変わりませんでした。今、画面に何が表示されているか短く教えてください。";
+                        routeRecoveryIssue = "同じ操作を複数回行っても状態が変わらないため、別の安全な経路を選ぶ";
                     }
                 }
             }
@@ -225,9 +230,9 @@ public partial class MainWindow
             return;
         }
 
-        if (clarification is not null)
+        if (routeRecoveryIssue is not null)
         {
-            WaitForClarification(clarification, generation);
+            await TryRouteRecoveryAsync(routeRecoveryIssue, generation, _sessionCts.Token);
             return;
         }
 
