@@ -138,11 +138,8 @@ public partial class MainWindow
 
         var decision = _currentDecision;
         var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
-        string? retryMessage = null;
         string? routeRecoveryIssue = null;
-        bool replan = false;
         bool advance = false;
-        bool forceVision = false;
 
         try
         {
@@ -154,57 +151,16 @@ public partial class MainWindow
             {
                 _consecutiveFailures++;
                 _doubleClickCount = 0;
-
-                if (_consecutiveFailures == 1)
-                {
-                    var stillValid = await RevalidateCurrentTargetV3Async(_sessionCts.Token);
-                    if (!_sessionState.IsCurrent(generation)) return;
-                    if (!stillValid)
-                    {
-                        _history.Add(new GuideHistoryItem(_stepNumber, $"stale_{decision.Action}", targetName, "再試行前に対象が消えたため、同じ操作を繰り返さず現在画面から再計画する。"));
-                        if (_history.Count > 12) _history.RemoveAt(0);
-                        ClearCurrentGuidanceV3();
-                        replan = true;
-                    }
-                    else
-                    {
-                        _stepSystemBaseline = _systemContext.Capture();
-                        if (!HasUsableForeground(_stepSystemBaseline))
-                        {
-                            _history.Add(new GuideHistoryItem(_stepNumber, "foreground_lost", targetName, "操作後の前面アプリを一時的に特定できないため、停止せず現在位置を再取得して復帰経路を探す。"));
-                            if (_history.Count > 12) _history.RemoveAt(0);
-                            ClearCurrentGuidanceV3();
-                            routeRecoveryIssue = "操作後の前面アプリを一時的に特定できない";
-                        }
-                        else
-                        {
-                            _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
-                            if (!_sessionState.IsCurrent(generation)) return;
-
-                            if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-                                retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
-                            else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-                                retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
-                            else
-                                retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
-                        }
-                    }
-                }
-                else
-                {
-                    _history.Add(new GuideHistoryItem(_stepNumber, $"failed_{decision.Action}", targetName, decision.Instruction));
-                    if (_history.Count > 12) _history.RemoveAt(0);
-                    ClearCurrentGuidanceV3();
-                    if (_consecutiveFailures == 2)
-                    {
-                        _forceVisionNext = true;
-                        forceVision = true;
-                    }
-                    else
-                    {
-                        routeRecoveryIssue = "同じ操作を複数回行っても状態が変わらないため、別の安全な経路を選ぶ";
-                    }
-                }
+                _history.Add(new GuideHistoryItem(
+                    _stepNumber,
+                    $"unverified_{decision.Action}",
+                    targetName,
+                    "操作は行われたが、結果をローカル状態から確実に確認できなかった。同じ操作を盲目的に繰り返さず、現在状態を再取得して次の一手を判断する。"));
+                if (_history.Count > 12) _history.RemoveAt(0);
+                ClearCurrentGuidanceV3();
+                routeRecoveryIssue = _consecutiveFailures == 1
+                    ? "操作後の結果を確実に確認できないため、同じ操作を繰り返さず現在状態から判断し直す"
+                    : "操作結果を複数回確定できないため、現在状態を再取得して別の安全な経路も含めて判断する";
             }
             else
             {
@@ -223,29 +179,9 @@ public partial class MainWindow
 
         if (!_sessionState.IsCurrent(generation) || _sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
 
-        if (retryMessage is not null)
-        {
-            if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction)) return;
-            SetState(retryMessage, speak: true);
-            return;
-        }
-
         if (routeRecoveryIssue is not null)
         {
             await TryRouteRecoveryAsync(routeRecoveryIssue, generation, _sessionCts.Token);
-            return;
-        }
-
-        if (replan)
-        {
-            SetState("案内していた場所が変わったため、現在の画面から案内を作り直しています…", speak: false);
-            await AdvanceGuideAsync();
-            return;
-        }
-
-        if (forceVision)
-        {
-            await AdvanceGuideAsync();
             return;
         }
 
@@ -412,9 +348,6 @@ public partial class MainWindow
             if (!beforeTarget.Focused && current.Focused) return true;
         }
 
-        // A changed Edit value proves only that typing happened. type_text is completed only
-        // after the finishing key causes a stable system/window/content transition.
-
         return false;
     }
 
@@ -455,7 +388,6 @@ public partial class MainWindow
     private static bool HasSystemTransitionV3(SystemContextSnapshot? before, SystemContextSnapshot after)
     {
         if (before is null) return false;
-        // A transient failure to resolve the foreground window is not evidence that an action succeeded.
         if (after.ForegroundProcessId <= 0 || string.IsNullOrWhiteSpace(after.ForegroundProcess)) return false;
         if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
