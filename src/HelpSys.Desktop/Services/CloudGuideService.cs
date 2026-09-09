@@ -18,6 +18,7 @@ public sealed class CloudGuideService : IDisposable
 
     private readonly HttpClient _http;
     private readonly SystemContextService _contextVerifier = new();
+    private readonly UiAutomationScanner _stateVerifier = new();
     private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -87,6 +88,7 @@ public sealed class CloudGuideService : IDisposable
             () => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/quality-guide", body),
             cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
+        await EnsurePlanningEvidenceCurrentAsync(relevantElements, systemContext, cancellationToken);
         return decision;
     }
 
@@ -110,6 +112,7 @@ public sealed class CloudGuideService : IDisposable
         EnsurePlanningContextCurrent(systemContext);
         var decision = await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
+        await EnsurePlanningEvidenceCurrentAsync(relevantElements, systemContext, cancellationToken);
         return decision;
     }
 
@@ -229,6 +232,100 @@ public sealed class CloudGuideService : IDisposable
                 ShellProcesses.Contains(x.ProcessName))
             .Take(280)
             .ToArray();
+    }
+
+    private async Task EnsurePlanningEvidenceCurrentAsync(
+        IReadOnlyList<UiElementCandidate> expectedElements,
+        SystemContextSnapshot expectedContext,
+        CancellationToken cancellationToken)
+    {
+        var processId = expectedContext.ForegroundProcessId;
+        if (processId <= 0) throw new GuideServiceException(GuideFailureKind.ContextChanged, "判断後に前面画面を再確認できませんでした。");
+
+        var expected = expectedElements.Where(x => x.ProcessId == processId).Take(280).ToArray();
+        if (expected.Length == 0) return;
+
+        IReadOnlyList<UiElementCandidate> current;
+        try
+        {
+            current = await _stateVerifier.CaptureCandidatesForProcessAsync(processId, 420, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            throw new GuideServiceException(GuideFailureKind.ContextChanged, "判断後の画面構造を再確認できないため、古い案内応答を使いません。", ex);
+        }
+
+        if (current.Count == 0)
+            throw new GuideServiceException(GuideFailureKind.ContextChanged, "判断後の画面構造を再確認できないため、古い案内応答を使いません。");
+
+        if (HasPlanningWindowSetChanged(expected, current) || HasPlanningSemanticStateChanged(expected, current))
+            throw new GuideServiceException(GuideFailureKind.ContextChanged, "AIが判断している間に同じアプリ内の画面状態が変わったため、古い案内応答を破棄しました。");
+    }
+
+    private static bool HasPlanningWindowSetChanged(
+        IReadOnlyList<UiElementCandidate> expected,
+        IReadOnlyList<UiElementCandidate> current)
+    {
+        var before = expected.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase))
+            .Select(PlanningWindowKey).ToHashSet(StringComparer.Ordinal);
+        var after = current.Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase))
+            .Select(PlanningWindowKey).ToHashSet(StringComparer.Ordinal);
+        return !before.SetEquals(after);
+    }
+
+    private static bool HasPlanningSemanticStateChanged(
+        IReadOnlyList<UiElementCandidate> expected,
+        IReadOnlyList<UiElementCandidate> current)
+    {
+        var before = PlanningSemanticMap(expected);
+        var after = PlanningSemanticMap(current);
+        foreach (var pair in before)
+        {
+            if (after.TryGetValue(pair.Key, out var now) && !pair.Value.Equals(now, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    private static Dictionary<string, string> PlanningSemanticMap(IReadOnlyList<UiElementCandidate> elements)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in elements.Where(x => x.Interactable))
+        {
+            var identity = PlanningElementIdentity(item);
+            if (map.ContainsKey(identity)) continue;
+            map[identity] = $"focus={item.Focused};toggle={item.ToggleState ?? string.Empty};selected={item.Selected?.ToString() ?? string.Empty};expand={item.ExpandCollapseState ?? string.Empty}";
+        }
+        return map;
+    }
+
+    private static string PlanningWindowKey(UiElementCandidate x)
+    {
+        var bx = (int)Math.Round(x.X / 24d);
+        var by = (int)Math.Round(x.Y / 24d);
+        var bw = (int)Math.Round(x.Width / 24d);
+        var bh = (int)Math.Round(x.Height / 24d);
+        return $"{x.ProcessId}|{x.AutomationId}|{x.ClassName}|{bx},{by},{bw},{bh}";
+    }
+
+    private static string PlanningElementIdentity(UiElementCandidate x)
+    {
+        var bx = (int)Math.Round(x.X / 24d);
+        var by = (int)Math.Round(x.Y / 24d);
+        var bw = (int)Math.Round(x.Width / 24d);
+        var bh = (int)Math.Round(x.Height / 24d);
+        var stableName = x.ControlType.ToLowerInvariant() is
+            "button" or "menuitem" or "listitem" or "treeitem" or "tabitem" or "hyperlink" or "checkbox" or "radiobutton"
+            ? NormalizePlanningName(x.Name)
+            : string.Empty;
+        return $"{x.ProcessId}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
+    }
+
+    private static string NormalizePlanningName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var normalized = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 72 ? normalized : normalized[..72];
     }
 
     private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
