@@ -22,7 +22,7 @@ v3 = 'src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs'
 replace_once(
     v3,
     """                        _stepBaseline = await _scanner.CaptureCandidatesAsync(420, _sessionCts.Token);\n                        if (!_sessionState.IsCurrent(generation)) return;\n                        _stepSystemBaseline = _systemContext.Capture();\n""",
-    """                        _stepSystemBaseline = _systemContext.Capture();\n                        if (!HasUsableForeground(_stepSystemBaseline))\n                        {\n                            ClearCurrentGuidanceV3();\n                            replan = true;\n                            continue;\n                        }\n                        _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);\n                        if (!_sessionState.IsCurrent(generation)) return;\n""",
+    """                        _stepSystemBaseline = _systemContext.Capture();\n                        if (!HasUsableForeground(_stepSystemBaseline))\n                        {\n                            StopWithMessage(\"現在操作しているアプリを確認できないため、操作結果を推測せず案内を停止しました。もう一度「案内」を押してください。\");\n                            return;\n                        }\n                        _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);\n                        if (!_sessionState.IsCurrent(generation)) return;\n""",
 )
 replace_once(
     v3,
@@ -92,7 +92,7 @@ new_method = r'''    private IReadOnlyList<Rect> CapturePasswordBounds(CaptureAr
             var captureRect = new Rect(captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height);
             var walker = TreeWalker.ControlViewWalker;
             var queue = new Queue<AutomationElement>();
-            var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition);
+            var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, System.Windows.Automation.Condition.TrueCondition);
 
             foreach (AutomationElement root in roots)
             {

@@ -168,9 +168,14 @@ public partial class MainWindow
                     }
                     else
                     {
-                        _stepBaseline = await _scanner.CaptureCandidatesAsync(420, _sessionCts.Token);
-                        if (!_sessionState.IsCurrent(generation)) return;
                         _stepSystemBaseline = _systemContext.Capture();
+                        if (!HasUsableForeground(_stepSystemBaseline))
+                        {
+                            StopWithMessage("現在操作しているアプリを確認できないため、操作結果を推測せず案内を停止しました。もう一度「案内」を押してください。");
+                            return;
+                        }
+                        _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
+                        if (!_sessionState.IsCurrent(generation)) return;
 
                         if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
                             retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
@@ -251,7 +256,10 @@ public partial class MainWindow
     {
         if (_currentTarget is not null)
         {
-            var fresh = await _scanner.RevalidateCandidateAsync(_currentTarget, cancellationToken);
+            var rootProcessId = _stepSystemBaseline?.ForegroundProcessId ?? 0;
+            var fresh = rootProcessId > 0
+                ? await _scanner.RevalidateCandidateAsync(_currentTarget, rootProcessId, cancellationToken)
+                : await _scanner.RevalidateCandidateAsync(_currentTarget, cancellationToken);
             if (fresh is null) return false;
             _currentTarget = fresh;
             _guidedBounds = fresh.Bounds;
@@ -303,6 +311,7 @@ public partial class MainWindow
                              (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
                               _currentTarget?.ControlType is "Edit" or "ComboBox");
         var targetBefore = _currentTarget;
+        var rootProcessId = systemBefore?.ForegroundProcessId ?? 0;
 
         await Task.Delay(action.Equals("double_click", StringComparison.OrdinalIgnoreCase) ? 900 : 450, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
@@ -310,7 +319,9 @@ public partial class MainWindow
         while (stopwatch.Elapsed < TimeSpan.FromSeconds(7.5))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var first = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            var first = rootProcessId > 0
+                ? await _scanner.CaptureCandidatesForProcessAsync(rootProcessId, 420, cancellationToken)
+                : [];
             var firstSystem = _systemContext.Capture();
             if (!HasStableTransitionV3(before, systemBefore, first, firstSystem, strong, allowFocusOnly, targetBefore, action))
             {
@@ -319,7 +330,9 @@ public partial class MainWindow
             }
 
             await Task.Delay(strong ? 650 : 400, cancellationToken);
-            var second = await _scanner.CaptureCandidatesAsync(420, cancellationToken);
+            var second = rootProcessId > 0
+                ? await _scanner.CaptureCandidatesForProcessAsync(rootProcessId, 420, cancellationToken)
+                : [];
             var secondSystem = _systemContext.Capture();
             if (HasStableTransitionV3(before, systemBefore, second, secondSystem, strong, allowFocusOnly, targetBefore, action)) return true;
         }
@@ -437,6 +450,8 @@ public partial class MainWindow
     private static bool HasSystemTransitionV3(SystemContextSnapshot? before, SystemContextSnapshot after)
     {
         if (before is null) return false;
+        // A transient failure to resolve the foreground window is not evidence that an action succeeded.
+        if (after.ForegroundProcessId <= 0 || string.IsNullOrWhiteSpace(after.ForegroundProcess)) return false;
         if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
         var beforeUrl = before.Browser?.Url ?? string.Empty;

@@ -16,7 +16,8 @@ export default {
     let bodyPromise = null;
     try {
       const url = new URL(request.url);
-      if (request.method === 'POST' && url.pathname === '/v1/guide') bodyPromise = request.clone().json();
+      if (request.method === 'POST' && (url.pathname === '/v1/guide' || url.pathname === '/v1/vision-guide'))
+        bodyPromise = request.clone().json();
     } catch { }
 
     const response = await base.fetch(request, env, ctx);
@@ -31,10 +32,30 @@ export default {
       return response;
     }
 
-    const override = preventBackgroundDone(body, decision);
+    const secretOverride = guardSecretClarification(decision);
+    if (secretOverride) return replaceJson(response, secretOverride);
+
+    const override = isStructuredGuide(request) ? preventBackgroundDone(body, decision) : null;
     return override ? replaceJson(response, override) : response;
   }
 };
+
+
+export function guardSecretClarification(decision) {
+  if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
+  const question = String(decision.question || decision.instruction || '');
+  const secret = /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|secret\s*key|cvv|cvc|セキュリティコード)/i;
+  if (!secret.test(question)) return null;
+  return {
+    status: 'not_found', targetId: null, action: 'none',
+    instruction: 'パスワード、暗証番号、認証コードなどの秘密情報はHelpSysへ入力しないでください。秘密情報そのものを聞かずに続けられる画面から案内をやり直します。',
+    question: null, key: null, confidence: 0
+  };
+}
+
+function isStructuredGuide(request) {
+  try { return new URL(request.url).pathname === '/v1/guide'; } catch { return false; }
+}
 
 function preventBackgroundDone(body, decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'done') return null;

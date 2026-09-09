@@ -1,4 +1,4 @@
-import guard from './reliability-v4-guard.js';
+import guard, { guardSecretClarification } from './reliability-v4-guard.js';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -31,3 +31,14 @@ const foreground = await guide({
 assert(foreground.status === 'done', 'foreground Excel should remain completed');
 
 console.log('reliability v4 guard self-test passed.');
+
+
+const secretClarify = guardSecretClarification({
+  status: 'clarify', question: 'パスワードを入力してください。', instruction: '', confidence: 0.9
+});
+assert(secretClarify?.status === 'not_found', 'secret clarification must be blocked');
+const normalClarify = guardSecretClarification({
+  status: 'clarify', question: 'どのフォルダーを開きたいですか？', instruction: '', confidence: 0.9
+});
+assert(normalClarify === null, 'ordinary clarification must remain allowed');
+console.log('reliability v4 secret-clarification self-test passed.');

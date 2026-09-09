@@ -87,15 +87,17 @@ export function buildWindowsTaskContext(goal, elements = [], history = [], syste
 
 function buildAppTask(app, goal, elements, systemContext, knowledge) {
   const running = isAppRunning(app, elements, systemContext);
+  const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
+  const foregroundApp = app.processes.some(process => process.toLowerCase() === foreground);
   const justOpen = isSimpleOpenGoal(goal, app);
-  if (running && justOpen) {
+  if (foregroundApp && justOpen) {
     return task('launch-app', knowledge, {
       status: 'done', targetId: null, action: 'none', instruction: `${app.display}はすでに開いています。`, question: null, key: null, confidence: 0.99
     }, false, null, app);
   }
 
-  if (running) {
-    return task('launch-app', `${knowledge}\n\n${app.display}は既に開いている。前面画面を確認して目的の続きへ進む。`, null, false, null, app, true);
+  if (foregroundApp) {
+    return task('launch-app', `${knowledge}\n\n${app.display}は現在前面で開いている。前面画面を確認して目的の続きへ進む。`, null, false, null, app, true);
   }
 
   const appTarget = findAppTarget(app, elements, systemContext);
