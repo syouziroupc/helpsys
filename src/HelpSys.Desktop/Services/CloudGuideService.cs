@@ -8,6 +8,7 @@ namespace HelpSys.Services;
 public sealed class CloudGuideService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const string CloudflareCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
     private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
     private const string InputPresentSentinel = "<input-present>";
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -26,6 +27,8 @@ public sealed class CloudGuideService : IDisposable
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
         _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CloudflareCompatibleUserAgent);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("x-helpsys-client", "desktop");
     }
 
     public async Task<QualityGuideDecision> PlanQualityAsync(
@@ -140,8 +143,6 @@ public sealed class CloudGuideService : IDisposable
         keyboardFocusable = x.KeyboardFocusable,
         focused = x.Focused,
         password = x.Password,
-        // The Worker already understands the `value` field. Preserve only the boolean fact that
-        // an input has content by using a fixed sentinel; never transmit the actual UIA value.
         value = x.Password || string.IsNullOrEmpty(x.Value) ? null : InputPresentSentinel,
         toggleState = x.ToggleState,
         selected = x.Selected,
