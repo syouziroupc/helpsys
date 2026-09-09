@@ -139,7 +139,11 @@ public sealed class CloudGuideService : IDisposable
         keyboardFocusable = x.KeyboardFocusable,
         focused = x.Focused,
         password = x.Password,
-        value = x.Password ? null : ShortValue(x.Value),
+        // UIA ValuePattern contents can contain names, addresses, email, customer data or tokens even
+        // when Windows does not mark the field as a password. Keep the raw value local and send only
+        // whether the field currently contains something. This is enough for state reasoning without
+        // transmitting arbitrary typed text.
+        valuePresent = !string.IsNullOrEmpty(x.Value),
         toggleState = x.ToggleState,
         selected = x.Selected,
         expandCollapseState = x.ExpandCollapseState,
