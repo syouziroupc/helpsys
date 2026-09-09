@@ -35,8 +35,9 @@ public sealed class ScreenCaptureService
 
         // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
         // Independently inspect the UIA trees of windows that intersect only the monitor being captured.
-        // If this bounded privacy scan cannot finish, fail closed instead of sending a partial image.
-        var passwordRedactionsBefore = CapturePasswordBounds(captureArea, cancellationToken);
+        // Password controls and populated Edit/ComboBox values are treated as private input. If this
+        // bounded scan cannot finish, fail closed instead of sending a partial image.
+        var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
         if (desktopDc == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャーを開始できませんでした。");
@@ -58,10 +59,10 @@ public sealed class ScreenCaptureService
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
             cancellationToken.ThrowIfCancellationRequested();
-            var passwordRedactionsAfter = CapturePasswordBounds(captureArea, cancellationToken);
+            var sensitiveRedactionsAfter = CaptureSensitiveInputBounds(captureArea, cancellationToken);
             var allRedactions = redactions
-                .Concat(passwordRedactionsBefore)
-                .Concat(passwordRedactionsAfter)
+                .Concat(sensitiveRedactionsBefore)
+                .Concat(sensitiveRedactionsAfter)
                 .ToArray();
 
             foreach (var rect in allRedactions)
@@ -139,7 +140,7 @@ public sealed class ScreenCaptureService
         return unchecked((int)pid) == _selfProcessId;
     }
 
-    private IReadOnlyList<Rect> CapturePasswordBounds(CaptureArea captureArea, CancellationToken cancellationToken)
+    private IReadOnlyList<Rect> CaptureSensitiveInputBounds(CaptureArea captureArea, CancellationToken cancellationToken)
     {
         try
         {
@@ -171,7 +172,7 @@ public sealed class ScreenCaptureService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (++visited > maxVisited || stopwatch.Elapsed > TimeSpan.FromSeconds(1.8))
-                    throw new InvalidOperationException("パスワード欄の安全確認を規定範囲内で完了できませんでした。");
+                    throw new InvalidOperationException("入力欄の安全確認を規定範囲内で完了できませんでした。");
 
                 var element = queue.Dequeue();
                 try
@@ -180,7 +181,7 @@ public sealed class ScreenCaptureService
                     if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
                     {
                         var bounds = current.BoundingRectangle;
-                        if (current.IsPassword && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
+                        if (ShouldRedactInput(element, current) && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
                     }
 
                     var child = walker.GetFirstChild(element);
@@ -201,8 +202,26 @@ public sealed class ScreenCaptureService
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("パスワード欄を安全に確認できないため、画面画像は送信しません。", ex);
+            throw new InvalidOperationException("入力欄を安全に確認できないため、画面画像は送信しません。", ex);
         }
+    }
+
+    private static bool ShouldRedactInput(AutomationElement element, AutomationElement.AutomationElementInformation current)
+    {
+        if (current.IsPassword) return true;
+        if (current.ControlType != ControlType.Edit && current.ControlType != ControlType.ComboBox) return false;
+
+        try
+        {
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
+                return !string.IsNullOrEmpty(valuePattern.Current.Value);
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+
+        // If Windows exposes an input control but its value cannot be inspected, do not invent that
+        // it contains sensitive data. Password fields were already handled fail-closed above.
+        return false;
     }
 
     private static BitmapSource ScaleToLimit(BitmapSource source)
@@ -227,7 +246,7 @@ public sealed class ScreenCaptureService
         if (right <= left || bottom <= top) return;
 
         if (!PatBlt(dc, left, top, right - left, bottom - top, Blackness))
-            throw new InvalidOperationException("パスワード欄を安全に黒塗りできないため、画面画像は送信しません。");
+            throw new InvalidOperationException("入力欄を安全に黒塗りできないため、画面画像は送信しません。");
     }
 
     private readonly record struct CaptureArea(int X, int Y, int Width, int Height);
