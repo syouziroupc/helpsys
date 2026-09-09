@@ -9,6 +9,7 @@ public partial class MainWindow
     private const double MinimumQualityTargetConfidence = 0.80;
     private const double MinimumQualityDoneConfidence = 0.90;
     private const double MinimumVisualOnlyTargetConfidence = 0.92;
+    private const double MinimumStructuredFallbackConfidence = 0.88;
 
     private async Task AdvanceGuideAsync()
     {
@@ -26,16 +27,13 @@ public partial class MainWindow
         _keyHint.Hide();
         GuideButton.IsEnabled = false;
 
-        // Quality is intentionally favored over minimum latency. The old planner used 40 s;
-        // fused screen inspection, privacy scanning and a larger visual reasoning request get
-        // a wider budget while stale-screen generation checks remain active throughout.
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
         planningCts.CancelAfter(TimeSpan.FromSeconds(70));
         var cancellationToken = planningCts.Token;
 
         try
         {
-            SetState("画面そのものを確認し、Windowsの構造情報と照合しています…", speak: false);
+            SetState("今の画面と操作できる場所を確認しています…", speak: false);
             var systemContext = _systemContext.Capture();
             if (!HasUsableForeground(systemContext))
             {
@@ -46,7 +44,14 @@ public partial class MainWindow
 
             if (!HasUsableForeground(systemContext))
             {
-                StopWithMessage("今操作している画面を確認できません。画面を見ずに推測して先へ進まないため、案内を停止しました。");
+                await Task.Delay(480, cancellationToken);
+                if (!_sessionState.IsCurrent(generation)) return;
+                systemContext = _systemContext.Capture();
+            }
+
+            if (!HasUsableForeground(systemContext))
+            {
+                StopWithMessage("操作中のウィンドウを特定できませんでした。操作したい画面を一度クリックしてから、もう一度「案内」を押してください。");
                 return;
             }
 
@@ -54,20 +59,34 @@ public partial class MainWindow
             var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
-            // Unlike the legacy route, an empty UIA tree is not a reason to guess or to skip
-            // the screen. The screenshot remains the primary evidence and UIA may be empty.
-            var frame = await CaptureQualityFrameAsync(candidates, cancellationToken);
+            ScreenCaptureFrame frame;
+            try
+            {
+                frame = await CaptureQualityFrameAsync(candidates, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception captureError)
+            {
+                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                StopWithMessage($"画面画像は取得できませんでした。Windows上の操作対象でも次の場所を確定できませんでした: {captureError.Message}");
+                return;
+            }
+
             if (!_sessionState.IsCurrent(generation)) return;
 
             var afterCaptureContext = _systemContext.Capture();
             if (HasSystemTransitionV3(systemContext, afterCaptureContext))
             {
-                StopWithMessage("画面を確認している途中で操作対象が切り替わりました。古い画像やUI情報で先へ進まず、案内を破棄しました。");
+                StopWithMessage("確認中に操作画面が切り替わりました。古い画面は使わず、現在の画面からやり直します。もう一度「案内」を押してください。");
                 return;
             }
 
             if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-            SetState("画面画像を主な根拠にして、構造情報と照らし合わせながら次の1手を考えています…", speak: false);
+            SetState("画面とWindowsの操作情報を照合して、次の1手を決めています…", speak: false);
 
             QualityGuideDecision quality;
             try
@@ -86,6 +105,7 @@ public partial class MainWindow
             }
             catch (GuideServiceException error)
             {
+                if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
                 return;
             }
@@ -93,7 +113,7 @@ public partial class MainWindow
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("判断が終わる前に画面が変わりました。返答速度より現在画面の正しさを優先し、古い判断を破棄しました。");
+                StopWithMessage("判断中に画面が変わりました。古い判断は使いません。現在の画面で、もう一度「案内」を押してください。");
                 return;
             }
 
@@ -101,7 +121,7 @@ public partial class MainWindow
             {
                 if (!quality.ScreenConfirmed || quality.Confidence < MinimumQualityDoneConfidence || string.IsNullOrWhiteSpace(quality.VisualEvidence))
                 {
-                    StopWithMessage("画面上で目的達成を確認できていないため、完了扱いにしませんでした。");
+                    StopWithMessage("目的達成を画面上で確認できていないため、完了扱いにはしません。現在の画面で案内を続けてください。");
                     return;
                 }
 
@@ -121,8 +141,9 @@ public partial class MainWindow
                 !quality.ScreenConfirmed ||
                 quality.Confidence < MinimumQualityTargetConfidence)
             {
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 StopWithMessage(string.IsNullOrWhiteSpace(quality.Instruction)
-                    ? "画面画像とWindowsの構造情報を照合しましたが、次の操作を十分な確度で決められませんでした。推測では先へ進みません。"
+                    ? "画像では次の操作を確定できず、Windows上の操作対象でも一致する場所が見つかりませんでした。"
                     : quality.Instruction);
                 return;
             }
@@ -150,14 +171,16 @@ public partial class MainWindow
 
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                StopWithMessage("画面上で次の操作は確認できましたが、実際に案内する対象を確定できませんでした。推測では枠を出しません。");
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                StopWithMessage("次の操作は候補になりましたが、実際に案内する場所を確定できませんでした。");
                 return;
             }
 
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
             if (target is null || !target.Interactable || target.Bounds.IsEmpty)
             {
-                StopWithMessage("画像で見えている場所とWindowsの操作対象を一致させられませんでした。誤った場所を案内しないため停止しました。");
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                StopWithMessage("画像の候補と、現在操作できるWindowsの場所を一致させられませんでした。");
                 return;
             }
 
@@ -165,12 +188,13 @@ public partial class MainWindow
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("案内を表示する直前に画面が変わりました。古い青枠を表示せず破棄しました。");
+                StopWithMessage("案内を表示する直前に画面が変わりました。古い青枠は表示しません。もう一度「案内」を押してください。");
                 return;
             }
             if (freshTarget is null)
             {
-                StopWithMessage("画面画像で確認した場所が表示直前には無くなっていました。古い位置を使わず停止しました。");
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                StopWithMessage("案内しようとした場所が表示直前に変わりました。現在の場所を確定できませんでした。");
                 return;
             }
 
@@ -179,16 +203,16 @@ public partial class MainWindow
         catch (OperationCanceledException)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-                StopWithMessage("高精度な画面確認が規定時間内に完了しませんでした。情報を減らして推測するのではなく、現在画面からやり直してください。");
+                StopWithMessage("画面確認が規定時間内に終わりませんでした。現在の画面で、もう一度「案内」を押してください。");
         }
         catch (InvalidOperationException ex)
         {
             if (_sessionState.IsCurrent(generation))
-                StopWithMessage($"画面そのものを安全に確認できないため、UI情報だけで推測せず案内を停止しました: {ex.Message}");
+                StopWithMessage($"現在の操作対象を確定できませんでした: {ex.Message}");
         }
         catch (Exception ex)
         {
-            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面と構造情報の照合中に問題が起きたため、推測せず停止しました: {ex.Message}");
+            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面と操作情報の照合中に問題が起きました: {ex.Message}");
         }
         finally
         {
@@ -197,11 +221,69 @@ public partial class MainWindow
         }
     }
 
+    private async Task<bool> TryStructuredFallbackAsync(
+        IReadOnlyList<UiElementCandidate> previousCandidates,
+        SystemContextSnapshot expectedContext,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
+        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+
+        SetState("画像だけでは確定できなかったため、現在操作できるWindowsの部品を再確認しています…", speak: false);
+
+        IReadOnlyList<UiElementCandidate> candidates;
+        try
+        {
+            candidates = await _scanner.CaptureCandidatesForProcessAsync(expectedContext.ForegroundProcessId, 420, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return false; }
+
+        if (!_sessionState.IsCurrent(generation) || candidates.Count == 0) return false;
+        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+
+        GuideDecision fallback;
+        try
+        {
+            fallback = await _cloudGuide.PlanAsync(_activeRequest, candidates, _history, expectedContext, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return false; }
+
+        if (!_sessionState.IsCurrent(generation) || HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+
+        if (fallback.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(fallback.Question))
+        {
+            WaitForClarification(fallback.Question, generation);
+            return true;
+        }
+
+        // Structured fallback is intentionally narrower than visual guidance: it may point only
+        // to a concrete, current UI Automation node. It never declares completion, invents image
+        // coordinates, or emits targetless keyboard actions without visual confirmation.
+        if (!fallback.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
+            fallback.Confidence < MinimumStructuredFallbackConfidence ||
+            string.IsNullOrWhiteSpace(fallback.TargetId))
+            return false;
+
+        var target = candidates.FirstOrDefault(x => string.Equals(x.Id, fallback.TargetId, StringComparison.Ordinal));
+        if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty) return false;
+
+        var freshTarget = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
+        if (!_sessionState.IsCurrent(generation) || freshTarget is null) return false;
+        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+
+        ShowStructuredTarget(fallback, freshTarget, candidates, expectedContext, generation);
+        return true;
+    }
+
     private async Task<ScreenCaptureFrame> CaptureQualityFrameAsync(
         IReadOnlyList<UiElementCandidate> candidates,
         CancellationToken cancellationToken)
     {
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
+        _speechInput.HideOverlay();
         _overlay.Hide();
         _keyHint.Hide();
         var previousOpacity = Opacity;
@@ -264,9 +346,6 @@ public partial class MainWindow
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;
         _guidedBounds = bounds;
-        // A >=0.92 fused screen decision may intentionally refer to a custom-rendered
-        // control with no useful UIA node. Mark this exact instruction as already visually
-        // validated so the live watcher does not immediately discard it merely for lacking UIA.
         _validatedVisionInstruction = instruction;
         _overlay.ShowTarget(bounds, instruction);
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction))
