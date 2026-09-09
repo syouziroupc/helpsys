@@ -7,6 +7,8 @@ on:
       - "src/HelpSys.Education/**"
       - "worker/education.js"
       - "worker/education-selftest.mjs"
+      - "worker/reliability-v4-guard.js"
+      - "worker/reliability-v4-selftest.mjs"
       - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
   pull_request:
@@ -15,6 +17,8 @@ on:
       - "HelpSys.sln"
       - "worker/education.js"
       - "worker/education-selftest.mjs"
+      - "worker/reliability-v4-guard.js"
+      - "worker/reliability-v4-selftest.mjs"
       - "wrangler.education.jsonc"
       - ".github/workflows/education-smoke.yml"
 
@@ -31,7 +35,10 @@ jobs:
         run: |
           node --check worker/education.js
           node --check worker/education-selftest.mjs
+          node --check worker/reliability-v4-guard.js
+          node --check worker/reliability-v4-selftest.mjs
           node worker/education-selftest.mjs
+          node worker/reliability-v4-selftest.mjs
 
       - name: Restore and build
         run: |
@@ -95,7 +102,7 @@ jobs:
             if ($null -eq $window) { throw 'HelpSys Education top-level window was not exposed to UI Automation.' }
 
             $names = Get-Names $window
-            foreach ($required in @('HelpSys Education','教育','練習','テスト','全体進捗','用語集','0-1. パソコンは何をする道具か','0. はじめの一歩　難易度 1/5・はじめて')) {
+            foreach ($required in @('HelpSys Education','教育','練習','テスト','全体進捗','用語集','0-1. パソコンは何をする道具か','0. はじめの一歩　難易度 1/5・はじめて','教育AIは接続済みです。練習時だけ、段階的なヒントを利用できます。')) {
               if (-not ($names -contains $required)) { Save-Screenshot 'artifacts/education-failure.png'; throw "Education UI missing required element: $required" }
             }
 
