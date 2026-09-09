@@ -17,6 +17,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private int _scopeProcessId;
     private int _queued;
     private long _lastSignalTicks;
+    private long _scopeRequestVersion;
     private bool _focusSubscribed;
     private bool _structureSubscribed;
     private bool _disposed;
@@ -56,19 +57,29 @@ public sealed class GuidanceStateWatcher : IDisposable
 
     public Task SetForegroundProcessAsync(int processId, CancellationToken cancellationToken = default)
     {
-        if (_disposed || processId == _scopeProcessId) return Task.CompletedTask;
-        return Task.Run(() => SetForegroundProcess(processId, cancellationToken), cancellationToken);
+        if (_disposed) return Task.CompletedTask;
+
+        lock (_subscriptionGate)
+        {
+            if (_disposed) return Task.CompletedTask;
+            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed))
+                return Task.CompletedTask;
+        }
+
+        var requestVersion = Interlocked.Increment(ref _scopeRequestVersion);
+        return Task.Run(() => SetForegroundProcess(processId, requestVersion, cancellationToken), cancellationToken);
     }
 
-    private void SetForegroundProcess(int processId, CancellationToken cancellationToken)
+    private void SetForegroundProcess(int processId, long requestVersion, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (_disposed) return;
+        if (_disposed || requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
 
         lock (_subscriptionGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (processId == _scopeProcessId) return;
+            if (_disposed || requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
+            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed)) return;
 
             RemoveStructureSubscriptionLocked();
             _scopeProcessId = processId;
@@ -82,6 +93,7 @@ public sealed class GuidanceStateWatcher : IDisposable
                 foreach (AutomationElement candidate in candidates)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
                     try
                     {
                         var current = candidate.Current;
@@ -98,11 +110,20 @@ public sealed class GuidanceStateWatcher : IDisposable
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
 
+            if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
+
+            // A just-launched application can expose its process before its top-level window.
+            // Keep the PID but leave the subscription marked false so the next heartbeat retries.
             if (root is null) return;
 
             try
             {
                 Automation.AddStructureChangedEventHandler(root, TreeScope.Subtree, _structureHandler);
+                if (requestVersion != Volatile.Read(ref _scopeRequestVersion))
+                {
+                    try { Automation.RemoveStructureChangedEventHandler(root, _structureHandler); } catch { }
+                    return;
+                }
                 _structureRoot = root;
                 _structureSubscribed = true;
             }
@@ -193,6 +214,7 @@ public sealed class GuidanceStateWatcher : IDisposable
         var pump = _pumpTask;
         _cts = null;
         _pumpTask = null;
+        Interlocked.Increment(ref _scopeRequestVersion);
         if (cts is null) return;
 
         cts.Cancel();
