@@ -63,20 +63,6 @@ jobs:
 
           $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
           Start-Sleep -Seconds 3
-          $shell = New-Object -ComObject WScript.Shell
-
-          function Activate-SmokeTarget {
-            for ($i = 0; $i -lt 12; $i++) {
-              if ($shell.AppActivate('HelpSys Smoke Target')) {
-                Start-Sleep -Milliseconds 450
-                return
-              }
-              Start-Sleep -Milliseconds 250
-            }
-            throw 'Could not activate the actual HelpSys Smoke Target window.'
-          }
-
-          Activate-SmokeTarget
 
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
           $process = Start-Process $exe -PassThru
@@ -145,8 +131,6 @@ jobs:
             $valuePattern = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
             $valuePattern.SetValue('open the test target')
 
-            Activate-SmokeTarget
-
             $invokePattern = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
             $invokePattern.Invoke()
             Start-Sleep -Seconds 10
@@ -162,6 +146,11 @@ jobs:
             }
             if ($diagnostics.hasScreenshot -ne $true) {
               throw 'Normal HelpSys planning request did not include the current screenshot.'
+            }
+            if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
+              Write-Host '--- mock quality-first diagnostics ---'
+              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
+              throw 'Quality-first scan did not use the dedicated smoke work surface.'
             }
 
             $names = @(Get-HelpSysNames)
