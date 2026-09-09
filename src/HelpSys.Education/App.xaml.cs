@@ -1,11 +1,17 @@
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using System.Windows;
 
 namespace HelpSys.Education;
 
 public partial class App : Application
 {
+    private const int SwRestore = 9;
+    private Mutex? _singleInstanceMutex;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         Curriculum.Validate();
@@ -18,9 +24,47 @@ public partial class App : Application
             return;
         }
 
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, name: @"Local\HelpSys.Education.SingleInstance", createdNew: out var createdNew);
+        if (!createdNew)
+        {
+            TryActivateExistingInstance();
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
         MainWindow = new MainWindow();
         MainWindow.Show();
+    }
+
+    private static void TryActivateExistingInstance()
+    {
+        try
+        {
+            var currentId = Environment.ProcessId;
+            var processName = Process.GetCurrentProcess().ProcessName;
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                using (process)
+                {
+                    if (process.Id == currentId) continue;
+                    var hwnd = process.MainWindowHandle;
+                    if (hwnd == IntPtr.Zero) continue;
+                    ShowWindow(hwnd, SwRestore);
+                    SetForegroundWindow(hwnd);
+                    break;
+                }
+            }
+        }
+        catch { }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try { _singleInstanceMutex?.ReleaseMutex(); } catch (ApplicationException) { }
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
+        base.OnExit(e);
     }
 
     private static void RunProgressRecoverySelfTest()
@@ -32,8 +76,6 @@ public partial class App : Application
             store.MarkEducationCompleted("self-test");
             store.MarkPracticeCompleted("self-test");
             store.RecordQuizResult("self-test", 100);
-            // Rotate the final valid state into the backup as well, then deliberately
-            // damage only the primary file to verify backup recovery.
             store.Save();
 
             if (!File.Exists(store.BackupPathForSelfTest))
@@ -53,4 +95,12 @@ public partial class App : Application
             catch { }
         }
     }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 }
