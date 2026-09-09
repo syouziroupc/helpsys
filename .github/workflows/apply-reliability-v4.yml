@@ -4,7 +4,7 @@ on:
   push:
     branches: [audit/reliability-v4-deep]
     paths:
-      - "tools/apply_reliability_v4_followup.py"
+      - "tools/apply_reliability-v4-final.py"
       - ".github/workflows/apply-reliability-v4.yml"
 
 permissions:
@@ -27,8 +27,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Apply subtree follow-up
-        run: python tools/apply_reliability_v4_followup.py
+      - name: Apply final hardening
+        run: python tools/apply_reliability_v4_final.py
 
       - name: Verify Worker
         run: |
@@ -53,5 +53,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if (git diff --cached --quiet) { throw 'Patch produced no changes.' }
-          git commit -m "Reliability v4: scope planning to foreground subtree"
+          git commit -m "Reliability v4: harden verification and Vision privacy"
           git push origin HEAD:audit/reliability-v4-deep
