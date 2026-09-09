@@ -130,9 +130,8 @@ try {
   }
   Write-Host 'FOREGROUND_TARGET_IDENTITY=PASS'
 
-  $jsonText = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8
-  if ($jsonText.Contains('PRIVATE-PROBE-847251')) { throw 'Raw populated input value leaked into structured planner diagnostics.' }
-  if ($jsonText.Contains('PRIVATE-WINDOW-TITLE-319751')) { throw 'Raw foreground window title leaked into structured planner diagnostics.' }
+  if ($initial.rawContainsPrivateInput -eq $true) { throw 'Raw populated input value crossed the planner API boundary.' }
+  if ($initial.rawContainsPrivateWindowTitle -eq $true) { throw 'Raw foreground/UIA window title crossed the planner API boundary.' }
   $probe = @($initial.eligible | Where-Object { $_.automationId -eq 'ProbeInput' }) | Select-Object -First 1
   if ($null -eq $probe) { throw 'ProbeInput was not present in planner UIA evidence.' }
   if ($probe.value -ne '<input-present>') { throw "Planner did not receive the privacy-safe populated marker. value=$($probe.value)" }
@@ -180,8 +179,6 @@ try {
   }
   finally { $bitmap.Dispose() }
 
-  # A title-only update must not be mistaken for a new modal/window. This is a pure target-side
-  # change triggered without mouse/keyboard input so the user-action observer cannot explain it.
   $titleBaseline = Request-Count
   Set-Content 'artifacts/virtual-target-title-flip.flag' '1' -Encoding ascii
   if (-not (Wait-FlagConsumed 'artifacts/virtual-target-title-flip.flag')) { throw 'Virtual target did not consume title flip command.' }
@@ -191,7 +188,6 @@ try {
   if ($afterTitle -ne $titleBaseline) { throw 'Title-only window text change incorrectly invalidated otherwise stable guidance.' }
   Write-Host 'TITLE_ONLY_STABILITY=PASS'
 
-  # A state-only checkbox change is semantically meaningful even though control topology is the same.
   $toggleBaseline = Request-Count
   Set-Content 'artifacts/virtual-target-toggle.flag' '1' -Encoding ascii
   if (-not (Wait-FlagConsumed 'artifacts/virtual-target-toggle.flag')) { throw 'Virtual target did not consume toggle command.' }
@@ -201,7 +197,6 @@ try {
   if ($semanticHistory.Count -lt 1) { throw 'State-only checkbox change replanned without semantic_state_changed history.' }
   Write-Host 'SEMANTIC_STATE_REPLAN=PASS'
 
-  # A new modal in the SAME PROCESS must still invalidate guidance. Process-id checks alone are not enough.
   $modalBaseline = Request-Count
   Set-Content 'artifacts/virtual-target-open-modal.flag' '1' -Encoding ascii
   if (-not (Wait-FlagConsumed 'artifacts/virtual-target-open-modal.flag')) { throw 'Virtual target did not consume modal command.' }
@@ -219,8 +214,6 @@ try {
   $afterModalCloseBaseline = Request-Count
   $postClose = Wait-RequestAfter $afterModalCloseBaseline 10
   if ($null -eq $postClose) {
-    # Closing may be observed before the baseline read on a fast runner. It is enough that the modal
-    # is gone; give the live planner a short settling interval before the physical off-route probe.
     Start-Sleep -Seconds 2
   }
 
