@@ -50,7 +50,7 @@ public partial class MainWindow
 
     private void UpdateCommanderUi()
     {
-        if (CommanderButton is null) return;
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished || CommanderButton is null) return;
         CommanderButton.Content = !_commander.Enabled
             ? "コマンダー OFF"
             : _commander.Listening ? "コマンダー ●" : "コマンダー";
@@ -82,6 +82,7 @@ public partial class MainWindow
         string? command = null;
         try
         {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
             ExpandAssistant();
 
             if (_planning || _verifyingAction)
@@ -99,6 +100,15 @@ public partial class MainWindow
             // microphone for one normal dictation turn.
             await Task.Delay(2300);
 
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            if (_voiceCts is not null)
+            {
+                // A user may manually start voice input during the acknowledgement. Never
+                // steal the same microphone; foreground manual capture keeps priority.
+                SetState("別の音声入力が動いているため、コマンダーはマイクを取りません。", speak: false);
+                return;
+            }
+
             localVoiceCts = new CancellationTokenSource();
             _voiceCts = localVoiceCts;
             VoiceButton.Content = "停止";
@@ -106,29 +116,36 @@ public partial class MainWindow
             SetState("コマンダーが用件を聞いています…", speak: false);
 
             command = await _speechInput.RecognizeOnceAsync(localVoiceCts.Token);
-            if (string.IsNullOrWhiteSpace(command) && !localVoiceCts.IsCancellationRequested)
+            if (string.IsNullOrWhiteSpace(command) && !localVoiceCts.IsCancellationRequested &&
+                !Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 SetState("用件を聞き取れませんでした。もう一度「ねえコマンダー」と呼ぶか、文字で入力してください。", speak: true);
         }
         catch (OperationCanceledException)
         {
-            SetState("コマンダーの音声入力を停止しました。", speak: false);
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                SetState("コマンダーの音声入力を停止しました。", speak: false);
         }
         catch (Exception ex)
         {
-            SetState($"コマンダーの音声入力を開始できません: {ex.Message}", speak: true);
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                SetState($"コマンダーの音声入力を開始できません: {ex.Message}", speak: true);
         }
         finally
         {
             if (ReferenceEquals(_voiceCts, localVoiceCts)) _voiceCts = null;
             try { localVoiceCts?.Dispose(); } catch { }
-            VoiceButton.Content = "音声";
-            GuideButton.IsEnabled = !_planning;
             _commander.CompleteWakeInteraction();
             Interlocked.Exchange(ref _commanderWakeBusy, 0);
-            UpdateCommanderUi();
+
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+            {
+                VoiceButton.Content = "音声";
+                GuideButton.IsEnabled = !_planning;
+                UpdateCommanderUi();
+            }
         }
 
-        if (string.IsNullOrWhiteSpace(command)) return;
+        if (string.IsNullOrWhiteSpace(command) || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
         RequestBox.Text = command.Trim();
         RequestBox.CaretIndex = RequestBox.Text.Length;
         SetState($"コマンダー: 「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
