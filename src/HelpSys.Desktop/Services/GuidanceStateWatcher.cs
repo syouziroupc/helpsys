@@ -295,8 +295,10 @@ public sealed class GuidanceStateWatcher : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
-        Stop();
+        // Mark disposed first so a concurrent SetForegroundProcessAsync cannot install a new
+        // subscription between Stop() removing the old handlers and the final dispose.
         _disposed = true;
+        Stop();
         _signal.Dispose();
     }
 }
