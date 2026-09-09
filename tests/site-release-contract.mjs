@@ -23,7 +23,7 @@ const NORMAL_ROUTE = '/download';
 const EDUCATION_ROUTE = '/download/education';
 const NORMAL_ALIAS = 'HelpSys-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
-const NORMAL_VERSIONED = 'HelpSys-Reliability-v6-win-x64.zip';
+const NORMAL_VERSIONED = 'HelpSys-Reliability-v7-win-x64.zip';
 const EDUCATION_VERSIONED = 'HelpSys-Education-v2.2-preview-win-x64.zip';
 const NORMAL_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${NORMAL_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
@@ -54,7 +54,7 @@ assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not co
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing from the public site.');
 
 assert(normalRelease.includes(NORMAL_ALIAS), 'Normal release workflow does not publish the stable alias used by /download.');
-assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v6 package.');
+assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v7 package.');
 assert(normalRelease.includes('Release asset missing after publish'), 'Normal release workflow does not verify its published assets.');
 assert(educationRelease.includes(EDUCATION_ALIAS), 'Education release workflow does not publish the stable alias used by /download/education.');
 assert(educationRelease.includes(EDUCATION_VERSIONED), 'Education release workflow lost the traceable v2.2 package.');
