@@ -104,8 +104,8 @@ public sealed class UserActionObserver : IDisposable
         {
             lock (_keyStateGate)
             {
-                if (!_keyDownSnapshots.Remove(key, out observation!))
-                    observation = CaptureObservation(key);
+                if (_keyDownSnapshots.Remove(key, out var stored)) observation = stored;
+                else observation = CaptureObservation(key);
             }
         }
         else
