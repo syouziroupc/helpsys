@@ -10,6 +10,7 @@
     "binding": "AI"
   },
   "vars": {
-    "HELPSYS_MODEL": "@cf/google/gemma-4-26b-a4b-it"
+    "HELPSYS_MODEL": "@cf/zai-org/glm-4.7-flash",
+    "HELPSYS_QUALITY_MODEL": "@cf/zai-org/glm-5.3-flash"
   }
 }
