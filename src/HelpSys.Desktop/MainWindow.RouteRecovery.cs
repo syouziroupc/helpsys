@@ -8,6 +8,31 @@ public partial class MainWindow
 {
     private const int MaximumRouteRecoveryAttempts = 3;
 
+    private async Task RecoverFromObserverFailureAsync(string routeIssue)
+    {
+        if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
+        var generation = _sessionState.Generation;
+        if (!_sessionState.IsCurrent(generation)) return;
+
+        ClearCurrentGuidanceV3();
+        using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
+        recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+        try
+        {
+            await TryRouteRecoveryAsync(routeIssue, generation, recoveryCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (_sessionState.IsCurrent(generation))
+                WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation);
+        }
+        catch
+        {
+            if (_sessionState.IsCurrent(generation))
+                WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation);
+        }
+    }
+
     private async Task<bool> TryRouteRecoveryAsync(
         string routeIssue,
         long generation,
