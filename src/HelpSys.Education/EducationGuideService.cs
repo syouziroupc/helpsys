@@ -43,6 +43,9 @@ public sealed class EducationGuideService : IDisposable
                         : throw new InvalidOperationException("教育AIから有効な説明を受け取れませんでした。");
                 }
 
+                if ((int)response.StatusCode == 429)
+                    throw new InvalidOperationException("教育AIの利用が集中しています。連続再送はせず、制限解除後にもう一度試してください。");
+
                 var error = new InvalidOperationException($"教育AIが応答できませんでした ({(int)response.StatusCode})。");
                 if (!IsTransient(response.StatusCode) || attempt > 0) throw error;
                 lastError = error;
@@ -85,7 +88,7 @@ public sealed class EducationGuideService : IDisposable
         return request;
     }
 
-    private static bool IsTransient(HttpStatusCode statusCode) => (int)statusCode is 408 or 429 or 500 or 502 or 503 or 504;
+    private static bool IsTransient(HttpStatusCode statusCode) => (int)statusCode is 408 or 500 or 502 or 503 or 504;
 
     public void Dispose() => _http.Dispose();
 }
