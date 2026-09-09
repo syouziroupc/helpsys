@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check worker/index.js && node --check worker/deliberation-guard.js",
-    "test": "node worker/selftest.mjs"
+    "check": "node --check worker/index.js && node --check worker/deliberation-guard.js && node --check worker/reliability-v4-guard.js",
+    "test": "node worker/selftest.mjs && node worker/reliability-v4-selftest.mjs",
+    "dev:education": "wrangler dev --config wrangler.education.jsonc",
+    "deploy:education": "wrangler deploy --config wrangler.education.jsonc",
+    "test:education": "node --check worker/education.js && node --check worker/education-selftest.mjs && node worker/education-selftest.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

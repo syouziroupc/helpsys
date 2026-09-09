@@ -7,42 +7,46 @@ HelpSys Education は通常版 HelpSys とは別の Windows アプリとして�
 - **通常版 HelpSys**: 現在のPC状態から、目的達成のための正しい次の1手を案内する。
 - **HelpSys Education**: パソコン操作そのものを段階的に学習・練習・テストする。
 
-通常版のUIへ教育モードを埋め込まず、別実行ファイル `HelpSys.Education.exe` とします。将来、画面認識・操作検証の安定した部分だけを共有ライブラリへ切り出します。
+通常版のUIへ教育モードを埋め込まず、別実行ファイル `HelpSys.Education.exe` とします。
 
 ## 学習フロー
 
-```text
-単元を選ぶ
-   ↓
-教育
-   ↓
-練習
-   ↓
-テスト
-   ↓
-合格 → 次の単元
+`教育 → 練習 → テスト → 合格 → 次の単元`
+
+### 練習教材
+
+すべてを自作せず、既存の良質な教材を利用できる単元は外部教材を開きます。初期のタイピング教材は `https://www.e-typing.ne.jp/` です。マウス・Windows・ファイル操作などは、必要に応じて専用の安全な疑似UIや練習フォルダーを追加します。
+
+## 教育AI v1
+
+教育AIは通常版HelpSys Workerとは別の `helpsys-education` Workerとして定義します。
+
+- `education`: 初心者向けの説明・質問回答
+- `practice`: 3段階ヒント。最初から答えを出さず、必要なときだけ具体化する
+- `test`: **AIを呼び出さない**。答え・ヒントを構造的に遮断する
+- 秘密情報をHelpSysへ送らせる出力は最終ガードで拒否する
+- ベースモデルは `HELPSYS_EDUCATION_MODEL` で通常版と独立して交換可能
+
+ローカル:
+
+```powershell
+npm run test:education
+npm run dev:education
 ```
 
-### 教育
+Cloudflareへ別Workerとしてデプロイ:
 
-操作の意味と方法を説明します。ここでは答えを隠しません。
+```powershell
+npm run deploy:education
+```
 
-### 練習
+デスクトップEducationアプリから接続するときだけ次を設定します。未設定でも教材・進捗・外部練習サイトは利用できます。
 
-操作を実際に繰り返します。すべての練習画面を自作する必要はありません。
+```powershell
+$env:HELPSYS_EDUCATION_API_BASE="https://<education-worker>"
+```
 
-- タイピング → 外部タイピング教材を開く
-- マウス操作 → 将来、専用の安全な疑似UIを用意
-- Windows操作 → 疑似UIの後、メモ帳など安全な実アプリで練習
-- ファイル操作 → 専用練習フォルダーで練習
-
-外部教材はカリキュラム側に固定URLとして登録し、既定ブラウザで開きます。
-
-初期のタイピング教材は `https://www.e-typing.ne.jp/` を使用します。
-
-### テスト
-
-原則として途中の答えを表示しません。初期版は合格を手動記録しますが、次段階では通常版 HelpSys の安定した画面認識・操作検証ロジックを共有し、操作過程と最終状態から自動採点します。
+APIキーを設定する場合はWorker側 `HELPSYS_EDUCATION_API_KEY` とWindows側の同名環境変数を合わせます。
 
 ## 初期カリキュラム
 
@@ -53,23 +57,14 @@ HelpSys Education は通常版 HelpSys とは別の Windows アプリとして�
 5. ファイルとフォルダー
 6. Webブラウザ
 
-最初から全単元の専用練習環境を作らず、既存の良質な教材を利用できる単元は外部教材を開きます。
-
 ## 進捗
 
-各単元について以下をローカル保存します。
-
-- 教育完了
-- 練習完了
-- テスト合格
-
-保存先はユーザーの LocalApplicationData 配下 `HelpSys.Education/progress.json` です。
+各単元の教育完了・練習完了・テスト合格を LocalApplicationData 配下 `HelpSys.Education/progress.json` へ保存します。
 
 ## 今後
 
-- 練習専用の疑似デスクトップ／疑似ファイル操作画面
 - 通常版の認識・検証エンジンを共有ライブラリ化
+- 実画面を使う練習の操作検出
 - テスト自動採点
 - 誤操作回数、ヒント利用回数、所要時間の記録
 - 苦手操作の自動復習
-- 教育用AIモデル／プロンプトを通常版とは分離

@@ -4,100 +4,42 @@
         Title="HelpSys Education" Width="960" Height="700" MinWidth="840" MinHeight="600"
         WindowStartupLocation="CenterScreen" Background="#F5F6F8">
     <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="Margin" Value="0,0,8,0"/>
-            <Setter Property="FontSize" Value="14"/>
-        </Style>
-        <Style x:Key="StageButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="MinWidth" Value="105"/>
-        </Style>
-        <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="White"/>
-            <Setter Property="CornerRadius" Value="12"/>
-            <Setter Property="Padding" Value="26"/>
-            <Setter Property="BorderBrush" Value="#DFE3E8"/>
-            <Setter Property="BorderThickness" Value="1"/>
-        </Style>
+        <Style TargetType="Button"><Setter Property="Padding" Value="16,9"/><Setter Property="Margin" Value="0,0,8,0"/><Setter Property="FontSize" Value="14"/></Style>
+        <Style x:Key="StageButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="MinWidth" Value="105"/></Style>
+        <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="White"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="26"/><Setter Property="BorderBrush" Value="#DFE3E8"/><Setter Property="BorderThickness" Value="1"/></Style>
     </Window.Resources>
-
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="285"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
-
+        <Grid.ColumnDefinitions><ColumnDefinition Width="285"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border Grid.Column="0" Background="#20242B" Padding="20">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,18">
-                    <TextBlock Text="HelpSys Education" Foreground="White" FontSize="23" FontWeight="SemiBold"/>
-                    <TextBlock Text="学ぶ → 練習 → テスト" Foreground="#BCC3CE" Margin="0,6,0,0"/>
-                </StackPanel>
-                <ListBox x:Name="LessonList" Background="Transparent" BorderThickness="0"
-                         Foreground="White" DisplayMemberPath="Title"
-                         SelectionChanged="LessonList_SelectionChanged"/>
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,18"><TextBlock Text="HelpSys Education" Foreground="White" FontSize="23" FontWeight="SemiBold"/><TextBlock Text="学ぶ → 練習 → テスト" Foreground="#BCC3CE" Margin="0,6,0,0"/></StackPanel>
+                <ListBox x:Name="LessonList" Background="Transparent" BorderThickness="0" Foreground="White" DisplayMemberPath="Title" SelectionChanged="LessonList_SelectionChanged"/>
             </DockPanel>
         </Border>
-
         <Grid Grid.Column="1" Margin="28">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-
-            <StackPanel Grid.Row="0">
-                <TextBlock x:Name="LessonTitle" FontSize="30" FontWeight="SemiBold" Foreground="#1E2329"/>
-                <TextBlock x:Name="LessonSummary" FontSize="15" Foreground="#626A73" Margin="0,7,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
-
-            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,22,0,18">
-                <Button Style="{StaticResource StageButton}" Content="教育" Click="ShowEducation_Click"/>
-                <Button Style="{StaticResource StageButton}" Content="練習" Click="ShowPractice_Click"/>
-                <Button Style="{StaticResource StageButton}" Content="テスト" Click="ShowTest_Click"/>
-            </StackPanel>
-
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <StackPanel Grid.Row="0"><TextBlock x:Name="LessonTitle" FontSize="30" FontWeight="SemiBold" Foreground="#1E2329"/><TextBlock x:Name="LessonSummary" FontSize="15" Foreground="#626A73" Margin="0,7,0,0" TextWrapping="Wrap"/></StackPanel>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,22,0,18"><Button Style="{StaticResource StageButton}" Content="教育" Click="ShowEducation_Click"/><Button Style="{StaticResource StageButton}" Content="練習" Click="ShowPractice_Click"/><Button Style="{StaticResource StageButton}" Content="テスト" Click="ShowTest_Click"/></StackPanel>
             <Grid Grid.Row="2">
-                <Border x:Name="EducationPanel" Style="{StaticResource Card}">
-                    <StackPanel>
-                        <TextBlock Text="教育" FontSize="22" FontWeight="SemiBold"/>
-                        <TextBlock Text="まず内容を理解する画面です。ここではHelpSysが積極的に説明します。" Foreground="#68717A" Margin="0,6,0,18"/>
-                        <TextBlock x:Name="EducationText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/>
-                        <Button Content="説明を理解した" HorizontalAlignment="Left" Margin="0,26,0,0" Click="MarkEducationDone_Click"/>
-                    </StackPanel>
-                </Border>
-
+                <Border x:Name="EducationPanel" Style="{StaticResource Card}"><StackPanel><TextBlock Text="教育" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="まず内容を理解する画面です。ここではHelpSysが積極的に説明します。" Foreground="#68717A" Margin="0,6,0,18"/><TextBlock x:Name="EducationText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/><Button Content="説明を理解した" HorizontalAlignment="Left" Margin="0,26,0,0" Click="MarkEducationDone_Click"/></StackPanel></Border>
                 <Border x:Name="PracticePanel" Style="{StaticResource Card}" Visibility="Collapsed">
-                    <StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
                         <TextBlock Text="練習" FontSize="22" FontWeight="SemiBold"/>
                         <TextBlock Text="教材に応じて専用練習画面または外部の練習サイトを使います。" Foreground="#68717A" Margin="0,6,0,18"/>
                         <TextBlock x:Name="PracticeText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/>
-                        <Button x:Name="OpenPracticeButton" HorizontalAlignment="Left" Margin="0,24,0,0" Click="OpenPractice_Click"/>
-                        <TextBlock x:Name="PracticeLinkNote" Foreground="#68717A" Margin="0,10,0,0" TextWrapping="Wrap"/>
-                        <Button Content="今回の練習を完了" HorizontalAlignment="Left" Margin="0,24,0,0" Click="MarkPracticeDone_Click"/>
-                    </StackPanel>
+                        <Button x:Name="OpenPracticeButton" HorizontalAlignment="Left" Margin="0,20,0,0" Click="OpenPractice_Click"/>
+                        <TextBlock x:Name="PracticeLinkNote" Foreground="#68717A" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                        <Separator Margin="0,18,0,16"/>
+                        <TextBlock Text="練習ヒント" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="EducationAiStatusText" Foreground="#68717A" Margin="0,5,0,8" TextWrapping="Wrap"/>
+                        <Button x:Name="PracticeHintButton" Content="ヒントを1つもらう" HorizontalAlignment="Left" Click="PracticeHint_Click"/>
+                        <Border x:Name="PracticeHintBox" Background="#F2F4F7" CornerRadius="8" Padding="14" Margin="0,10,0,0" Visibility="Collapsed"><TextBlock x:Name="PracticeHintText" TextWrapping="Wrap" LineHeight="23"/></Border>
+                        <Button Content="今回の練習を完了" HorizontalAlignment="Left" Margin="0,20,0,0" Click="MarkPracticeDone_Click"/>
+                    </StackPanel></ScrollViewer>
                 </Border>
-
-                <Border x:Name="TestPanel" Style="{StaticResource Card}" Visibility="Collapsed">
-                    <StackPanel>
-                        <TextBlock Text="テスト" FontSize="22" FontWeight="SemiBold"/>
-                        <TextBlock Text="原則として答えを表示せず、習得できたかを確認する画面です。" Foreground="#68717A" Margin="0,6,0,18"/>
-                        <TextBlock x:Name="TestText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/>
-                        <Border Background="#F2F4F7" CornerRadius="8" Padding="16" Margin="0,24,0,0">
-                            <TextBlock Text="初期版ではテスト合格を手動記録します。次段階で通常版HelpSysの画面認識・操作検証エンジンを共有し、自動採点へ置き換えます。" TextWrapping="Wrap" Foreground="#515A64"/>
-                        </Border>
-                        <Button Content="テスト合格として記録" HorizontalAlignment="Left" Margin="0,24,0,0" Click="MarkTestPassed_Click"/>
-                    </StackPanel>
-                </Border>
+                <Border x:Name="TestPanel" Style="{StaticResource Card}" Visibility="Collapsed"><StackPanel><TextBlock Text="テスト" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="原則として答えを表示せず、習得できたかを確認する画面です。" Foreground="#68717A" Margin="0,6,0,18"/><TextBlock x:Name="TestText" FontSize="17" LineHeight="27" TextWrapping="Wrap"/><Border Background="#F2F4F7" CornerRadius="8" Padding="16" Margin="0,24,0,0"><TextBlock Text="テスト画面では教育AIを呼び出しません。答えやヒントが必要な場合はテストを終了して練習へ戻ります。" TextWrapping="Wrap" Foreground="#515A64"/></Border><Button Content="テスト合格として記録" HorizontalAlignment="Left" Margin="0,24,0,0" Click="MarkTestPassed_Click"/></StackPanel></Border>
             </Grid>
-
-            <Border Grid.Row="3" Background="White" CornerRadius="10" Padding="14" Margin="0,18,0,0" BorderBrush="#DFE3E8" BorderThickness="1">
-                <DockPanel>
-                    <TextBlock x:Name="ProgressText" FontWeight="SemiBold" Foreground="#37404A"/>
-                    <TextBlock x:Name="StageStatusText" DockPanel.Dock="Right" Foreground="#68717A"/>
-                </DockPanel>
-            </Border>
+            <Border Grid.Row="3" Background="White" CornerRadius="10" Padding="14" Margin="0,18,0,0" BorderBrush="#DFE3E8" BorderThickness="1"><DockPanel><TextBlock x:Name="ProgressText" FontWeight="SemiBold" Foreground="#37404A"/><TextBlock x:Name="StageStatusText" DockPanel.Dock="Right" Foreground="#68717A"/></DockPanel></Border>
         </Grid>
     </Grid>
 </Window>
