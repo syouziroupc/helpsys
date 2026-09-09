@@ -140,6 +140,16 @@ public partial class MainWindow
                 return;
             }
 
+            if (target.Password || fresh.Password)
+            {
+                RecordTypeTextDeviation("secret_input_target", fresh,
+                    "秘密入力欄の内容はHelpSysが取得・照合しないため、具体的なtype_text操作を成功扱いにしない。");
+                ClearCurrentGuidanceV3();
+                SetState("パスワードなどの秘密入力欄は内容を確認しません。秘密情報をHelpSysへ渡さずに続けられる次の操作を確認します…", speak: false);
+                await TryRouteRecoveryAsync("秘密入力欄へのtype_text案内を破棄して安全な経路を選び直す", generation, _sessionCts.Token);
+                return;
+            }
+
             var expectedText = NormalizeExpectedInputTextDeepAudit(decision.InputText)
                                ?? NormalizeExpectedInputTextDeepAudit(_cloudGuide.ResolveExpectedInputText(decision))
                                ?? ExtractExpectedInputTextDeepAudit(decision.Instruction);
@@ -202,8 +212,7 @@ public partial class MainWindow
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var text = value.Trim();
-        if (text.Length > 160 || LooksSensitiveExpectedTextDeepAudit(text)) return null;
-        return text;
+        return text.Length <= 160 ? text : null;
     }
 
     private static string? ExtractExpectedInputTextDeepAudit(string? instruction)
@@ -222,9 +231,6 @@ public partial class MainWindow
         static string Normalize(string value) => value.Trim().Normalize().Replace('　', ' ');
         return string.Equals(Normalize(actual), Normalize(expected), StringComparison.OrdinalIgnoreCase);
     }
-
-    private static bool LooksSensitiveExpectedTextDeepAudit(string value) =>
-        Regex.IsMatch(value, "password|passcode|パスワード|暗証|\\bpin\\b|otp|ワンタイム|認証コード|verification\\s*code|recovery\\s*key|秘密鍵|private\\s*key|cvv|cvc", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool IsCurrentTextTargetFocusedDeepAudit(UiElementCandidate target)
     {
