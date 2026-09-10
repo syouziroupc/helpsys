@@ -26,6 +26,15 @@ public partial class MainWindow
             CommanderButton.ToolTip = "安全版ではクラウド音声認識を使用しないため無効です。";
         }
 
+        // XAML's Privacy Loaded handler runs before the constructor-added generic OnLoaded handler.
+        // Queue the privacy-aware status once so the generic idle text cannot overwrite Safe state.
+        Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState));
+    }
+
+    private void SetPrivacyAwareStartupState()
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+
         if (_cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe && !_cloudGuide.CloudEndpointConfigured)
         {
             SetState(
