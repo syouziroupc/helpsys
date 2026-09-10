@@ -11,8 +11,9 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        Loaded="MainWindow_CombinedLoaded"
-        Closing="MainWindow_CombinedClosing">
+        Loaded="MainWindow_PrivacyLoaded"
+        Closing="MainWindow_CombinedClosing"
+        Closed="MainWindow_PrivacyClosed">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
@@ -94,6 +95,10 @@
                 MinWidth="94" Height="23" Padding="8,0" Margin="8,0,0,0"
                 FontSize="10.5" Click="CommanderButton_Click"
                 ToolTip="『ねえコマンダー』で呼び出す" />
+        <Button DockPanel.Dock="Right" x:Name="PrivacyButton" Content="解析停止"
+                MinWidth="72" Height="23" Padding="8,0" Margin="8,0,0,0"
+                FontSize="10.5" Click="PrivacyButton_Click"
+                ToolTip="画面解析を停止します" />
         <TextBlock DockPanel.Dock="Right" Text="Ctrl+Alt+H" FontSize="10" Foreground="#FF9AA3B2" VerticalAlignment="Center" Margin="10,0,0,0" />
         <TextBlock x:Name="StateText"
                    Text="やりたいことを入力してください。"
