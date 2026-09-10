@@ -50,6 +50,42 @@ var storageContext = safeContext with { ForegroundProcess = "chrome", Foreground
 Assert(gate.EvaluateState(storageContext, []).Classification == PrivacyClassification.Blocked,
     "Cookie/Storage state must hard-block cloud screen analysis.");
 
+var rawApiKeyContext = safeContext with
+{
+    ForegroundProcess = "notepad",
+    ForegroundTitle = "sk-ABCDEFGHIJKLMNOPQRSTUV",
+    ForegroundProcessId = 4233
+};
+Assert(gate.EvaluateState(rawApiKeyContext, []).Classification == PrivacyClassification.Blocked,
+    "A raw high-confidence API-key pattern must hard-block cloud screen analysis even without an API-key label.");
+
+var rawBearerContext = safeContext with
+{
+    ForegroundProcess = "notepad",
+    ForegroundTitle = "Bearer AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+    ForegroundProcessId = 5233
+};
+Assert(gate.EvaluateState(rawBearerContext, []).Classification == PrivacyClassification.Blocked,
+    "A raw bearer-token pattern must hard-block cloud screen analysis.");
+
+var rawJwtContext = safeContext with
+{
+    ForegroundProcess = "notepad",
+    ForegroundTitle = "eyJAAAAAAAAAAAA.BBBBBBBBBBBB.CCCCCCCCCCCC",
+    ForegroundProcessId = 6233
+};
+Assert(gate.EvaluateState(rawJwtContext, []).Classification == PrivacyClassification.Blocked,
+    "A raw JWT-like token must hard-block cloud screen analysis.");
+
+var rawCardContext = safeContext with
+{
+    ForegroundProcess = "notepad",
+    ForegroundTitle = "4242 4242 4242 4242",
+    ForegroundProcessId = 7233
+};
+Assert(gate.EvaluateState(rawCardContext, []).Classification == PrivacyClassification.Blocked,
+    "A valid card-number pattern must hard-block cloud screen analysis.");
+
 var unknownContext = safeContext with { ForegroundProcess = "", ForegroundProcessId = 0 };
 Assert(gate.EvaluateState(unknownContext, []).Classification == PrivacyClassification.Unknown,
     "UNKNOWN must not silently become SAFE.");
