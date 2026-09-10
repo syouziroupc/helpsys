@@ -58,10 +58,17 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Build normal and Safe editions
+      - name: Build normal and Safe editions in isolated outputs
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
+          New-Item -ItemType Directory -Force -Path 'smoke-bin/safe' | Out-Null
           dotnet build HelpSys.sln -c Release --no-restore
-          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:SafeBuild=true
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -o smoke-bin/normal
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:SafeBuild=true -o smoke-bin/safe
+          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Normal isolated smoke executable was not produced.' }
+          if (-not (Test-Path 'smoke-bin/safe/HelpSys.Safe.exe')) { throw 'Safe isolated smoke executable was not produced.' }
 
       - name: Launch and capture desktop
         shell: pwsh
@@ -71,13 +78,15 @@ jobs:
 
           $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
           $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
+          Remove-Item Env:HELPSYS_SAFE_API_BASE -ErrorAction SilentlyContinue
+          Remove-Item Env:HELPSYS_SAFE_API_KEY -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
 
           $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
           Start-Sleep -Seconds 3
 
-          $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
-          $safeExe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.Safe.exe'
+          $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
+          $safeExe = Resolve-Path 'smoke-bin/safe/HelpSys.Safe.exe'
           $overlayProcess = $null
           $process = $null
 
@@ -191,9 +200,12 @@ jobs:
 
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
 
-            # Safe-specific GUI regression. It must boot normally but expose no cloud voice path.
+            # Safe-specific GUI and fail-closed egress regression.
             Stop-Process -Id $process.Id -Force
             $process.WaitForExit()
+            $process = $null
+            Remove-Item 'artifacts/mock-last-request.json' -Force -ErrorAction SilentlyContinue
+
             $process = Start-Process $safeExe -PassThru
             Start-Sleep -Seconds 5
             if ($process.HasExited) { throw 'HelpSys Safe exited before the Safe UI smoke screenshot.' }
@@ -202,7 +214,9 @@ jobs:
             $safeCommander = Find-HelpSysElement 'CommanderButton'
             $safePrivacy = Find-HelpSysElement 'PrivacyButton'
             $safeState = Find-HelpSysElement 'StateText'
-            if ($null -eq $safeVoice -or $null -eq $safeCommander -or $null -eq $safePrivacy -or $null -eq $safeState) {
+            $safeRequest = Find-HelpSysElement 'RequestBox'
+            $safeGuide = Find-HelpSysElement 'GuideButton'
+            if ($null -eq $safeVoice -or $null -eq $safeCommander -or $null -eq $safePrivacy -or $null -eq $safeState -or $null -eq $safeRequest -or $null -eq $safeGuide) {
               throw 'HelpSys Safe privacy controls were not exposed through UI Automation.'
             }
             if ($safeVoice.Current.IsEnabled) { throw 'HelpSys Safe cloud Voice button must be disabled.' }
@@ -213,9 +227,24 @@ jobs:
               throw "HelpSys Safe did not disclose its cloud-voice restriction. State: $safeStateText"
             }
             Save-DesktopScreenshot 'artifacts/helpsys-safe-idle.png'
+
+            # With no HELPSYS_SAFE_API_BASE, Safe must remain usable locally but must not contact even the loopback mock API.
+            $safeValuePattern = $safeRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            $safeValuePattern.SetValue('open the test target')
+            $safeInvokePattern = $safeGuide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+            $safeInvokePattern.Invoke()
+            Start-Sleep -Seconds 6
+            if ($process.HasExited) { throw 'HelpSys Safe exited while refusing an unconfigured cloud request.' }
+            if (Test-Path 'artifacts/mock-last-request.json') {
+              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
+              throw 'HelpSys Safe contacted the cloud/mock API without an explicitly configured Safe endpoint.'
+            }
+            Save-DesktopScreenshot 'artifacts/helpsys-safe-unconfigured-egress-block.png'
           }
           finally {
             Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
+            Remove-Item Env:HELPSYS_SAFE_API_BASE -ErrorAction SilentlyContinue
+            Remove-Item Env:HELPSYS_SAFE_API_KEY -ErrorAction SilentlyContinue
             if ($null -ne $overlayProcess -and -not $overlayProcess.HasExited) { Stop-Process -Id $overlayProcess.Id -Force }
             if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
             if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
