@@ -159,3 +159,5 @@ finally {
   Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
   if ($null -ne $mock -and -not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
 }
+
+& ./tests/safe_configured_smoke.ps1
