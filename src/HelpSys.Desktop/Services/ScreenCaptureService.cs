@@ -34,9 +34,9 @@ public sealed class ScreenCaptureService
         if (captureArea.Width <= 0 || captureArea.Height <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
 
         // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
-        // Independently inspect the UIA trees of windows that intersect only the monitor being captured.
-        // Password controls and populated Edit/ComboBox values are treated as private input. If this
-        // bounded scan cannot finish, fail closed instead of sending a partial image.
+        // Independently inspect UIA trees on the captured monitor. Every visible input control is
+        // redacted before egress; cloud guidance receives only its geometry/boolean input state.
+        // If this bounded scan cannot finish, fail closed instead of sending a partial image.
         var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
@@ -181,7 +181,7 @@ public sealed class ScreenCaptureService
                     if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
                     {
                         var bounds = current.BoundingRectangle;
-                        if (ShouldRedactInput(element, current) && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
+                        if (ShouldRedactInput(current) && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
                     }
 
                     var child = walker.GetFirstChild(element);
@@ -206,22 +206,10 @@ public sealed class ScreenCaptureService
         }
     }
 
-    private static bool ShouldRedactInput(AutomationElement element, AutomationElement.AutomationElementInformation current)
+    private static bool ShouldRedactInput(AutomationElement.AutomationElementInformation current)
     {
         if (current.IsPassword) return true;
-        if (current.ControlType != ControlType.Edit && current.ControlType != ControlType.ComboBox) return false;
-
-        try
-        {
-            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
-                return !string.IsNullOrEmpty(valuePattern.Current.Value);
-        }
-        catch (ElementNotAvailableException) { }
-        catch (InvalidOperationException) { }
-
-        // If Windows exposes an input control but its value cannot be inspected, do not invent that
-        // it contains sensitive data. Password fields were already handled fail-closed above.
-        return false;
+        return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;
     }
 
     private static BitmapSource ScaleToLimit(BitmapSource source)
