@@ -1,37 +1,27 @@
 using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
+using HelpSys.Shared;
 using NAudio.Wave;
 
 namespace HelpSys.Services;
 
 public sealed class SpeechInputService : IDisposable
 {
-    private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
     private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan TranscriptionTimeout = TimeSpan.FromSeconds(18);
     private const double MinimumVoiceLevel = 0.018;
 
-    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
-    private readonly string _apiBase;
-    private readonly string? _apiKey;
+    private readonly CloudAiAdapter _adapter = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly ListeningOverlayWindow _listeningOverlay = new();
     private DispatcherTimer? _overlayHideTimer;
     private int _captureActive;
     private bool _disposed;
-
-    public SpeechInputService()
-    {
-        _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
-        _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-    }
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
@@ -197,23 +187,19 @@ public sealed class SpeechInputService : IDisposable
 
     private async Task<string?> TranscribeAsync(byte[] wave, CancellationToken cancellationToken)
     {
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TranscriptionTimeout);
+        var response = await _adapter.PostBytesAsync(
+            "/v1/transcribe",
+            wave,
+            "audio/wav",
+            TranscriptionTimeout,
+            cancellationToken).ConfigureAwait(false);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_apiBase}/v1/transcribe");
-        request.Content = new ByteArrayContent(wave);
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
-        request.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
-        if (!string.IsNullOrWhiteSpace(_apiKey)) request.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
-
-        using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
+            throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({response.StatusCode})。");
 
         try
         {
-            var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
+            var result = JsonSerializer.Deserialize<TranscriptionResponse>(response.Body, _jsonOptions);
             return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
         }
         catch (JsonException ex)
@@ -273,7 +259,7 @@ public sealed class SpeechInputService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _http.Dispose();
+        _adapter.Dispose();
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
         dispatcher.BeginInvoke(new Action(() =>
