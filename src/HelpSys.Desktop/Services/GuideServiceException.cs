@@ -6,7 +6,8 @@ public enum GuideFailureKind
     ServiceUnavailable,
     Rejected,
     InvalidResponse,
-    ContextChanged
+    ContextChanged,
+    PrivacyBlocked
 }
 
 public sealed class GuideServiceException : Exception
