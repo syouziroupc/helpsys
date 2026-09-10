@@ -1,32 +1,31 @@
-using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text.Json;
 using HelpSys.Models;
+using HelpSys.Shared;
 
 namespace HelpSys.Services;
 
 public sealed class CloudGuideService : IDisposable
 {
-    private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
     private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
-    private const string InputPresentSentinel = "<input-present>";
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
 
-    private readonly HttpClient _http;
     private readonly SystemContextService _contextVerifier = new();
-    private readonly string _apiBase;
-    private readonly string? _apiKey;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private readonly PrivacyGate _privacyGate;
+    private readonly CloudAiAdapter _adapter;
+    private readonly bool _ownsAdapter;
 
-    public CloudGuideService()
+    public CloudGuideService(PrivacyGate? privacyGate = null, CloudAiAdapter? adapter = null)
     {
-        _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
-        _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-        _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _privacyGate = privacyGate ?? new PrivacyGate();
+        _adapter = adapter ?? new CloudAiAdapter();
+        _ownsAdapter = adapter is null;
     }
+
+    public PrivacyGate PrivacyGate => _privacyGate;
 
     public async Task<QualityGuideDecision> PlanQualityAsync(
         string request,
@@ -62,104 +61,74 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
-        var evidence = GuidanceEvidenceService.Build(true, relevantElements, history, systemContext);
-        var body = new
-        {
+        var approval = _privacyGate.ApproveQuality(
             request,
+            frame,
+            relevantElements,
             history,
             systemContext,
-            evidence,
             recoveryMode,
-            routeIssue = ShortValue(routeIssue),
-            elements = relevantElements.Select(CompactElement),
-            image = frame.ImageDataUri,
-            imageWidth = frame.ImageWidth,
-            imageHeight = frame.ImageHeight
-        };
+            routeIssue);
+        EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
         var decision = await SendAsync<QualityGuideDecision>(
-            () => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/quality-guide", body),
+            "/v1/quality-guide",
+            approval.Body!,
             cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
     }
 
-    public async Task<GuideDecision> PlanAsync(string request, IReadOnlyList<UiElementCandidate> elements, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
+    public async Task<GuideDecision> PlanAsync(
+        string request,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken = default)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
 
-        var evidence = GuidanceEvidenceService.Build(false, relevantElements, history, systemContext);
-        var body = new
-        {
-            request,
-            history,
-            systemContext,
-            evidence,
-            elements = relevantElements.Select(CompactElement)
-        };
+        var approval = _privacyGate.ApproveStructured(request, relevantElements, history, systemContext);
+        EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
-        var decision = await SendAsync<GuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/guide", body), cancellationToken);
+        var decision = await SendAsync<GuideDecision>("/v1/guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
     }
 
-    public async Task<VisionGuideDecision> PlanVisionAsync(string request, ScreenCaptureFrame frame, IReadOnlyList<GuideHistoryItem> history, SystemContextSnapshot systemContext, CancellationToken cancellationToken = default)
+    public async Task<VisionGuideDecision> PlanVisionAsync(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken = default)
     {
-        var evidence = GuidanceEvidenceService.Build(true, [], history, systemContext);
-        var body = new
-        {
-            request,
-            history,
-            systemContext,
-            evidence,
-            image = frame.ImageDataUri,
-            imageWidth = frame.ImageWidth,
-            imageHeight = frame.ImageHeight
-        };
+        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var approval = _privacyGate.ApproveVision(request, frame, relevantElements, history, systemContext);
+        EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
-        var decision = await SendAsync<VisionGuideDecision>(() => CreateMessage(HttpMethod.Post, $"{_apiBase}/v1/vision-guide", body), cancellationToken);
+        var decision = await SendAsync<VisionGuideDecision>("/v1/vision-guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
     }
 
-    private static object CompactElement(UiElementCandidate x) => new
+    private static void EnsureApproved(PrivacyApproval approval)
     {
-        id = x.Id,
-        name = x.Name,
-        automationId = x.AutomationId,
-        className = x.ClassName,
-        controlType = x.ControlType,
-        processName = x.ProcessName,
-        interactable = x.Interactable,
-        enabled = x.Enabled,
-        keyboardFocusable = x.KeyboardFocusable,
-        focused = x.Focused,
-        password = x.Password,
-        // The Worker already understands the `value` field. Preserve only the boolean fact that
-        // an input has content by using a fixed sentinel; never transmit the actual UIA value.
-        value = x.Password || string.IsNullOrEmpty(x.Value) ? null : InputPresentSentinel,
-        toggleState = x.ToggleState,
-        selected = x.Selected,
-        expandCollapseState = x.ExpandCollapseState,
-        x = x.X,
-        y = x.Y,
-        width = x.Width,
-        height = x.Height
-    };
-
-    private static string? ShortValue(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var text = value.Trim();
-        return text.Length <= 180 ? text : text[..180];
+        if (approval.CanSend) return;
+        throw new GuideServiceException(
+            GuideFailureKind.PrivacyBlocked,
+            approval.Assessment.UserMessage);
     }
 
-    private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot systemContext)
+    private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(
+        IReadOnlyList<UiElementCandidate> elements,
+        SystemContextSnapshot systemContext)
     {
         var foregroundName = systemContext.ForegroundProcess ?? string.Empty;
         var foregroundId = systemContext.ForegroundProcessId;
@@ -191,35 +160,22 @@ public sealed class CloudGuideService : IDisposable
             throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
-    private HttpRequestMessage CreateMessage(HttpMethod method, string url, object body)
-    {
-        var message = new HttpRequestMessage(method, url) { Content = JsonContent.Create(body) };
-        message.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
-        if (!string.IsNullOrWhiteSpace(_apiKey)) message.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
-        return message;
-    }
-
-    private async Task<T> SendAsync<T>(Func<HttpRequestMessage> createMessage, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(string path, object body, CancellationToken cancellationToken)
     {
         GuideServiceException? lastTransientError = null;
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            attemptCts.CancelAfter(AttemptTimeout);
 
             try
             {
-                using var message = createMessage();
-                using var response = await _http.SendAsync(message, attemptCts.Token);
-                var body = await response.Content.ReadAsStringAsync(attemptCts.Token);
-
+                var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
                     try
                     {
-                        return JsonSerializer.Deserialize<T>(body, _jsonOptions)
+                        return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions)
                                ?? throw new JsonException("empty response");
                     }
                     catch (JsonException ex)
@@ -228,10 +184,9 @@ public sealed class CloudGuideService : IDisposable
                     }
                 }
 
-                var status = (int)response.StatusCode;
-                var kind = IsTransientStatus(status) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
-                var apiError = new GuideServiceException(kind, $"HelpSys API {status}: {Short(body)}");
-                if (!IsTransientStatus(status) || attempt > 0) throw apiError;
+                var kind = IsTransientStatus(response.StatusCode) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
+                var apiError = new GuideServiceException(kind, $"HelpSys API {response.StatusCode}: {Short(response.Body)}");
+                if (!IsTransientStatus(response.StatusCode) || attempt > 0) throw apiError;
                 lastTransientError = apiError;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -259,5 +214,9 @@ public sealed class CloudGuideService : IDisposable
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
     private static string Short(string value) => value.Length <= 180 ? value : value[..180];
-    public void Dispose() => _http.Dispose();
+
+    public void Dispose()
+    {
+        if (_ownsAdapter) _adapter.Dispose();
+    }
 }
