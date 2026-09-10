@@ -12,6 +12,7 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// <summary>
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
+/// External endpoints must use HTTPS. Plain HTTP is accepted only for loopback development.
 /// </summary>
 public sealed class CloudAiAdapter : IDisposable
 {
@@ -28,7 +29,8 @@ public sealed class CloudAiAdapter : IDisposable
         string? apiKey = null,
         string apiKeyHeader = "x-helpsys-key")
     {
-        _apiBase = (apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
+        var resolvedBase = (apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
+        _apiBase = ValidateApiBase(resolvedBase);
         _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
         _apiKeyHeader = apiKeyHeader;
     }
@@ -61,7 +63,7 @@ public sealed class CloudAiAdapter : IDisposable
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!path.StartsWith("/", StringComparison.Ordinal)) throw new ArgumentException("Cloud path must start with '/'.", nameof(path));
+        ValidatePath(path);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -76,6 +78,30 @@ public sealed class CloudAiAdapter : IDisposable
         using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
         var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         return new CloudAiResponse((int)response.StatusCode, responseBody);
+    }
+
+    private static string ValidateApiBase(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("HelpSys AI APIの接続先が不正です。");
+
+        var secureExternal = uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        var loopbackDevelopment = uri.IsLoopback && uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+        if (!secureExternal && !loopbackDevelopment)
+            throw new InvalidOperationException("外部AI APIへの接続はHTTPSのみ許可されています。");
+
+        if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
+
+        return value;
+    }
+
+    private static void ValidatePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("/", StringComparison.Ordinal))
+            throw new ArgumentException("Cloud path must start with '/'.", nameof(path));
+        if (path.Contains('?', StringComparison.Ordinal) || path.Contains('#', StringComparison.Ordinal) || path.Contains("://", StringComparison.Ordinal))
+            throw new ArgumentException("Cloud path must not contain query parameters, fragments or absolute URLs.", nameof(path));
     }
 
     public void Dispose()
