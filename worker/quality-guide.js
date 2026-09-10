@@ -45,7 +45,7 @@ The human operates the computer. Return only ONE immediate next operation by cal
 MULTI-SOURCE EVIDENCE FUSION:
 - The screenshot is ONE source, not the master source. Do not make the whole decision depend on image recognition alone.
 - screenshot: evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
-- captureBounds: the physical Windows desktop rectangle represented by this screenshot. UIA x/y/width/height use physical desktop coordinates. Never claim screenConfirmed for a UIA target outside captureBounds.
+- captureBounds: the physical Windows desktop rectangle represented by this screenshot. UIA x/y/width/height use physical desktop coordinates. Never claim screenConfirmed for a UIA target whose center is outside captureBounds.
 - uiElements: evidence for control identity, Name, AutomationId, ControlType, current value/state, focus, actionability and exact Windows bounds.
 - systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser URL/domain.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
@@ -261,8 +261,8 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   if (!targetId || !ids.has(targetId)) return notFound('Windowsの操作対象と一致させられませんでした。');
   const target = elements.find(x => x.id === targetId);
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
-  if (screenConfirmed && captureBounds && !elementIntersectsCapture(target, captureBounds))
-    return notFound('このUIA対象は今回のスクリーンショット範囲外なので、画像で確認済みとは扱いません。');
+  if (screenConfirmed && captureBounds && !elementCenterInsideCapture(target, captureBounds))
+    return notFound('このUIA対象の中心は今回のスクリーンショット範囲外なので、画像で確認済みとは扱いません。');
   if (task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
     return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
 
@@ -458,12 +458,14 @@ function compactCaptureBounds(value) {
   return { x, y, width, height };
 }
 
-function elementIntersectsCapture(element, bounds) {
-  const left = finite(element.x);
-  const top = finite(element.y);
-  const right = left + Math.max(0, finite(element.width));
-  const bottom = top + Math.max(0, finite(element.height));
-  return right > bounds.x && left < bounds.x + bounds.width && bottom > bounds.y && top < bounds.y + bounds.height;
+function elementCenterInsideCapture(element, bounds) {
+  const width = Math.max(0, finite(element.width));
+  const height = Math.max(0, finite(element.height));
+  if (width < 1 || height < 1) return false;
+  const centerX = finite(element.x) + width / 2;
+  const centerY = finite(element.y) + height / 2;
+  return centerX >= bounds.x && centerX < bounds.x + bounds.width &&
+         centerY >= bounds.y && centerY < bounds.y + bounds.height;
 }
 
 function normalizeKey(value) { return String(value || '').replace(/\s+/g, '').toLowerCase(); }
