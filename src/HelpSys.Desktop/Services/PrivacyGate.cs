@@ -91,6 +91,34 @@ public sealed class PrivacyGate
         @"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex LabeledSecretRegex = new(
+        @"(?i)\b(password|passwd|passcode|otp|totp|2fa|mfa|api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|backup[ _-]?code|recovery[ _-]?code)\b\s*[:=]\s*([^\s,;]{3,})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex BearerRegex = new(
+        @"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex JwtRegex = new(
+        @"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex KnownApiKeyRegex = new(
+        @"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex PrivateKeyRegex = new(
+        @"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex CardNumberRegex = new(
+        @"(?<!\d)(?:\d[ -]?){13,19}(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex UrlRegex = new(
+        @"https?://[^\s<>\"']+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private bool _manualPause;
     private PrivacyClassification _lastClassification = PrivacyClassification.Unknown;
 
@@ -135,7 +163,7 @@ public sealed class PrivacyGate
             if (ContainsAny(texts, OtpTerms))
                 return Remember(Block("otp_or_mfa", "認証コード・二段階認証の画面ではクラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, SecretTerms))
+            if (ContainsAny(texts, SecretTerms) || ContainsHighConfidenceSecretValue(texts))
                 return Remember(Block("secret_material", "パスワード・トークン・APIキー等の秘密情報が表示される可能性があるため、クラウド画面解析を停止します。"));
 
             var devTools = ContainsAny(texts, DevToolsTerms);
@@ -148,7 +176,7 @@ public sealed class PrivacyGate
             if ((finance && financeAction) || (finance && Profile == PrivacyPolicyProfile.Safe))
                 return Remember(Block("financial_service", "金融・証券の認証または取引画面ではクラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, CardAuthTerms))
+            if (ContainsAny(texts, CardAuthTerms) || ContainsCardNumber(texts))
                 return Remember(Block("card_authentication", "カード認証情報を扱う画面ではクラウド画面解析を停止します。"));
 
             return Remember(new PrivacyAssessment(
@@ -176,12 +204,12 @@ public sealed class PrivacyGate
 
         var body = new
         {
-            request = SanitizeGeneralText(request, 900),
+            request = SanitizeOutboundText(request, 900),
             history = CompactHistory(history),
             systemContext = CompactSystemContext(systemContext),
-            evidence = GuidanceEvidenceService.Build(true, elements, history, systemContext),
+            evidence = CompactEvidence(true, elements, history, systemContext),
             recoveryMode,
-            routeIssue = SanitizeGeneralText(routeIssue, 180),
+            routeIssue = SanitizeOutboundText(routeIssue, 180),
             elements = elements.Take(280).Select(CompactElement),
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
@@ -201,10 +229,10 @@ public sealed class PrivacyGate
 
         var body = new
         {
-            request = SanitizeGeneralText(request, 900),
+            request = SanitizeOutboundText(request, 900),
             history = CompactHistory(history),
             systemContext = CompactSystemContext(systemContext),
-            evidence = GuidanceEvidenceService.Build(false, elements, history, systemContext),
+            evidence = CompactEvidence(false, elements, history, systemContext),
             elements = elements.Take(280).Select(CompactElement)
         };
         return new PrivacyApproval(assessment, body);
@@ -222,10 +250,10 @@ public sealed class PrivacyGate
 
         var body = new
         {
-            request = SanitizeGeneralText(request, 900),
+            request = SanitizeOutboundText(request, 900),
             history = CompactHistory(history),
             systemContext = CompactSystemContext(systemContext),
-            evidence = GuidanceEvidenceService.Build(true, elements, history, systemContext),
+            evidence = CompactEvidence(true, elements, history, systemContext),
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
             imageHeight = frame.ImageHeight
@@ -236,9 +264,9 @@ public sealed class PrivacyGate
     private static object CompactElement(UiElementCandidate x) => new
     {
         id = x.Id,
-        name = SanitizeGeneralText(x.Name, 140),
-        automationId = SanitizeGeneralText(x.AutomationId, 120),
-        className = SanitizeGeneralText(x.ClassName, 120),
+        name = SanitizeOutboundText(x.Name, 140),
+        automationId = SanitizeOutboundText(x.AutomationId, 120),
+        className = SanitizeOutboundText(x.ClassName, 120),
         controlType = x.ControlType,
         processName = x.ProcessName,
         interactable = x.Interactable,
@@ -247,9 +275,9 @@ public sealed class PrivacyGate
         focused = x.Focused,
         password = false,
         inputPresent = !x.Password && !string.IsNullOrEmpty(x.Value),
-        toggleState = x.ToggleState,
+        toggleState = SanitizeOutboundText(x.ToggleState, 40),
         selected = x.Selected,
-        expandCollapseState = x.ExpandCollapseState,
+        expandCollapseState = SanitizeOutboundText(x.ExpandCollapseState, 40),
         x = x.X,
         y = x.Y,
         width = x.Width,
@@ -261,9 +289,9 @@ public sealed class PrivacyGate
         .Select(x => (object)new
         {
             step = x.Step,
-            action = SanitizeGeneralText(x.Action, 80),
-            targetName = SanitizeGeneralText(x.TargetName, 120),
-            instruction = SanitizeGeneralText(x.Instruction, 220)
+            action = SanitizeOutboundText(x.Action, 80),
+            targetName = SanitizeOutboundText(x.TargetName, 120),
+            instruction = SanitizeOutboundText(x.Instruction, 220)
         })
         .ToArray();
 
@@ -276,17 +304,43 @@ public sealed class PrivacyGate
         return new
         {
             foregroundProcess = context.ForegroundProcess,
-            foregroundTitle = SanitizeGeneralText(context.ForegroundTitle, 140),
+            foregroundTitle = SanitizeOutboundText(context.ForegroundTitle, 140),
             foregroundProcessId = context.ForegroundProcessId,
             taskbarVisible = context.TaskbarVisible,
-            runningApps = context.RunningApps.Take(20).Select(x => SanitizeGeneralText(x, 80)).ToArray(),
+            runningApps = context.RunningApps.Take(20).Select(x => SanitizeOutboundText(x, 80)).ToArray(),
             browser = context.Browser is null ? null : new
             {
                 processName = context.Browser.ProcessName,
-                domain = SanitizeGeneralText(browserDomain, 160),
+                domain = SanitizeOutboundText(browserDomain, 160),
                 https = context.Browser.Https,
                 addressFieldFocused = context.Browser.AddressFieldFocused
             }
+        };
+    }
+
+    private static object CompactEvidence(
+        bool screenshotAvailable,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot context)
+    {
+        var evidence = GuidanceEvidenceService.Build(screenshotAvailable, elements, history, context);
+        return new
+        {
+            screenshotAvailable = evidence.ScreenshotAvailable,
+            uiElementCount = evidence.UiElementCount,
+            interactableCount = evidence.InteractableCount,
+            focusedCount = evidence.FocusedCount,
+            focusedElements = evidence.FocusedElements.Select(x => SanitizeOutboundText(x, 160)).ToArray(),
+            foregroundProcess = evidence.ForegroundProcess,
+            foregroundTitle = SanitizeOutboundText(evidence.ForegroundTitle, 140),
+            taskbarVisible = evidence.TaskbarVisible,
+            runningAppCount = evidence.RunningAppCount,
+            browserDomain = SanitizeOutboundText(evidence.BrowserDomain, 160),
+            browserAddressFocused = evidence.BrowserAddressFocused,
+            historyCount = evidence.HistoryCount,
+            recentTargets = evidence.RecentTargets.Select(x => SanitizeOutboundText(x, 140)).ToArray(),
+            evidenceSources = evidence.EvidenceSources
         };
     }
 
@@ -325,6 +379,49 @@ public sealed class PrivacyGate
         return false;
     }
 
+    private static bool ContainsHighConfidenceSecretValue(IEnumerable<string> texts)
+    {
+        foreach (var text in texts)
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            if (BearerRegex.IsMatch(text) || JwtRegex.IsMatch(text) || KnownApiKeyRegex.IsMatch(text) || PrivateKeyRegex.IsMatch(text))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsCardNumber(IEnumerable<string> texts)
+    {
+        foreach (var text in texts)
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            foreach (Match match in CardNumberRegex.Matches(text))
+            {
+                var digits = new string(match.Value.Where(char.IsDigit).ToArray());
+                if (digits.Length is >= 13 and <= 19 && PassesLuhn(digits)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool PassesLuhn(string digits)
+    {
+        var sum = 0;
+        var alternate = false;
+        for (var i = digits.Length - 1; i >= 0; i--)
+        {
+            var n = digits[i] - '0';
+            if (alternate)
+            {
+                n *= 2;
+                if (n > 9) n -= 9;
+            }
+            sum += n;
+            alternate = !alternate;
+        }
+        return sum % 10 == 0;
+    }
+
     private PrivacyAssessment Remember(PrivacyAssessment assessment)
     {
         _lastClassification = assessment.Classification;
@@ -337,12 +434,29 @@ public sealed class PrivacyGate
     private static PrivacyAssessment Unknown(string code, string message) =>
         new(PrivacyClassification.Unknown, code, message);
 
-    private static string? SanitizeGeneralText(string? text, int maxLength)
+    private static string? SanitizeOutboundText(string? text, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var value = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        value = UrlRegex.Replace(value, StripUrlSecrets);
         value = EmailRegex.Replace(value, "<email>");
+        value = LabeledSecretRegex.Replace(value, "$1=<redacted-secret>");
+        value = BearerRegex.Replace(value, "Bearer <redacted-secret>");
+        value = JwtRegex.Replace(value, "<redacted-jwt>");
+        value = KnownApiKeyRegex.Replace(value, "<redacted-api-key>");
+        value = PrivateKeyRegex.Replace(value, "<redacted-private-key>");
+        value = CardNumberRegex.Replace(value, match =>
+        {
+            var digits = new string(match.Value.Where(char.IsDigit).ToArray());
+            return digits.Length is >= 13 and <= 19 && PassesLuhn(digits) ? "<redacted-card>" : match.Value;
+        });
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private static string StripUrlSecrets(Match match)
+    {
+        if (!Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)) return "<url>";
+        return uri.GetLeftPart(UriPartial.Authority);
     }
 
     private static PrivacyPolicyProfile ResolveProfile()
