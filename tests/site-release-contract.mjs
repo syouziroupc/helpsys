@@ -21,12 +21,16 @@ const educationDoc = read('EDUCATION.md');
 
 const PRODUCTION_BASE = 'https://helpsys.syouziroupc.workers.dev';
 const NORMAL_ROUTE = '/download';
+const SAFE_ROUTE = '/download/safe';
 const EDUCATION_ROUTE = '/download/education';
 const NORMAL_ALIAS = 'HelpSys-latest-win-x64.zip';
+const SAFE_ALIAS = 'HelpSys-Safe-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
 const NORMAL_VERSIONED = 'HelpSys-Reliability-v9-win-x64.zip';
+const SAFE_VERSIONED = 'HelpSys-Safe-v1-win-x64.zip';
 const EDUCATION_VERSIONED = 'HelpSys-Education-v2.2-preview-win-x64.zip';
 const NORMAL_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${NORMAL_ALIAS}`;
+const SAFE_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${SAFE_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
 
 function redirectMap(text) {
@@ -45,10 +49,13 @@ function redirectMap(text) {
 const routeMap = redirectMap(redirects);
 assert(routeMap.get(NORMAL_ROUTE)?.destination === NORMAL_DEST, 'Normal HelpSys /download redirect does not match the stable release alias.');
 assert(routeMap.get(NORMAL_ROUTE)?.code === '302', 'Normal HelpSys download redirect must be temporary (302).');
+assert(routeMap.get(SAFE_ROUTE)?.destination === SAFE_DEST, 'Safe /download/safe redirect does not match the stable release alias.');
+assert(routeMap.get(SAFE_ROUTE)?.code === '302', 'Safe download redirect must be temporary (302).');
 assert(routeMap.get(EDUCATION_ROUTE)?.destination === EDUCATION_DEST, 'Education /download/education redirect does not match the stable release alias.');
 assert(routeMap.get(EDUCATION_ROUTE)?.code === '302', 'Education download redirect must be temporary (302).');
 
 assert(index.includes(`href="${NORMAL_ROUTE}"`), 'Public site does not expose the stable normal download route.');
+assert(index.includes(`href="${SAFE_ROUTE}"`), 'Public site does not expose the stable Safe download route.');
 assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site does not expose the stable Education download route.');
 assert(!index.includes('HelpSys-win-x64.zip'), 'Removed broken HelpSys-win-x64.zip URL has reappeared in the public site.');
 assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not couple directly to a versioned GitHub ZIP URL; use stable local routes.');
@@ -56,7 +63,10 @@ assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL 
 
 assert(normalRelease.includes(NORMAL_ALIAS), 'Normal release workflow does not publish the stable alias used by /download.');
 assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v9 package.');
-assert(normalRelease.includes('Release asset missing after publish'), 'Normal release workflow does not verify its published assets.');
+assert(normalRelease.includes(SAFE_ALIAS), 'Preview release workflow does not publish the stable Safe alias.');
+assert(normalRelease.includes(SAFE_VERSIONED), 'Preview release workflow does not publish the traceable Safe package.');
+assert(normalRelease.includes('-p:SafeBuild=true'), 'Safe package is not compiled with the fixed Safe privacy profile.');
+assert(normalRelease.includes('Release asset missing after publish'), 'Normal/Safe release workflow does not verify its published assets.');
 assert(educationRelease.includes(EDUCATION_ALIAS), 'Education release workflow does not publish the stable alias used by /download/education.');
 assert(educationRelease.includes(EDUCATION_VERSIONED), 'Education release workflow lost the traceable v2.2 package.');
 assert(educationRelease.includes('Education release asset missing after publish'), 'Education release workflow does not verify its published assets.');
@@ -94,5 +104,6 @@ for (const match of index.matchAll(/(?:href|src)="([^"]+)"/gi)) {
 
 console.log('HelpSys site/release/API contract passed.');
 console.log(`normal: ${NORMAL_ROUTE} -> ${NORMAL_DEST}`);
+console.log(`safe: ${SAFE_ROUTE} -> ${SAFE_DEST}`);
 console.log(`education: ${EDUCATION_ROUTE} -> ${EDUCATION_DEST}`);
 console.log(`education API: ${PRODUCTION_BASE}/v1/education/assist`);
