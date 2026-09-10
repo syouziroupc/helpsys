@@ -35,6 +35,54 @@ function Find-Element([System.Diagnostics.Process]$process, [string]$automationI
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
+function Find-ElementByName([System.Diagnostics.Process]$process, [string]$name) {
+  if ($null -eq $process -or $process.HasExited) { return $null }
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $process.Id)
+  $nameCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::NameProperty,
+    $name)
+  $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $nameCondition)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Run-ListeningOverlayCase {
+  $helpSys = $null
+  try {
+    $env:HELPSYS_SMOKE_LISTENING_OVERLAY = '1'
+    $helpSys = Start-Process $exe -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $status = $null
+    do {
+      if ($helpSys.HasExited) { throw 'HelpSys exited before the listening overlay became visible.' }
+      $status = Find-ElementByName $helpSys '聞き取り中…'
+      if ($null -ne $status) { break }
+      Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    if ($null -eq $status) {
+      Save-DesktopScreenshot 'artifacts/helpsys-listening-overlay-failure.png'
+      throw 'The real HelpSys listening overlay did not become visible through UI Automation within 10 seconds.'
+    }
+
+    $transcript = Find-ElementByName $helpSys '話し終わると自動で文字起こしします'
+    if ($null -eq $transcript) {
+      Save-DesktopScreenshot 'artifacts/helpsys-listening-overlay-failure.png'
+      throw 'Listening overlay status appeared but its explanatory transcript was missing.'
+    }
+
+    Save-DesktopScreenshot 'artifacts/helpsys-listening-overlay.png'
+    Write-Host 'HelpSys listening overlay visual smoke passed.'
+  }
+  finally {
+    Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
+    if ($null -ne $helpSys -and -not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force }
+    Start-Sleep -Milliseconds 700
+  }
+}
+
 function Run-PrivacyCase([string]$mode, [string]$expectedStateText, [string]$artifactName) {
   $target = $null
   $helpSys = $null
@@ -90,6 +138,8 @@ function Run-PrivacyCase([string]$mode, [string]$expectedStateText, [string]$art
 }
 
 try {
+  Run-ListeningOverlayCase
+
   $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
   $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
   Start-Sleep -Seconds 1
@@ -102,5 +152,6 @@ try {
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
+  Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
   if ($null -ne $mock -and -not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
 }
