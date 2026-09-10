@@ -97,6 +97,46 @@ try {
 
   Save-Screenshot 'helpsys-privacy-resumed.png'
   Write-Host 'HelpSys Privacy Mode automatic resume E2E smoke passed.'
+
+  # Independent end-to-end local latency budget. This measures Guide invocation -> mock API arrival,
+  # i.e. local context collection + Privacy Gate + UIA privacy scans + screenshot encoding + loopback send.
+  if (-not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force; $helpSys.WaitForExit() }
+  $helpSys = $null
+  if ($null -ne $safeTarget -and -not $safeTarget.HasExited) { Stop-Process -Id $safeTarget.Id -Force; $safeTarget.WaitForExit() }
+  $safeTarget = $null
+  Remove-Item 'artifacts/mock-last-request.json' -Force -ErrorAction SilentlyContinue
+
+  $safeTarget = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 3
+  $helpSys = Start-Process $exe -PassThru
+  Start-Sleep -Seconds 5
+  if ($helpSys.HasExited) { throw 'HelpSys exited before privacy-safe latency smoke.' }
+
+  $request = Find-Element $helpSys 'RequestBox'
+  $guide = Find-Element $helpSys 'GuideButton'
+  if ($null -eq $request -or $null -eq $guide) { throw 'HelpSys controls missing for privacy-safe latency smoke.' }
+  $request.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('open the test target')
+
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
+  $guide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  while ($timer.Elapsed -lt [TimeSpan]::FromSeconds(8) -and -not (Test-Path 'artifacts/mock-last-request.json')) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited during privacy-safe latency smoke.' }
+    Start-Sleep -Milliseconds 100
+  }
+  $timer.Stop()
+
+  if (-not (Test-Path 'artifacts/mock-last-request.json')) {
+    Save-Screenshot 'helpsys-privacy-performance-timeout.png'
+    throw "Privacy-safe local planning did not reach the API within 8 seconds. Elapsed=$([math]::Round($timer.Elapsed.TotalMilliseconds)) ms"
+  }
+
+  $performance = [ordered]@{
+    guideToApiMilliseconds = [math]::Round($timer.Elapsed.TotalMilliseconds)
+    maximumAllowedMilliseconds = 8000
+    includes = 'context+privacy-gate+uia-redaction-scan+screenshot+loopback-send'
+  }
+  $performance | ConvertTo-Json | Set-Content 'artifacts/helpsys-privacy-performance.json' -Encoding UTF8
+  Write-Host "HelpSys privacy-safe local planning latency: $($performance.guideToApiMilliseconds) ms"
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
