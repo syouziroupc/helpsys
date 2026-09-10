@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "src/HelpSys.Desktop/**"
+      - "src/Shared/**"
       - "HelpSys.sln"
       - "README.md"
       - ".github/workflows/release.yml"
@@ -26,13 +27,17 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Publish self-contained Windows build
+      - name: Publish normal and Safe Windows builds
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $stableAssetName = 'HelpSys-latest-win-x64.zip'
+          $normalOut = Join-Path $PWD 'publish\normal-win-x64'
+          $safeOut = Join-Path $PWD 'publish\safe-win-x64'
+          $normalAssetName = 'HelpSys-Reliability-v9-win-x64.zip'
+          $normalStableName = 'HelpSys-latest-win-x64.zip'
+          $safeAssetName = 'HelpSys-Safe-v1-win-x64.zip'
+          $safeStableName = 'HelpSys-Safe-latest-win-x64.zip'
+
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -40,10 +45,24 @@ jobs:
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishReadyToRun=false `
-            -o $out
-          Copy-Item README.md (Join-Path $out 'README.md')
-          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
-          Copy-Item (Join-Path $PWD $assetName) (Join-Path $PWD $stableAssetName) -Force
+            -o $normalOut
+
+          dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:SafeBuild=true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=false `
+            -o $safeOut
+
+          Copy-Item README.md (Join-Path $normalOut 'README.md')
+          Copy-Item README.md (Join-Path $safeOut 'README.md')
+          Compress-Archive -Path "$normalOut\*" -DestinationPath (Join-Path $PWD $normalAssetName) -Force
+          Compress-Archive -Path "$safeOut\*" -DestinationPath (Join-Path $PWD $safeAssetName) -Force
+          Copy-Item (Join-Path $PWD $normalAssetName) (Join-Path $PWD $normalStableName) -Force
+          Copy-Item (Join-Path $PWD $safeAssetName) (Join-Path $PWD $safeStableName) -Force
 
       - name: Update preview release
         shell: pwsh
@@ -52,24 +71,29 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $stableAssetName = 'HelpSys-latest-win-x64.zip'
-          $asset = Join-Path $PWD $assetName
-          $stableAsset = Join-Path $PWD $stableAssetName
-          $allowedAssets = @($assetName, $stableAssetName)
+          $normalAssetName = 'HelpSys-Reliability-v9-win-x64.zip'
+          $normalStableName = 'HelpSys-latest-win-x64.zip'
+          $safeAssetName = 'HelpSys-Safe-v1-win-x64.zip'
+          $safeStableName = 'HelpSys-Safe-latest-win-x64.zip'
+          $normalAsset = Join-Path $PWD $normalAssetName
+          $normalStable = Join-Path $PWD $normalStableName
+          $safeAsset = Join-Path $PWD $safeAssetName
+          $safeStable = Join-Path $PWD $safeStableName
+          $allowedAssets = @($normalAssetName, $normalStableName, $safeAssetName, $safeStableName)
           $notes = @"
-          HelpSys Windows Preview — Reliability v9
+          HelpSys Windows Preview — Privacy Gate architecture
 
-          - Windows 10 / 11 (64-bit)
-          - Self-contained build
-          - Versioned package: $assetName
-          - Stable site download alias: $stableAssetName
-          - Commander: 起動語の軽量ローカル待機は維持し、用件の文字起こしをWorkers AI Whisper large-v3-turboへ変更
-          - Commander: 16 kHz mono録音、無音区間で自動終了、日本語指定・VAD付きASR
-          - Commander UI: 聞き取り中・文字起こし中・確定文字列を画面上端中央のオーバーレイへ表示
-          - 画面確認: 画像取得または視覚確認が弱い場合、同じ前面プロセスのUI Automationを再走査して具体的な操作対象だけ継続可能に変更
-          - 安全性: 完了判定、画像だけの座標、秘密情報ガード、stale response破棄は従来どおり厳格に維持
-          - GLM: Quality FirstはGLM-5.3 Flash、通常テキスト経路はGLM-4.7 Flashを維持
+          - Windows 10 / 11 (64-bit), self-contained
+          - Normal package: $normalAssetName
+          - Existing stable download alias preserved: $normalStableName
+          - Safe package: $safeAssetName
+          - Safe stable alias: $safeStableName
+          - Screen acquisition, cloud egress and persistence are separated
+          - All screen-derived cloud requests pass through the local Privacy Gate
+          - Password / OTP / token / API-key / browser storage / financial-auth states fail closed
+          - BLOCKED or UNKNOWN enters Privacy Mode without ending HelpSys; safe-screen return resumes guidance
+          - Cloud HTTP transport is centralized in the replaceable CloudAiAdapter
+          - HelpSys remains guidance-only: it does not click, type, modify files/settings, pay or enter credentials
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
@@ -81,12 +105,12 @@ jobs:
                 if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
               }
             }
-            gh release upload $tag $asset $stableAsset --clobber --repo $env:GITHUB_REPOSITORY
+            gh release upload $tag $normalAsset $normalStable $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
             gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $asset $stableAsset --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
