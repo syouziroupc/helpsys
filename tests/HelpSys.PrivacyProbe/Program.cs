@@ -117,7 +117,7 @@ var editWithSecret = new UiElementCandidate(
     10, 10, 200, 32, 2233,
     "USER_TYPED_SECRET_VALUE");
 var frame = new ScreenCaptureFrame("data:image/png;base64,AA==", 0, 0, 100, 100, 100, 100);
-var secretRichRequest = "contact alice@example.com password=hunter2 key sk-ABCDEFGHIJKLMNOPQRSTUV card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_SECRET#fragment";
+var secretRichRequest = "contact alice@example.com phone 090-1234-5678 postal 123-4567 password=hunter2 key sk-ABCDEFGHIJKLMNOPQRSTUV card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_SECRET#fragment";
 var approval = gate.ApproveQuality(secretRichRequest, frame, [editWithSecret], [], browserContext, false, null);
 Assert(approval.CanSend, "Benign browser context should remain usable after outbound minimization.");
 var outboundJson = JsonSerializer.Serialize(approval.Body, new JsonSerializerOptions
@@ -134,6 +134,10 @@ Assert(!outboundJson.Contains("USER_TYPED_SECRET_VALUE", StringComparison.Ordina
     "Raw UI input values must never enter outbound cloud payloads.");
 Assert(!outboundJson.Contains("alice@example.com", StringComparison.Ordinal) && outboundJson.Contains("<email>", StringComparison.Ordinal),
     "Email addresses typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("090-1234-5678", StringComparison.Ordinal) && outboundJson.Contains("<phone>", StringComparison.Ordinal),
+    "Japanese phone numbers typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("123-4567", StringComparison.Ordinal) && outboundJson.Contains("<postal-code>", StringComparison.Ordinal),
+    "Japanese postal codes typed into the HelpSys request must be redacted before egress.");
 Assert(!outboundJson.Contains("hunter2", StringComparison.Ordinal) && outboundJson.Contains("<redacted-secret>", StringComparison.Ordinal),
     "Labeled secrets typed into the HelpSys request must be redacted before egress.");
 Assert(!outboundJson.Contains("sk-ABCDEFGHIJKLMNOPQRSTUV", StringComparison.Ordinal) && outboundJson.Contains("<redacted-api-key>", StringComparison.Ordinal),
@@ -153,7 +157,6 @@ var oldSafeApiBase = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE")
 var oldSafeApiKey = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
 try
 {
-    // A normal endpoint must never silently configure Safe. Safe requires its own reviewed endpoint variable.
     Environment.SetEnvironmentVariable("HELPSYS_API_BASE", "http://127.0.0.1:8787");
     Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_BASE", null);
     Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_KEY", null);
