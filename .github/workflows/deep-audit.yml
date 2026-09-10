@@ -23,6 +23,7 @@ jobs:
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
           node --check tests/safe-edition-contract.mjs
+          node --check tests/worker-data-handling-contract.mjs
 
       - name: Run deep-audit regressions
         run: |
@@ -31,6 +32,7 @@ jobs:
           node tests/privacy-contract.mjs
           node tests/privacy-capability-contract.mjs
           node tests/safe-edition-contract.mjs
+          node tests/worker-data-handling-contract.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
