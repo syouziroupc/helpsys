@@ -91,6 +91,14 @@ public sealed class PrivacyGate
         @"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    private static readonly Regex JapanesePhoneRegex = new(
+        @"(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex PostalCodeRegex = new(
+        @"(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex LabeledSecretRegex = new(
         @"(?i)\b(password|passwd|passcode|otp|totp|2fa|mfa|api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|backup[ _-]?code|recovery[ _-]?code)\b\s*[:=]\s*([^\s,;]{3,})",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -440,6 +448,8 @@ public sealed class PrivacyGate
         var value = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
         value = UrlRegex.Replace(value, StripUrlSecrets);
         value = EmailRegex.Replace(value, "<email>");
+        value = JapanesePhoneRegex.Replace(value, "<phone>");
+        value = PostalCodeRegex.Replace(value, "<postal-code>");
         value = LabeledSecretRegex.Replace(value, "$1=<redacted-secret>");
         value = BearerRegex.Replace(value, "Bearer <redacted-secret>");
         value = JwtRegex.Replace(value, "<redacted-jwt>");
