@@ -6,6 +6,7 @@ on:
     paths:
       - "src/HelpSys.Desktop/**"
       - "src/Shared/**"
+      - "docs/AI_PROVIDER_PRIVACY_REVIEW.md"
       - "HelpSys.sln"
       - "README.md"
       - ".github/workflows/release.yml"
@@ -47,6 +48,8 @@ jobs:
             -p:PublishReadyToRun=false `
             -o $normalOut
 
+          # Safe is still built on every release run so compile/package regressions are caught.
+          # Public upload is controlled separately by the provider privacy approval gate.
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -79,15 +82,26 @@ jobs:
           $normalStable = Join-Path $PWD $normalStableName
           $safeAsset = Join-Path $PWD $safeAssetName
           $safeStable = Join-Path $PWD $safeStableName
-          $allowedAssets = @($normalAssetName, $normalStableName, $safeAssetName, $safeStableName)
+          $safeApproved = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_RELEASE_STATUS: APPROVED$' -Quiet
+
+          $allowedAssets = @($normalAssetName, $normalStableName)
+          if ($safeApproved) {
+            $allowedAssets += @($safeAssetName, $safeStableName)
+          }
+
+          $safeNote = if ($safeApproved) {
+            "- Safe package: $safeAssetName`n- Safe stable alias: $safeStableName"
+          } else {
+            '- Safe package: NOT PUBLISHED — provider privacy review is not fully approved.'
+          }
+
           $notes = @"
           HelpSys Windows Preview — Privacy Gate architecture
 
           - Windows 10 / 11 (64-bit), self-contained
           - Normal package: $normalAssetName
           - Existing stable download alias preserved: $normalStableName
-          - Safe package: $safeAssetName
-          - Safe stable alias: $safeStableName
+          $safeNote
           - Screen acquisition, cloud egress and persistence are separated
           - All screen-derived cloud requests pass through the local Privacy Gate
           - Password / OTP / token / API-key / browser storage / financial-auth states fail closed
@@ -105,15 +119,28 @@ jobs:
                 if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
               }
             }
-            gh release upload $tag $normalAsset $normalStable $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
+
+            gh release upload $tag $normalAsset $normalStable --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload normal preview assets.' }
+            if ($safeApproved) {
+              gh release upload $tag $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
+              if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Safe preview assets.' }
+            }
             gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            if ($safeApproved) {
+              gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            }
+            else {
+              gh release create $tag $normalAsset $normalStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            }
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
           foreach ($expected in $allowedAssets) {
             if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
+          }
+          if (-not $safeApproved -and ($published -contains $safeAssetName -or $published -contains $safeStableName)) {
+            throw 'Safe release gate failed: a Safe ZIP is public while provider approval is blocked.'
           }
