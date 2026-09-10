@@ -26,6 +26,14 @@ public partial class MainWindow
             CommanderButton.ToolTip = "安全版ではクラウド音声認識を使用しないため無効です。";
         }
 
+        if (_cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe && !_cloudGuide.CloudEndpointConfigured)
+        {
+            SetState(
+                "安全版：承認済みAI API接続先が未設定です。画面画像は取得・送信しません。音声のクラウド送信も無効です。",
+                speak: false);
+            return;
+        }
+
         SetState(
             _cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe
                 ? "安全版：秘密情報の画面では送信を止めます。音声のクラウド送信も無効です。画面解析はいつでも停止できます。"
@@ -108,6 +116,15 @@ public partial class MainWindow
     private async Task TryResumePrivacyModeAsync()
     {
         if (!_privacyPaused || _cloudGuide.PrivacyGate.ManualPause) return;
+
+        if (!_cloudGuide.CloudEndpointConfigured)
+        {
+            SetState(
+                "プライバシー保護のため画面解析を一時停止中。安全版の承認済みAI API接続先が未設定のため、画像を取得・送信しません。",
+                speak: false);
+            return;
+        }
+
         if (_activeRequest is null)
         {
             _privacyPaused = false;
