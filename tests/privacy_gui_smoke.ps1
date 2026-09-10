@@ -96,8 +96,9 @@ try {
 
   Run-PrivacyCase 'Password' 'パスワード' 'helpsys-privacy-password'
   Run-PrivacyCase 'Otp' '認証コード' 'helpsys-privacy-otp'
+  Run-PrivacyCase 'Cookie' 'Cookie・Storage' 'helpsys-privacy-cookie'
 
-  Write-Host 'HelpSys Password/OTP GUI privacy smoke passed.'
+  Write-Host 'HelpSys Password/OTP/Cookie GUI privacy smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
