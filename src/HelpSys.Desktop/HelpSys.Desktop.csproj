@@ -9,7 +9,12 @@
     <AssemblyName>HelpSys</AssemblyName>
     <RootNamespace>HelpSys</RootNamespace>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(SafeBuild)' == 'true'">
+    <DefineConstants>$(DefineConstants);HELPSYS_SAFE_BUILD</DefineConstants>
+    <AssemblyName>HelpSys.Safe</AssemblyName>
+  </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
     <PackageReference Include="NAudio" Version="3.0.1" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
   </ItemGroup>
