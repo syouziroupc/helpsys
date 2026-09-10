@@ -18,21 +18,26 @@ export default {
   async fetch(request, env, ctx) {
     let url;
     try { url = new URL(request.url); }
-    catch { return base.fetch(request, env, ctx); }
+    catch { return base.fetch(request, privacyHardenedEnv(env), ctx); }
 
     if (url.pathname === '/v1/transcribe') {
+      // ASR uses a different input schema; it is kept outside the GLM storage-option wrapper.
       return transcribe.fetch(request, env, ctx);
     }
+
+    // Every text/vision Workers AI call receives store:false even if a downstream route forgets
+    // to set it. This is a server-side defense in depth and is not a substitute for Privacy Gate.
+    const privateEnv = privacyHardenedEnv(env);
 
     // Quality-first normal HelpSys planning always receives the current screenshot and
     // UI structure together. It owns its own deterministic validation and secret guard.
     if (url.pathname === '/v1/quality-guide') {
-      return quality.fetch(request, env, ctx);
+      return quality.fetch(request, privateEnv, ctx);
     }
 
     // Keep Education routing available, but normal HelpSys development is prioritized.
     if (url.pathname === '/v1/education/assist') {
-      return education.fetch(request, env, ctx);
+      return education.fetch(request, privateEnv, ctx);
     }
 
     let bodyPromise = null;
@@ -41,7 +46,7 @@ export default {
         bodyPromise = request.clone().json();
     } catch { }
 
-    const response = await base.fetch(request, env, ctx);
+    const response = await base.fetch(request, privateEnv, ctx);
     if (!bodyPromise || response.status !== 200) return response;
 
     let body;
@@ -124,6 +129,23 @@ function preventBackgroundDone(body, decision) {
     instruction: '目的のアプリは別の画面で開いています。今操作できる画面へ出すため、キーボードの左下にある窓の形の「Windows」キーを1回押してください。',
     question: null, key: 'Windows', confidence: 0.99
   };
+}
+
+function privacyHardenedEnv(env) {
+  if (!env?.AI || typeof env.AI.run !== 'function') return env;
+  const ai = env.AI;
+  const hardenedAi = new Proxy(ai, {
+    get(target, property, receiver) {
+      if (property !== 'run') return Reflect.get(target, property, receiver);
+      return (model, options = {}) => target.run(model, { ...options, store: false });
+    }
+  });
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === 'AI') return hardenedAi;
+      return Reflect.get(target, property, receiver);
+    }
+  });
 }
 
 function usable(raw) {
