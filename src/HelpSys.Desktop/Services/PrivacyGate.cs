@@ -116,7 +116,7 @@ public sealed class PrivacyGate
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex UrlRegex = new(
-        @"https?://[^\s<>\"']+",
+        @"https?://[^\s<>""']+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private bool _manualPause;
