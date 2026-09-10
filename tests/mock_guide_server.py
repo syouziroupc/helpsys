@@ -1,6 +1,9 @@
+import base64
 import json
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+COUNT = Path("artifacts/mock-request-count.txt")
 
 
 def field(obj, name, default=None):
@@ -23,6 +26,14 @@ def eligible_elements(payload):
         and float(field(item, "height", 0) or 0) >= 8
         and field(item, "id")
     ]
+
+
+def next_count():
+    Path("artifacts").mkdir(exist_ok=True)
+    count = int(COUNT.read_text(encoding="utf-8") or "0") if COUNT.exists() else 0
+    count += 1
+    COUNT.write_text(str(count), encoding="utf-8")
+    return count
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,18 +89,45 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path in ("/v1/guide", "/v1/quality-guide"):
+            request_count = next_count()
             system_context = field(payload, "systemContext", {}) or {}
+            browser_context = field(system_context, "browser", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
             eligible = eligible_elements(payload)
-            has_image = str(field(payload, "image", "") or "").startswith("data:image/png;base64,")
+            image = str(field(payload, "image", "") or "")
+            has_image = image.startswith("data:image/png;base64,")
+            history = field(payload, "history", []) or []
+            # Do not persist the raw payload: it may contain a screenshot. Audit only deterministic
+            # canary strings to prove that sensitive input/window-title text did not cross the API boundary.
+            raw_payload_text = json.dumps(payload, ensure_ascii=False)
 
             diagnostics = {
+                "requestCount": request_count,
                 "path": self.path,
                 "payloadKeys": list(payload.keys()) if isinstance(payload, dict) else [],
                 "systemContextKeys": list(system_context.keys()) if isinstance(system_context, dict) else [],
                 "foreground": foreground,
+                "foregroundTitle": field(system_context, "foregroundTitle"),
                 "foregroundProcessId": field(system_context, "foregroundProcessId"),
+                "browserWindowTitle": field(browser_context, "windowTitle"),
+                "browserDomain": field(browser_context, "domain"),
+                "captureBounds": field(payload, "captureBounds"),
                 "hasScreenshot": has_image,
+                "imageWidth": field(payload, "imageWidth"),
+                "imageHeight": field(payload, "imageHeight"),
+                "rawContainsPrivateInput": "PRIVATE-PROBE-847251" in raw_payload_text,
+                "rawContainsPrivateWindowTitle": "PRIVATE-WINDOW-TITLE-319751" in raw_payload_text,
+                "recoveryMode": field(payload, "recoveryMode", False) is True,
+                "routeIssue": field(payload, "routeIssue"),
+                "history": [
+                    {
+                        "step": field(item, "step"),
+                        "action": field(item, "action"),
+                        "targetName": field(item, "targetName"),
+                        "instruction": field(item, "instruction"),
+                    }
+                    for item in history[-12:]
+                ],
                 "eligible": [
                     {
                         "id": field(item, "id"),
@@ -97,14 +135,27 @@ class Handler(BaseHTTPRequestHandler):
                         "automationId": field(item, "automationId"),
                         "controlType": field(item, "controlType"),
                         "processName": field(item, "processName"),
+                        "value": field(item, "value"),
+                        "focused": field(item, "focused"),
+                        "toggleState": field(item, "toggleState"),
+                        "selected": field(item, "selected"),
+                        "expandCollapseState": field(item, "expandCollapseState"),
+                        "x": field(item, "x"),
+                        "y": field(item, "y"),
+                        "width": field(item, "width"),
+                        "height": field(item, "height"),
                     }
-                    for item in eligible[:80]
+                    for item in eligible[:120]
                 ],
             }
-            Path("artifacts").mkdir(exist_ok=True)
             Path("artifacts/mock-last-request.json").write_text(
                 json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            if has_image:
+                try:
+                    Path("artifacts/mock-last-image.png").write_bytes(base64.b64decode(image.split(",", 1)[1], validate=True))
+                except Exception:
+                    pass
 
             if self.path == "/v1/quality-guide" and not has_image:
                 self._json({"error": "missing_screenshot"}, 400)
@@ -114,11 +165,20 @@ class Handler(BaseHTTPRequestHandler):
                 (
                     item
                     for item in eligible
-                    if str(field(item, "automationId", "") or "").lower() == "smokebutton"
-                    or str(field(item, "name", "") or "").lower() == "open test target"
+                    if str(field(item, "automationId", "") or "").lower() == "closemodalbutton"
                 ),
                 None,
             )
+            if target is None:
+                target = next(
+                    (
+                        item
+                        for item in eligible
+                        if str(field(item, "automationId", "") or "").lower() == "smokebutton"
+                        or str(field(item, "name", "") or "").lower() == "open test target"
+                    ),
+                    None,
+                )
             if target is None:
                 target = next(
                     (
@@ -139,6 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                             "instruction": "テスト対象がありません。",
                             "question": None,
                             "key": None,
+                            "inputText": None,
                             "confidence": 0,
                             "x": 0,
                             "y": 0,
@@ -157,20 +218,23 @@ class Handler(BaseHTTPRequestHandler):
                             "instruction": "テスト対象がありません。",
                             "question": None,
                             "key": None,
+                            "inputText": None,
                             "confidence": 0,
                         }
                     )
                 return
 
+            target_name = str(field(target, "name", "") or "")
             if self.path == "/v1/quality-guide":
                 self._json(
                     {
                         "status": "target",
                         "targetId": str(field(target, "id")),
                         "action": "left_click",
-                        "instruction": "青い枠の場所で、マウスの左ボタンを1回押してください。",
+                        "instruction": f"青い枠の{target_name or '場所'}で、マウスの左ボタンを1回押してください。",
                         "question": None,
                         "key": None,
+                        "inputText": None,
                         "confidence": 0.99,
                         "x": 0,
                         "y": 0,
@@ -187,9 +251,10 @@ class Handler(BaseHTTPRequestHandler):
                     "status": "target",
                     "targetId": str(field(target, "id")),
                     "action": "left_click",
-                    "instruction": "青い枠の場所で、マウスの左ボタンを1回押してください。",
+                    "instruction": f"青い枠の{target_name or '場所'}で、マウスの左ボタンを1回押してください。",
                     "question": None,
                     "key": None,
+                    "inputText": None,
                     "confidence": 0.99,
                 }
             )

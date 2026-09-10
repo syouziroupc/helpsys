@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Automation;
 
 namespace HelpSys.Services;
@@ -17,7 +18,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private AutomationElement? _structureRoot;
     private int _scopeProcessId;
     private int _queued;
-    private long _lastSignalTicks;
+    private long _lastSignalTimestamp;
     private long _scopeRequestVersion;
     private bool _focusSubscribed;
     private bool _structureSubscribed;
@@ -40,19 +41,11 @@ public sealed class GuidanceStateWatcher : IDisposable
 
         _cts = new CancellationTokenSource();
         Interlocked.Exchange(ref _queued, 0);
-        Interlocked.Exchange(ref _lastSignalTicks, 0);
+        Interlocked.Exchange(ref _lastSignalTimestamp, 0);
 
         lock (_subscriptionGate)
         {
-            try
-            {
-                Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
-                _focusSubscribed = true;
-            }
-            catch
-            {
-                _focusSubscribed = false;
-            }
+            TryEnsureFocusSubscriptionLocked();
         }
 
         _pumpTask = Task.Run(() => PumpAsync(_cts.Token));
@@ -65,12 +58,28 @@ public sealed class GuidanceStateWatcher : IDisposable
         lock (_subscriptionGate)
         {
             if (_disposed) return Task.CompletedTask;
-            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed))
+            TryEnsureFocusSubscriptionLocked();
+            if (processId == _scopeProcessId &&
+                (processId <= 0 || (_structureSubscribed && _propertySubscribed)))
                 return Task.CompletedTask;
         }
 
         var requestVersion = Interlocked.Increment(ref _scopeRequestVersion);
         return Task.Run(() => SetForegroundProcess(processId, requestVersion, cancellationToken), cancellationToken);
+    }
+
+    private void TryEnsureFocusSubscriptionLocked()
+    {
+        if (_focusSubscribed || _disposed) return;
+        try
+        {
+            Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
+            _focusSubscribed = true;
+        }
+        catch
+        {
+            _focusSubscribed = false;
+        }
     }
 
     private void SetForegroundProcess(int processId, long requestVersion, CancellationToken cancellationToken)
@@ -82,7 +91,9 @@ public sealed class GuidanceStateWatcher : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_disposed || requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
-            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed)) return;
+            TryEnsureFocusSubscriptionLocked();
+            if (processId == _scopeProcessId &&
+                (processId <= 0 || (_structureSubscribed && _propertySubscribed))) return;
 
             RemoveStructureSubscriptionLocked();
             _scopeProcessId = processId;
@@ -184,7 +195,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private void Signal()
     {
         if (_disposed) return;
-        Interlocked.Exchange(ref _lastSignalTicks, DateTime.UtcNow.Ticks);
+        Interlocked.Exchange(ref _lastSignalTimestamp, Stopwatch.GetTimestamp());
         if (Interlocked.Exchange(ref _queued, 1) != 0) return;
         try { _signal.Release(); }
         catch (SemaphoreFullException) { }
@@ -227,11 +238,10 @@ public sealed class GuidanceStateWatcher : IDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var ticks = Volatile.Read(ref _lastSignalTicks);
-            if (ticks <= 0) return;
+            var timestamp = Volatile.Read(ref _lastSignalTimestamp);
+            if (timestamp <= 0) return;
 
-            var lastSignalUtc = new DateTime(ticks, DateTimeKind.Utc);
-            var quietFor = DateTime.UtcNow - lastSignalUtc;
+            var quietFor = Stopwatch.GetElapsedTime(timestamp);
             if (quietFor >= QuietPeriod) return;
 
             var remaining = QuietPeriod - quietFor;
@@ -262,9 +272,8 @@ public sealed class GuidanceStateWatcher : IDisposable
         }
 
         Interlocked.Exchange(ref _queued, 0);
+        Interlocked.Exchange(ref _lastSignalTimestamp, 0);
 
-        // Stop may run from WPF Closing. Never synchronously wait for the background pump there;
-        // UIA callbacks can be delayed during window teardown. Drain and dispose off-thread.
         _ = DrainStoppedPumpAsync(pump, cts);
     }
 
@@ -286,6 +295,8 @@ public sealed class GuidanceStateWatcher : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        // Mark disposed first so a concurrent SetForegroundProcessAsync cannot install a new
+        // subscription between Stop() removing the old handlers and the final dispose.
         _disposed = true;
         Stop();
         _signal.Dispose();

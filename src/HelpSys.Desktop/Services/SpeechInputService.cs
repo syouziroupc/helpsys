@@ -12,6 +12,7 @@ namespace HelpSys.Services;
 public sealed class SpeechInputService : IDisposable
 {
     private const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const string CloudflareCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
     private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
@@ -31,6 +32,8 @@ public sealed class SpeechInputService : IDisposable
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiKey = Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CloudflareCompatibleUserAgent);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("x-helpsys-client", "desktop-speech");
     }
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
@@ -206,19 +209,32 @@ public sealed class SpeechInputService : IDisposable
         request.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
         if (!string.IsNullOrWhiteSpace(_apiKey)) request.Headers.TryAddWithoutValidation("x-helpsys-key", _apiKey);
 
-        using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
-
+        HttpResponseMessage response;
+        string body;
         try
         {
-            var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
-            return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
+            response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+            body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         }
-        catch (JsonException ex)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
         {
-            throw new InvalidOperationException("音声認識サービスの応答形式が不正です。", ex);
+            throw new InvalidOperationException("音声認識サービスの応答が時間内に返りませんでした。", ex);
+        }
+
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"音声認識サービスが応答できませんでした ({(int)response.StatusCode})。");
+
+            try
+            {
+                var result = JsonSerializer.Deserialize<TranscriptionResponse>(body, _jsonOptions);
+                return string.IsNullOrWhiteSpace(result?.Text) ? null : result.Text;
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("音声認識サービスの応答形式が不正です。", ex);
+            }
         }
     }
 
@@ -264,7 +280,6 @@ public sealed class SpeechInputService : IDisposable
         dispatcher.BeginInvoke(new Action(() =>
         {
             if (_disposed) return;
-            _overlayHideTimer?.Stop();
             action();
         }));
     }
@@ -273,16 +288,10 @@ public sealed class SpeechInputService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        try { _overlayHideTimer?.Stop(); } catch { }
+        try { _listeningOverlay.Close(); } catch { }
         _http.Dispose();
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
-        dispatcher.BeginInvoke(new Action(() =>
-        {
-            _overlayHideTimer?.Stop();
-            _overlayHideTimer = null;
-            try { _listeningOverlay.Close(); } catch { }
-        }));
     }
 
-    private sealed record TranscriptionResponse(string? Text);
+    private sealed record TranscriptionResponse(string? Text, string? Model);
 }

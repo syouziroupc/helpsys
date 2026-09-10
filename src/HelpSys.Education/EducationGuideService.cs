@@ -8,6 +8,7 @@ namespace HelpSys.Education;
 public sealed class EducationGuideService : IDisposable
 {
     public const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const string CloudflareCompatibleUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(25) };
     private readonly string _apiBase;
@@ -16,6 +17,8 @@ public sealed class EducationGuideService : IDisposable
     public EducationGuideService()
     {
         _apiBase = (Environment.GetEnvironmentVariable("HELPSYS_EDUCATION_API_BASE") ?? DefaultApiBase).TrimEnd('/');
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", CloudflareCompatibleUserAgent);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("x-helpsys-client", "education");
     }
 
     public bool IsConfigured => Uri.TryCreate(_apiBase, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http";
@@ -40,6 +43,9 @@ public sealed class EducationGuideService : IDisposable
                         : throw new InvalidOperationException("教育AIから有効な説明を受け取れませんでした。");
                 }
 
+                if ((int)response.StatusCode == 429)
+                    throw new InvalidOperationException("教育AIの利用が集中しています。連続再送はせず、制限解除後にもう一度試してください。");
+
                 var error = new InvalidOperationException($"教育AIが応答できませんでした ({(int)response.StatusCode})。");
                 if (!IsTransient(response.StatusCode) || attempt > 0) throw error;
                 lastError = error;
@@ -47,6 +53,10 @@ public sealed class EducationGuideService : IDisposable
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException ex)
+            {
+                throw new InvalidOperationException("教育AIの応答が時間内に返りませんでした。", ex);
             }
             catch (HttpRequestException ex)
             {
@@ -78,7 +88,7 @@ public sealed class EducationGuideService : IDisposable
         return request;
     }
 
-    private static bool IsTransient(HttpStatusCode statusCode) => (int)statusCode is 408 or 429 or 500 or 502 or 503 or 504;
+    private static bool IsTransient(HttpStatusCode statusCode) => (int)statusCode is 408 or 500 or 502 or 503 or 504;
 
     public void Dispose() => _http.Dispose();
 }

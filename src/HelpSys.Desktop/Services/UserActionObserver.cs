@@ -10,7 +10,9 @@ public sealed class UserActionObserver : IDisposable
     private const int WhMouseLl = 14;
     private const int WhKeyboardLl = 13;
     private const int WmLButtonUp = 0x0202;
+    private const int WmKeyDown = 0x0100;
     private const int WmKeyUp = 0x0101;
+    private const int WmSysKeyDown = 0x0104;
     private const int WmSysKeyUp = 0x0105;
     private const int VkControl = 0x11;
     private const int VkShift = 0x10;
@@ -20,6 +22,8 @@ public sealed class UserActionObserver : IDisposable
 
     private readonly HookProc _mouseProc;
     private readonly HookProc _keyboardProc;
+    private readonly object _keyStateGate = new();
+    private readonly Dictionary<int, KeyObservation> _keyDownSnapshots = new();
     private IntPtr _mouseHook;
     private IntPtr _keyboardHook;
 
@@ -37,6 +41,7 @@ public sealed class UserActionObserver : IDisposable
     public void Start()
     {
         if (IsRunning) return;
+        lock (_keyStateGate) _keyDownSnapshots.Clear();
         _mouseHook = SetWindowsHookEx(WhMouseLl, _mouseProc, IntPtr.Zero, 0);
         _keyboardHook = SetWindowsHookEx(WhKeyboardLl, _keyboardProc, IntPtr.Zero, 0);
 
@@ -59,6 +64,7 @@ public sealed class UserActionObserver : IDisposable
             UnhookWindowsHookEx(_keyboardHook);
             _keyboardHook = IntPtr.Zero;
         }
+        lock (_keyStateGate) _keyDownSnapshots.Clear();
     }
 
     private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -74,21 +80,51 @@ public sealed class UserActionObserver : IDisposable
 
     private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
+        if (nCode < 0) return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+
         var message = wParam.ToInt32();
-        if (nCode >= 0 && (message == WmKeyUp || message == WmSysKeyUp))
+        if (message is not (WmKeyDown or WmSysKeyDown or WmKeyUp or WmSysKeyUp))
+            return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+
+        var data = Marshal.PtrToStructure<KbdllHookStruct>(lParam);
+        var key = unchecked((int)data.VirtualKeyCode);
+
+        if (message is WmKeyDown or WmSysKeyDown)
         {
-            var data = Marshal.PtrToStructure<KbdllHookStruct>(lParam);
-            var key = unchecked((int)data.VirtualKeyCode);
-            var observation = new KeyObservation(
-                key,
-                IsDown(VkControl) || key == VkControl,
-                IsDown(VkShift) || key == VkShift,
-                IsDown(VkMenu) || key == VkMenu,
-                IsDown(VkLWin) || IsDown(VkRWin) || key == VkLWin || key == VkRWin);
-            Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(observation));
+            if (!IsModifierKey(key))
+            {
+                var snapshot = CaptureObservation(key);
+                lock (_keyStateGate) _keyDownSnapshots[key] = snapshot;
+            }
+            return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
         }
+
+        KeyObservation observation;
+        if (!IsModifierKey(key))
+        {
+            lock (_keyStateGate)
+            {
+                if (_keyDownSnapshots.Remove(key, out var stored)) observation = stored;
+                else observation = CaptureObservation(key);
+            }
+        }
+        else
+        {
+            observation = CaptureObservation(key);
+        }
+
+        Application.Current?.Dispatcher.BeginInvoke(() => KeyReleased?.Invoke(observation));
         return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
     }
+
+    private static KeyObservation CaptureObservation(int key) => new(
+        key,
+        IsDown(VkControl) || key == VkControl,
+        IsDown(VkShift) || key == VkShift,
+        IsDown(VkMenu) || key == VkMenu,
+        IsDown(VkLWin) || IsDown(VkRWin) || key == VkLWin || key == VkRWin);
+
+    private static bool IsModifierKey(int key) => key is VkControl or VkShift or VkMenu or VkLWin or VkRWin;
 
     private static bool IsDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 

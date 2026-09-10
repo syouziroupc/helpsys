@@ -34,8 +34,6 @@ public partial class MainWindow
     private void StableLiveWatcher_Pulse(object? sender, EventArgs e)
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        // A heartbeat may arrive while the previous UIA scan is still awaiting. Queue at most one
-        // dispatcher observation so rapid focus/structure changes cannot flood the WPF UI queue.
         if (Interlocked.Exchange(ref _stablePulseQueued, 1) != 0) return;
 
         try
@@ -127,8 +125,22 @@ public partial class MainWindow
             }
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
+            var windowSetChanged = HasLiveWindowSetChanged(_liveElements, _liveSystem, nowElements, nowSystem);
             var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
-            var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+            var topologyChange = windowSetChanged || semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+
+            if (!hardChange && !windowSetChanged && semanticChange && IsExpectedGuidanceSemanticProgress(_liveElements, nowElements))
+            {
+                // A user following the current instruction is expected to change semantic UI state.
+                // Focusing the instructed input, selecting the instructed tab, or toggling the
+                // instructed checkbox is progress, not a route deviation. The action observer owns
+                // completion verification; the live watcher only refreshes its baseline here.
+                _liveElements = nowElements;
+                _liveSystem = nowSystem;
+                ClearStableLiveChangeCandidate();
+                await ValidateCurrentVisionTargetAsync(token);
+                return;
+            }
 
             if (!hardChange && !topologyChange)
             {
@@ -140,10 +152,7 @@ public partial class MainWindow
                 return;
             }
 
-            // Property-change callbacks already pass through the watcher's quiet period. A semantic
-            // state change on the same current control is therefore strong enough to invalidate one
-            // stale instruction without requiring a large whole-screen topology difference.
-            if (!hardChange && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
+            if (!hardChange && !windowSetChanged && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
                 await ValidateCurrentVisionTargetAsync(token);
                 return;
@@ -162,11 +171,13 @@ public partial class MainWindow
                 {
                     _history.Add(new GuideHistoryItem(
                         _stepNumber,
-                        semanticChange ? "semantic_state_changed" : "screen_changed",
+                        windowSetChanged ? "window_set_changed" : semanticChange ? "semantic_state_changed" : "screen_changed",
                         "現在の画面",
-                        semanticChange
-                            ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
-                            : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
+                        windowSetChanged
+                            ? "同じアプリ内でウィンドウやダイアログの構成が変わったため、古い案内を破棄して現在状態から再計画する。"
+                            : semanticChange
+                                ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
+                                : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
                     if (_history.Count > 12) _history.RemoveAt(0);
                 }
 
@@ -180,6 +191,66 @@ public partial class MainWindow
         {
             _liveObserveGate.Release();
         }
+    }
+
+    private bool IsExpectedGuidanceSemanticProgress(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        IReadOnlyList<UiElementCandidate> afterElements)
+    {
+        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction ||
+            _currentDecision is null || _currentTarget is null)
+            return false;
+
+        var action = _currentDecision.Action;
+        if (!action.Equals("type_text", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var before = FindMatchingTargetV3(_currentTarget, beforeElements);
+        var after = FindMatchingTargetV3(_currentTarget, afterElements);
+        if (before is null || after is null) return false;
+
+        var targetChanged = !string.Equals(SemanticLiveState(before), SemanticLiveState(after), StringComparison.Ordinal);
+        if (!targetChanged) return false;
+
+        if (action.Equals("type_text", StringComparison.OrdinalIgnoreCase) && !(!before.Focused && after.Focused))
+            return false;
+
+        // Focus naturally transfers from the previously focused control to the instructed target.
+        // Do not suppress a replan if any other control changed toggle/selection/expand state at the
+        // same time; that would hide a real route deviation behind an expected focus change.
+        var beforeMap = SemanticLiveCandidates(beforeElements);
+        var afterMap = SemanticLiveCandidates(afterElements);
+        var targetIdentity = StableLiveElementIdentity(after);
+        foreach (var pair in beforeMap)
+        {
+            if (!afterMap.TryGetValue(pair.Key, out var current)) continue;
+            var previous = pair.Value;
+            if (SemanticLiveState(previous).Equals(SemanticLiveState(current), StringComparison.Ordinal)) continue;
+            if (pair.Key.Equals(targetIdentity, StringComparison.Ordinal)) continue;
+            if (OnlyFocusChanged(previous, current)) continue;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool OnlyFocusChanged(UiElementCandidate before, UiElementCandidate after) =>
+        before.Focused != after.Focused &&
+        string.Equals(before.ToggleState, after.ToggleState, StringComparison.Ordinal) &&
+        before.Selected == after.Selected &&
+        string.Equals(before.ExpandCollapseState, after.ExpandCollapseState, StringComparison.Ordinal);
+
+    private static Dictionary<string, UiElementCandidate> SemanticLiveCandidates(IReadOnlyList<UiElementCandidate> elements)
+    {
+        var map = new Dictionary<string, UiElementCandidate>(StringComparer.Ordinal);
+        foreach (var item in elements.Where(x => x.Interactable))
+        {
+            var identity = StableLiveElementIdentity(item);
+            map.TryAdd(identity, item);
+        }
+        return map;
     }
 
     private bool ConfirmStableLiveChange(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot system)
@@ -233,9 +304,37 @@ public partial class MainWindow
 
         var beforeUrl = before.Browser?.Url ?? string.Empty;
         var afterUrl = after.Browser?.Url ?? string.Empty;
-        return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) &&
-               (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
+        return !string.IsNullOrWhiteSpace(beforeUrl) &&
+               !string.IsNullOrWhiteSpace(afterUrl) &&
+               !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool HasLiveWindowSetChanged(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        SystemContextSnapshot beforeSystem,
+        IReadOnlyList<UiElementCandidate> afterElements,
+        SystemContextSnapshot afterSystem)
+    {
+        var before = LiveWindowKeys(beforeElements, beforeSystem.ForegroundProcess);
+        var after = LiveWindowKeys(afterElements, afterSystem.ForegroundProcess);
+        return !before.SetEquals(after);
+    }
+
+    private static HashSet<string> LiveWindowKeys(IReadOnlyList<UiElementCandidate> elements, string foregroundProcess) =>
+        elements
+            .Where(x => x.ControlType.Equals("Window", StringComparison.OrdinalIgnoreCase) && IsRelevantProcess(x.ProcessName, foregroundProcess))
+            .Select(x =>
+            {
+                var bx = (int)Math.Round(x.X / 24d);
+                var by = (int)Math.Round(x.Y / 24d);
+                var bw = (int)Math.Round(x.Width / 24d);
+                var bh = (int)Math.Round(x.Height / 24d);
+                // Window titles are dynamic user/content data (document names, tab titles, subjects).
+                // They are not stable window identity and must not turn a harmless title refresh into
+                // a modal/window transition. Use process/class/automation identity plus geometry.
+                return $"{x.ProcessName}|{x.AutomationId}|{x.ClassName}|{bx},{by},{bw},{bh}";
+            })
+            .ToHashSet(StringComparer.Ordinal);
 
     private static bool HasSemanticLiveStateChanged(
         IReadOnlyList<UiElementCandidate> beforeElements,

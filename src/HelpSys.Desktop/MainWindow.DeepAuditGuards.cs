@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
 using HelpSys.Models;
@@ -17,9 +18,6 @@ public partial class MainWindow
         _deepAuditGuardsAttached = true;
         _actionObserver.LeftClick += ObserveOffRouteClickDeepAudit;
 
-        // KeyReleased was originally subscribed in the constructor. Reorder it once so this
-        // synchronous focus guard sees the finishing key before the normal verifier can mark a
-        // type_text step as complete. The guard never consumes normal typing or other key actions.
         _actionObserver.KeyReleased -= OnObservedKeyReleasedV3;
         _actionObserver.KeyReleased += ObserveTypeTextSubmitDeepAudit;
         _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
@@ -96,45 +94,155 @@ public partial class MainWindow
             !_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
             return;
 
-        var expected = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
-        if (!MatchesKeySpecV3(expected, observation)) return;
-        if (IsCurrentTextTargetFocusedDeepAudit(_currentTarget)) return;
+        var expectedKey = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
+        if (!MatchesKeySpecV3(expectedKey, observation)) return;
         if (Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 1) != 0) return;
 
         var generation = _sessionState.Generation;
-        _history.Add(new GuideHistoryItem(
-            _stepNumber,
-            "type_target_lost_focus",
-            DisplayName(_currentTarget.Name, _currentTarget.ControlType),
-            "入力を確定するキーが押された時点で案内対象の入力欄にフォーカスが無かったため、このキー操作を成功扱いにせず現在状態から復帰する。"));
-        if (_history.Count > 12) _history.RemoveAt(0);
-
-        // Clear synchronously before the normal KeyReleased subscriber runs. It will then observe
-        // no current decision and cannot turn this Enter key into a false successful type_text step.
-        _speechOutput.Stop();
-        ClearCurrentGuidanceV3();
-        SetState("入力する場所が変わったため、今の画面から正しい入力欄を確認し直しています…", speak: false);
-        _ = RecoverTypeTextFocusDeviationAsync(generation);
+        var decision = _currentDecision;
+        var target = _currentTarget;
+        _currentDecision = null;
+        _ = ValidateTypeTextSubmissionDeepAuditAsync(decision, target, generation);
     }
 
-    private async Task RecoverTypeTextFocusDeviationAsync(long generation)
+    private async Task ValidateTypeTextSubmissionDeepAuditAsync(
+        GuideDecision decision,
+        UiElementCandidate target,
+        long generation)
     {
         try
         {
             if (_sessionCts is null || _sessionCts.IsCancellationRequested || !_sessionState.IsCurrent(generation)) return;
-            await TryRouteRecoveryAsync("入力確定時に案内対象の入力欄からフォーカスが外れている", generation, _sessionCts.Token);
+
+            if (!IsCurrentTextTargetFocusedDeepAudit(target))
+            {
+                RecordTypeTextDeviation("type_target_lost_focus", target,
+                    "入力を確定するキーが押された時点で案内対象の入力欄にフォーカスが無かったため、このキー操作を成功扱いにせず現在状態から復帰する。");
+                ClearCurrentGuidanceV3();
+                SetState("入力する場所が変わったため、今の画面から正しい入力欄を確認し直しています…", speak: false);
+                await TryRouteRecoveryAsync("入力確定時に案内対象の入力欄からフォーカスが外れている", generation, _sessionCts.Token);
+                return;
+            }
+
+            var rootProcessId = _stepSystemBaseline?.ForegroundProcessId ?? target.ProcessId;
+            var fresh = rootProcessId > 0
+                ? await _scanner.RevalidateCandidateAsync(target, rootProcessId, _sessionCts.Token)
+                : await _scanner.RevalidateCandidateAsync(target, _sessionCts.Token);
+            if (!_sessionState.IsCurrent(generation) || _sessionCts.IsCancellationRequested) return;
+
+            if (fresh is null || !fresh.Focused)
+            {
+                RecordTypeTextDeviation("type_target_not_revalidated", target,
+                    "入力確定直前の再検証で案内対象の入力欄を確認できなかったため、成功扱いにしない。");
+                ClearCurrentGuidanceV3();
+                SetState("入力欄を確認し直しています…", speak: false);
+                await TryRouteRecoveryAsync("入力確定直前に案内対象の入力欄を再確認できない", generation, _sessionCts.Token);
+                return;
+            }
+
+            if (target.Password || fresh.Password)
+            {
+                RecordTypeTextDeviation("secret_input_target", fresh,
+                    "秘密入力欄の内容はHelpSysが取得・照合しないため、具体的なtype_text操作を成功扱いにしない。");
+                ClearCurrentGuidanceV3();
+                SetState("パスワードなどの秘密入力欄は内容を確認しません。秘密情報をHelpSysへ渡さずに続けられる次の操作を確認します…", speak: false);
+                await TryRouteRecoveryAsync("秘密入力欄へのtype_text案内を破棄して安全な経路を選び直す", generation, _sessionCts.Token);
+                return;
+            }
+
+            var expectedText = NormalizeExpectedInputTextDeepAudit(decision.InputText)
+                               ?? NormalizeExpectedInputTextDeepAudit(_cloudGuide.ResolveExpectedInputText(decision))
+                               ?? ExtractExpectedInputTextDeepAudit(decision.Instruction);
+            if (string.IsNullOrWhiteSpace(expectedText) || fresh.Value is null)
+            {
+                RecordTypeTextDeviation("type_text_unverifiable", fresh,
+                    "入力内容そのものをローカルで照合できなかったため、Enter操作を成功扱いにせず現在状態から再計画する。");
+                ClearCurrentGuidanceV3();
+                SetState("入力内容を安全に確認できないため、現在の画面から次の操作を確認し直しています…", speak: false);
+                await TryRouteRecoveryAsync("入力内容をローカルで照合できない", generation, _sessionCts.Token);
+                return;
+            }
+
+            if (!InputTextMatchesDeepAudit(fresh.Value, expectedText))
+            {
+                _currentDecision = decision;
+                _currentTarget = fresh;
+                _guidedBounds = fresh.Bounds;
+                _v3TrackedDecision = null;
+                _v3TypeActivityObserved = false;
+                _overlay.ShowTarget(fresh.Bounds, decision.Instruction);
+                SetState($"入力内容が案内と一致していません。青い枠の欄を「{expectedText}」に直してから、もう一度「Enter」と書かれたキーを1回押してください。", speak: true);
+                return;
+            }
+
+            // For type_text, the exact target, focus, non-secret expected value, and finishing key
+            // have now all been independently observed on the local machine. Requiring an additional
+            // page/topology transition would turn a correctly completed input into an unverified
+            // action when Enter merely commits the text without changing the screen. Record the
+            // verified text step and let the next planner observation decide what comes next.
+            _consecutiveFailures = 0;
+            _history.Add(new GuideHistoryItem(
+                ++_stepNumber,
+                "type_text",
+                DisplayName(fresh.Name, fresh.ControlType),
+                decision.Instruction));
+            if (_history.Count > 12) _history.RemoveAt(0);
+            ClearCurrentGuidanceV3();
+            _rejectedVisionTargets = 0;
+            SetState("入力内容を確認しました。現在の画面から次を確認しています…", speak: false);
+            await Task.Delay(120, _sessionCts.Token);
+            if (_sessionState.IsCurrent(generation) && !_sessionCts.IsCancellationRequested)
+                await AdvanceGuideAsync();
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch
         {
-            try { await RecoverFromObserverFailureAsync("入力欄の再確認で現在状態を確定できない"); }
+            try
+            {
+                ClearCurrentGuidanceV3();
+                await RecoverFromObserverFailureAsync("入力内容の確定検証で現在状態を確認できない");
+            }
             catch { }
         }
         finally
         {
             Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 0);
         }
+    }
+
+    private void RecordTypeTextDeviation(string action, UiElementCandidate target, string instruction)
+    {
+        _history.Add(new GuideHistoryItem(
+            _stepNumber,
+            action,
+            DisplayName(target.Name, target.ControlType),
+            instruction));
+        if (_history.Count > 12) _history.RemoveAt(0);
+    }
+
+    private static string? NormalizeExpectedInputTextDeepAudit(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        return text.Length <= 160 ? text : null;
+    }
+
+    private static string? ExtractExpectedInputTextDeepAudit(string? instruction)
+    {
+        if (string.IsNullOrWhiteSpace(instruction)) return null;
+        var match = Regex.Match(
+            instruction,
+            "[「『](?<text>[^」』\\r\\n]{1,160})[」』].{0,40}(?:と)?入力",
+            RegexOptions.CultureInvariant);
+        if (!match.Success) return null;
+        return NormalizeExpectedInputTextDeepAudit(match.Groups["text"].Value);
+    }
+
+    private static bool InputTextMatchesDeepAudit(string actual, string expected)
+    {
+        static string Normalize(string value) => value.Trim().Normalize().Replace('　', ' ');
+        return string.Equals(Normalize(actual), Normalize(expected), StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsCurrentTextTargetFocusedDeepAudit(UiElementCandidate target)

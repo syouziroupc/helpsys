@@ -4,6 +4,8 @@ import quality from './quality-guide.js';
 import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
+const JSON_AI_PATHS = new Set(['/v1/quality-guide', '/v1/guide', '/v1/vision-guide', '/v1/education/assist']);
+const AI_PATHS = new Set([...JSON_AI_PATHS, '/v1/transcribe']);
 const APP_RULES = [
   { goal: /(excel|エクセル)/i, processes: ['excel'], search: 'Excel' },
   { goal: /(word|ワード)/i, processes: ['winword'], search: 'Word' },
@@ -20,17 +22,24 @@ export default {
     try { url = new URL(request.url); }
     catch { return base.fetch(request, env, ctx); }
 
+    const transportRejected = guardInferenceShape(request, url.pathname);
+    if (transportRejected) return transportRejected;
+
+    const rateLimited = await enforceInferenceRateLimit(request, env, url.pathname);
+    if (rateLimited) return rateLimited;
+
+    const prepared = await bufferInferenceRequestIfNeeded(request, url.pathname);
+    if (prepared.response) return prepared.response;
+    request = prepared.request;
+
     if (url.pathname === '/v1/transcribe') {
       return transcribe.fetch(request, env, ctx);
     }
 
-    // Quality-first normal HelpSys planning always receives the current screenshot and
-    // UI structure together. It owns its own deterministic validation and secret guard.
     if (url.pathname === '/v1/quality-guide') {
       return quality.fetch(request, env, ctx);
     }
 
-    // Keep Education routing available, but normal HelpSys development is prioritized.
     if (url.pathname === '/v1/education/assist') {
       return education.fetch(request, env, ctx);
     }
@@ -42,7 +51,7 @@ export default {
     } catch { }
 
     const response = await base.fetch(request, env, ctx);
-    if (!bodyPromise || response.status !== 200) return response;
+    if (!bodyPromise || response.status !== 200) return stripInferenceCors(response, url.pathname);
 
     let body;
     let decision;
@@ -50,16 +59,134 @@ export default {
       body = await bodyPromise;
       decision = await response.clone().json();
     } catch {
-      return response;
+      return stripInferenceCors(response, url.pathname);
     }
 
     const secretOverride = guardSecretClarification(decision);
     if (secretOverride) return replaceJson(response, secretOverride);
 
     const override = isStructuredGuide(request) ? preventBackgroundDone(body, decision) : null;
-    return override ? replaceJson(response, override) : response;
+    return override ? replaceJson(response, override) : stripInferenceCors(response, url.pathname);
   }
 };
+
+function guardInferenceShape(request, pathname) {
+  if (!AI_PATHS.has(pathname)) return null;
+
+  if (request.method === 'OPTIONS') return apiError('not_found', 404);
+  if (request.method !== 'POST') return null;
+
+  const contentType = (request.headers.get('content-type') || '').toLowerCase();
+  if (JSON_AI_PATHS.has(pathname) && !contentType.startsWith('application/json'))
+    return apiError('unsupported_media_type', 415);
+  if (pathname === '/v1/transcribe' &&
+      !contentType.startsWith('audio/wav') && !contentType.startsWith('audio/x-wav'))
+    return apiError('unsupported_audio', 415);
+
+  const length = Number(request.headers.get('content-length') || 0);
+  const max = maxRequestBytes(pathname);
+  if (Number.isFinite(length) && length > max) return apiError('request_too_large', 413);
+
+  return null;
+}
+
+async function bufferInferenceRequestIfNeeded(request, pathname) {
+  if (request.method !== 'POST' || !AI_PATHS.has(pathname)) return { request, response: null };
+
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > 0) return { request, response: null };
+  if (!request.body) return { request, response: null };
+
+  const limit = maxRequestBytes(pathname);
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        try { await reader.cancel('request_too_large'); } catch { }
+        return { request, response: apiError('request_too_large', 413) };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { request, response: apiError('invalid_body', 400) };
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return { request: new Request(request, { body }), response: null };
+  } catch {
+    return { request, response: apiError('invalid_body', 400) };
+  }
+}
+
+function maxRequestBytes(pathname) {
+  if (pathname === '/v1/transcribe') return 1_000_000;
+  if (pathname === '/v1/education/assist') return 32_000;
+  return 8_000_000;
+}
+
+async function enforceInferenceRateLimit(request, env, pathname) {
+  if (request.method !== 'POST') return null;
+
+  let limiter = null;
+  if (pathname === '/v1/transcribe') limiter = env?.ASR_RATE_LIMITER;
+  else if (pathname === '/v1/education/assist') limiter = env?.EDUCATION_RATE_LIMITER;
+  else if (pathname === '/v1/quality-guide' || pathname === '/v1/guide' || pathname === '/v1/vision-guide')
+    limiter = env?.GUIDE_RATE_LIMITER;
+  else return null;
+
+  if (!limiter || typeof limiter.limit !== 'function') return null;
+
+  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  try {
+    const { success } = await limiter.limit({ key: ip });
+    if (success) return null;
+    return new Response(JSON.stringify({ error: 'rate_limited' }), {
+      status: 429,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'retry-after': '60',
+        'cache-control': 'no-store'
+      }
+    });
+  } catch (error) {
+    console.error('rate limiter failed', error);
+    return null;
+  }
+}
+
+function stripInferenceCors(response, pathname) {
+  if (!AI_PATHS.has(pathname)) return response;
+  const headers = new Headers(response.headers);
+  headers.delete('access-control-allow-origin');
+  headers.delete('access-control-allow-methods');
+  headers.delete('access-control-allow-headers');
+  headers.set('cache-control', 'no-store');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function apiError(error, status) {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    }
+  });
+}
 
 export function guardSecretClarification(decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
@@ -133,5 +260,9 @@ function usable(raw) {
 function replaceJson(response, value) {
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
+  headers.delete('access-control-allow-origin');
+  headers.delete('access-control-allow-methods');
+  headers.delete('access-control-allow-headers');
+  headers.set('cache-control', 'no-store');
   return new Response(JSON.stringify(value), { status: 200, headers });
 }

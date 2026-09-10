@@ -1,0 +1,22 @@
+name: Planner fault response probe
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  planner-faults:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: dotnet restore HelpSys.sln
+      - run: dotnet build HelpSys.sln -c Release --no-restore
+      - name: Run HTTP/JSON/latency fault cases
+        shell: pwsh
+        run: tests/fault_response_probe.ps1
