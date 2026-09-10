@@ -61,7 +61,7 @@ public sealed class CloudAiAdapter : IDisposable
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!path.StartsWith('/', StringComparison.Ordinal)) throw new ArgumentException("Cloud path must start with '/'.", nameof(path));
+        if (!path.StartsWith("/", StringComparison.Ordinal)) throw new ArgumentException("Cloud path must start with '/'.", nameof(path));
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
