@@ -44,8 +44,8 @@ The human operates the computer. Return only ONE immediate next operation by cal
 MULTI-SOURCE EVIDENCE FUSION:
 - The screenshot is ONE source, not the master source. Do not make the whole decision depend on image recognition alone.
 - screenshot: evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
-- uiElements: evidence for control identity, Name, AutomationId, ControlType, current value/state, focus, actionability and exact Windows bounds.
-- systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser URL/domain.
+- uiElements: evidence for control identity, Name, AutomationId, ControlType, input-presence/state, focus, actionability and exact Windows bounds. Raw input values are intentionally unavailable.
+- systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser domain-level context. Full browser URLs are intentionally unavailable.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
 - completedSteps: sequence evidence. It explains how the current state may have been reached and which actions already failed, but never overrides current state.
 - windowsKnowledge/canonicalConstraint: Windows behavior and known standard paths. Standard paths are useful references, not a substitute for observing the current state.
@@ -76,7 +76,7 @@ QUALITY AND SPEED:
 - status=done only when the requested goal itself is visibly achieved now. Set screenConfirmed=true and state the visible proof.
 - status=target only when the action and target are supported by the current evidence. For a UIA target, prefer an actual current uiElements id; for a visual-only target use vision-target.
 - screenConfirmed means the screenshot itself supports the claimed visible state. Do not set it merely because UIA or systemContext says the control exists.
-- Prefer a current uiElements id when it clearly corresponds to the visible/current control. Use its value, selected/toggle/expand state and focus when relevant.
+- Prefer a current uiElements id when it clearly corresponds to the visible/current control. Use inputPresent, selected/toggle/expand state and focus when relevant.
 - targetId="vision-target" is only for a clearly visible target without a reliable matching UI element; provide a tight 0..1000 rectangle.
 - press_key may use targetId=null only when the screenshot supports that keyboard route.
 - Never invent controls, labels, app state, URLs, completed actions, or coordinates.
@@ -146,14 +146,16 @@ export default {
         max_completion_tokens: 520,
         tools: [qualityTool],
         tool_choice: 'required',
-        parallel_tool_calls: false
+        parallel_tool_calls: false,
+        store: false
       });
 
       const raw = extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
       return json(validateQualityDecision(raw, elements, task, recoveryMode));
-    } catch (error) {
-      console.error('quality guide inference failed', error);
+    } catch {
+      // Never serialize provider exceptions into Workers logs.
+      console.error('quality_guide_inference_failed');
       return json({ error: 'quality_inference_failed' }, 502);
     }
   }
@@ -358,7 +360,7 @@ function compactElement(value) {
     controlType: text(value.controlType, 80), processName: text(value.processName, 80),
     interactable: value.interactable !== false, enabled: value.enabled !== false,
     keyboardFocusable: value.keyboardFocusable === true, focused: value.focused === true, password: value.password === true,
-    value: value.password === true ? null : nullableText(value.value, 180),
+    inputPresent: value.password === true ? false : value.inputPresent === true,
     toggleState: nullableText(value.toggleState, 60),
     selected: typeof value.selected === 'boolean' ? value.selected : null,
     expandCollapseState: nullableText(value.expandCollapseState, 60),
@@ -377,8 +379,8 @@ function compactSystemContext(value) {
   if (!value || typeof value !== 'object') return { foregroundProcess: '', foregroundTitle: '', foregroundProcessId: 0, taskbarVisible: false, runningApps: [], browser: null };
   const b = value.browser ?? value.Browser;
   const browser = b && typeof b === 'object' ? {
-    processName: text(b.processName ?? b.ProcessName, 80), windowTitle: text(b.windowTitle ?? b.WindowTitle, 240),
-    url: nullableText(b.url ?? b.Url, 900), domain: nullableText(b.domain ?? b.Domain, 220),
+    processName: text(b.processName ?? b.ProcessName, 80),
+    domain: nullableText(b.domain ?? b.Domain, 220),
     https: typeof (b.https ?? b.Https) === 'boolean' ? (b.https ?? b.Https) : null,
     addressFieldFocused: (b.addressFieldFocused ?? b.AddressFieldFocused) === true
   } : null;
@@ -419,7 +421,6 @@ function compactEvidence(value, elements, history, systemContext) {
     foregroundProcess: text(value?.foregroundProcess ?? value?.ForegroundProcess ?? systemContext.foregroundProcess, 80),
     foregroundTitle: text(value?.foregroundTitle ?? value?.ForegroundTitle ?? systemContext.foregroundTitle, 260),
     browserDomain: nullableText(value?.browserDomain ?? value?.BrowserDomain ?? systemContext.browser?.domain, 220),
-    browserUrl: nullableText(value?.browserUrl ?? value?.BrowserUrl ?? systemContext.browser?.url, 900),
     historyCount: finite(value?.historyCount ?? value?.HistoryCount ?? history.length),
     recentTargets: Array.isArray(recentValues) ? recentValues.slice(0, 5).map(x => text(x, 180)).filter(Boolean) : []
   };
