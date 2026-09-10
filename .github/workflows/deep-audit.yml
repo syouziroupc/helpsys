@@ -31,5 +31,14 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Build
+      - name: Build normal edition
         run: dotnet build HelpSys.sln -c Release --no-restore
+
+      - name: Run Privacy Gate normal probe
+        run: dotnet run --project tests/HelpSys.PrivacyProbe/HelpSys.PrivacyProbe.csproj -c Release
+
+      - name: Build Safe edition
+        run: dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release -p:SafeBuild=true
+
+      - name: Run Privacy Gate Safe probe
+        run: dotnet run --project tests/HelpSys.PrivacyProbe/HelpSys.PrivacyProbe.csproj -c Release -p:SafeBuild=true -- --expect-safe-profile
