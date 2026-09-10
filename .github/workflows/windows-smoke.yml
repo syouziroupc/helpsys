@@ -140,7 +140,6 @@ jobs:
           }
 
           try {
-            # Visual regression check for the actual listening overlay. No microphone is used.
             $env:HELPSYS_SMOKE_LISTENING_OVERLAY = '1'
             $overlayProcess = Start-Process $exe -PassThru
             Start-Sleep -Seconds 2
@@ -166,7 +165,6 @@ jobs:
 
             $valuePattern = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
             $valuePattern.SetValue('open the test target')
-
             $invokePattern = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
             $invokePattern.Invoke()
             Start-Sleep -Seconds 10
@@ -177,12 +175,8 @@ jobs:
               throw 'Quality-first planner did not reach the mock API.'
             }
             $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($diagnostics.path -ne '/v1/quality-guide') {
-              throw "Normal HelpSys used the wrong planning route: $($diagnostics.path)"
-            }
-            if ($diagnostics.hasScreenshot -ne $true) {
-              throw 'Normal HelpSys planning request did not include the current screenshot.'
-            }
+            if ($diagnostics.path -ne '/v1/quality-guide') { throw "Normal HelpSys used the wrong planning route: $($diagnostics.path)" }
+            if ($diagnostics.hasScreenshot -ne $true) { throw 'Normal HelpSys planning request did not include the current screenshot.' }
             if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
               Write-Host '--- mock quality-first diagnostics ---'
               Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
@@ -197,10 +191,8 @@ jobs:
               Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
               throw "HelpSys did not expose an actionable quality-first guidance step. UIA names: $($names -join ' | ')"
             }
-
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
 
-            # Safe-specific GUI and fail-closed egress regression.
             Stop-Process -Id $process.Id -Force
             $process.WaitForExit()
             $process = $null
@@ -223,12 +215,9 @@ jobs:
             if ($safeCommander.Current.IsEnabled) { throw 'HelpSys Safe Commander button must be disabled.' }
             if (-not $safePrivacy.Current.IsEnabled) { throw 'HelpSys Safe screen-analysis pause control must remain available.' }
             $safeStateText = $safeState.Current.Name
-            if ($safeStateText -notlike '*音声のクラウド送信も無効*') {
-              throw "HelpSys Safe did not disclose its cloud-voice restriction. State: $safeStateText"
-            }
+            if ($safeStateText -notlike '*音声のクラウド送信も無効*') { throw "HelpSys Safe did not disclose its cloud-voice restriction. State: $safeStateText" }
             Save-DesktopScreenshot 'artifacts/helpsys-safe-idle.png'
 
-            # With no HELPSYS_SAFE_API_BASE, Safe must remain usable locally but must not contact even the loopback mock API.
             $safeValuePattern = $safeRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
             $safeValuePattern.SetValue('open the test target')
             $safeInvokePattern = $safeGuide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
@@ -250,6 +239,10 @@ jobs:
             if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
             if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
           }
+
+      - name: Password and OTP privacy GUI smoke
+        shell: pwsh
+        run: ./tests/privacy_gui_smoke.ps1
 
       - name: Upload smoke artifacts
         if: always()
