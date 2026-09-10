@@ -116,8 +116,9 @@ var editWithSecret = new UiElementCandidate(
     10, 10, 200, 32, 2233,
     "USER_TYPED_SECRET_VALUE");
 var frame = new ScreenCaptureFrame("data:image/png;base64,AA==", 0, 0, 100, 100, 100, 100);
-var approval = gate.ApproveQuality("open settings", frame, [editWithSecret], [], browserContext, false, null);
-Assert(approval.CanSend, "Benign browser context should remain usable after URL minimization.");
+var secretRichRequest = "contact alice@example.com password=hunter2 key sk-ABCDEFGHIJKLMNOPQRSTUV card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_SECRET#fragment";
+var approval = gate.ApproveQuality(secretRichRequest, frame, [editWithSecret], [], browserContext, false, null);
+Assert(approval.CanSend, "Benign browser context should remain usable after outbound minimization.");
 var outboundJson = JsonSerializer.Serialize(approval.Body);
 Assert(!outboundJson.Contains("SECRET_QUERY_VALUE", StringComparison.Ordinal),
     "Full URL query/fragment data must never enter outbound cloud evidence.");
@@ -127,6 +128,16 @@ Assert(outboundJson.Contains("example.com", StringComparison.Ordinal),
     "Browser domain should remain available for useful cloud guidance.");
 Assert(!outboundJson.Contains("USER_TYPED_SECRET_VALUE", StringComparison.Ordinal),
     "Raw UI input values must never enter outbound cloud payloads.");
+Assert(!outboundJson.Contains("alice@example.com", StringComparison.Ordinal) && outboundJson.Contains("<email>", StringComparison.Ordinal),
+    "Email addresses typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("hunter2", StringComparison.Ordinal) && outboundJson.Contains("<redacted-secret>", StringComparison.Ordinal),
+    "Labeled secrets typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("sk-ABCDEFGHIJKLMNOPQRSTUV", StringComparison.Ordinal) && outboundJson.Contains("<redacted-api-key>", StringComparison.Ordinal),
+    "Raw API keys typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("4242 4242 4242 4242", StringComparison.Ordinal) && outboundJson.Contains("<redacted-card>", StringComparison.Ordinal),
+    "Valid card numbers typed into the HelpSys request must be redacted before egress.");
+Assert(!outboundJson.Contains("REQUEST_SECRET", StringComparison.Ordinal) && !outboundJson.Contains("/reset", StringComparison.Ordinal),
+    "Request URLs must be reduced to origin before egress.");
 
 AssertThrows<InvalidOperationException>(
     () => { using var _ = new CloudAiAdapter("http://example.com"); },
