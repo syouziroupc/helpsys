@@ -23,7 +23,7 @@
         <RowDefinition Height="25" />
         <RowDefinition Height="46" />
         <RowDefinition Height="Auto" />
-        <RowDefinition Height="28" />
+        <RowDefinition Height="Auto" MinHeight="28" />
       </Grid.RowDefinitions>
 
       <Grid x:Name="DragHandle" Grid.Row="0" Background="Transparent" MouseLeftButtonDown="DragHandle_MouseLeftButtonDown">
@@ -90,22 +90,24 @@
         </Grid>
       </Border>
 
-      <DockPanel Grid.Row="3" LastChildFill="True">
+      <DockPanel Grid.Row="3" LastChildFill="True" MinHeight="28">
         <Button DockPanel.Dock="Right" x:Name="CommanderButton" Content="コマンダー"
                 MinWidth="94" Height="23" Padding="8,0" Margin="8,0,0,0"
-                FontSize="10.5" Click="CommanderButton_Click"
+                FontSize="10.5" VerticalAlignment="Center" Click="CommanderButton_Click"
                 ToolTip="『ねえコマンダー』で呼び出す" />
         <Button DockPanel.Dock="Right" x:Name="PrivacyButton" Content="解析停止"
                 MinWidth="72" Height="23" Padding="8,0" Margin="8,0,0,0"
-                FontSize="10.5" Click="PrivacyButton_Click"
+                FontSize="10.5" VerticalAlignment="Center" Click="PrivacyButton_Click"
                 ToolTip="画面解析を停止します" />
         <TextBlock DockPanel.Dock="Right" Text="Ctrl+Alt+H" FontSize="10" Foreground="#FF9AA3B2" VerticalAlignment="Center" Margin="10,0,0,0" />
         <TextBlock x:Name="StateText"
                    Text="やりたいことを入力してください。"
                    FontSize="11"
+                   LineHeight="16"
                    Foreground="#FF596579"
                    VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis" />
+                   TextWrapping="Wrap"
+                   MaxHeight="48" />
       </DockPanel>
     </Grid>
   </Border>
