@@ -27,6 +27,7 @@ async function ask(body) {
   assert(response.status === 200, `unexpected quality response ${response.status}`);
   const value = await response.json();
   assert(lastInvocation?.args?.image?.startsWith('data:image/png;base64,'), 'quality planner must send the screenshot to the model');
+  assert(lastInvocation?.args?.store === false, 'quality planner must explicitly disable model-side storage when supported.');
   return value;
 }
 
@@ -158,13 +159,17 @@ value = await ask({
   request: 'このサイトを見たい',
   recoveryMode: true,
   routeIssue: '安全警告の画面へ逸脱した',
-  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 80, foregroundTitle: 'Privacy error', runningApps: ['chrome'], browser: { domain: 'example.test', url: 'https://example.test' } },
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 80, foregroundTitle: 'Privacy error', runningApps: ['chrome'], browser: { domain: 'example.test', url: 'https://example.test/path?secret=DO_NOT_FORWARD' } },
+  evidence: { browserDomain: 'example.test', browserUrl: 'https://example.test/private?session=DO_NOT_FORWARD_EVIDENCE' },
   elements: [
     { id: 'unsafe-close', name: '閉じる', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
     { id: 'warning', name: 'Privacy error 安全ではありません', controlType: 'Text', processName: 'chrome', interactable: false, enabled: true }
   ]
 });
 assert(value.status === 'not_found', 'recovery mode must never relax a browser safety warning guard');
+assert(payload().systemContext?.browser?.url === undefined, 'quality model payload must not contain a full browser URL.');
+assert(payload().evidenceSummary?.browserUrl === undefined, 'quality evidence payload must not contain a full browser URL.');
+assert(JSON.stringify(payload()).includes('DO_NOT_FORWARD') === false, 'quality model payload must not retain URL secrets.');
 
 nextDecision = {
   status: 'target', targetId: 'chrome-desktop', action: 'left_click',
@@ -193,9 +198,10 @@ nextDecision = {
 value = await ask({
   request: 'ログインしたい',
   systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 40, runningApps: ['chrome'] },
-  elements: [{ id: 'secret', name: 'パスワード', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, focused: true, keyboardFocusable: true, password: true, value: 'do-not-send' }]
+  elements: [{ id: 'secret', name: 'パスワード', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, focused: true, keyboardFocusable: true, password: true, value: 'do-not-send', inputPresent: false }]
 });
-assert(payload().uiElements?.[0]?.value === null, 'password values must never enter the model payload');
+assert(payload().uiElements?.[0]?.value === undefined, 'raw input values must never enter the quality model payload');
+assert(payload().uiElements?.[0]?.inputPresent === false, 'password controls must not expose input-presence state to the model');
 
 nextDecision = {
   status: 'clarify', targetId: null, action: 'none', instruction: '', question: 'パスワードを教えてください。', key: null,
