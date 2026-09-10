@@ -100,7 +100,7 @@ public sealed class CloudAiAdapter : IDisposable
     {
         if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("/", StringComparison.Ordinal))
             throw new ArgumentException("Cloud path must start with '/'.", nameof(path));
-        if (path.Contains('?', StringComparison.Ordinal) || path.Contains('#', StringComparison.Ordinal) || path.Contains("://", StringComparison.Ordinal))
+        if (path.Contains("?", StringComparison.Ordinal) || path.Contains("#", StringComparison.Ordinal) || path.Contains("://", StringComparison.Ordinal))
             throw new ArgumentException("Cloud path must not contain query parameters, fragments or absolute URLs.", nameof(path));
     }
 
