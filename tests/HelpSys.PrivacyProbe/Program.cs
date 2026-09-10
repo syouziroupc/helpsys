@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using HelpSys.Models;
 using HelpSys.Services;
@@ -119,7 +120,10 @@ var frame = new ScreenCaptureFrame("data:image/png;base64,AA==", 0, 0, 100, 100,
 var secretRichRequest = "contact alice@example.com password=hunter2 key sk-ABCDEFGHIJKLMNOPQRSTUV card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_SECRET#fragment";
 var approval = gate.ApproveQuality(secretRichRequest, frame, [editWithSecret], [], browserContext, false, null);
 Assert(approval.CanSend, "Benign browser context should remain usable after outbound minimization.");
-var outboundJson = JsonSerializer.Serialize(approval.Body);
+var outboundJson = JsonSerializer.Serialize(approval.Body, new JsonSerializerOptions
+{
+    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+});
 Assert(!outboundJson.Contains("SECRET_QUERY_VALUE", StringComparison.Ordinal),
     "Full URL query/fragment data must never enter outbound cloud evidence.");
 Assert(!outboundJson.Contains("/account/reset", StringComparison.Ordinal),
