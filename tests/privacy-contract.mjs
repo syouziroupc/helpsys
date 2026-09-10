@@ -86,6 +86,9 @@ assert(!privacyUi.includes('_activeRequest = null'), 'Privacy Mode must preserve
 assert(privacyUi.includes('TryResumePrivacyModeAsync'), 'Privacy Mode must support automatic safe-screen resumption.');
 assert(privacyUi.includes('Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState))'), 'Privacy-aware Safe startup state must survive later generic Loaded handlers.');
 assert(xaml.includes('x:Name="PrivacyButton"'), 'The user must have a one-click screen-analysis pause control.');
+const stateTextXaml = xaml.match(/<TextBlock x:Name="StateText"[\s\S]*?\/>/)?.[0] ?? '';
+assert(stateTextXaml.includes('TextWrapping="Wrap"'), 'Privacy and safety status reasons must wrap instead of disappearing off-screen.');
+assert(!stateTextXaml.includes('TextTrimming='), 'Privacy and safety status reasons must not be ellipsized.');
 
 assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Normal quality guidance must preflight privacy before screenshot creation.');
 assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Privacy preflight must happen before quality screenshot creation.');
