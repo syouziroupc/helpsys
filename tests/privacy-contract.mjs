@@ -103,7 +103,10 @@ assert(capture.includes('CaptureSensitiveInputBounds'), 'Screenshot privacy scan
 assert(capture.includes('if (current.IsPassword) return true;'), 'Password controls must remain unconditionally redacted in local capture.');
 assert(capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'Every visible Edit/ComboBox must be redacted regardless of its current value.');
 assert(!capture.includes('valuePattern.Current.Value'), 'Screenshot redaction must not read raw input values.');
-assert(capture.includes('入力欄を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed.');
+assert(capture.includes('ShouldRedactVisibleSensitiveText(current.Name)'), 'Visible high-confidence PII/secret text must be considered by the independent screenshot redaction scan.');
+for (const requiredPattern of ['VisibleEmailRegex', 'VisibleJapanesePhoneRegex', 'VisiblePostalCodeRegex', 'VisibleBearerRegex', 'VisibleJwtRegex', 'VisibleApiKeyRegex', 'VisibleCardNumberRegex', 'VisibleSensitiveUrlRegex'])
+  assert(capture.includes(requiredPattern), `Screenshot visible-data redaction is missing ${requiredPattern}.`);
+assert(capture.includes('入力欄や表示済み秘密情報を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed for both input and displayed sensitive data.');
 assert(capture.includes('FullMonitorShellProcesses'), 'Only shell operation surfaces should retain full-monitor capture.');
 assert(capture.includes('return new CaptureArea(left, top, width, height);'), 'Normal application capture must be clipped to the active window.');
 assert(capture.includes('data minimization'), 'Active-window capture minimization must remain an explicit privacy invariant.');
