@@ -17,6 +17,7 @@ const qualityUi = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
 const recoveryUi = read('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs');
 const telemetry = read('src/HelpSys.Desktop/Services/PrivacySafeTelemetry.cs');
 const diagnostics = read('src/HelpSys.Desktop/Services/DiagnosticModePolicy.cs');
+const serverGuard = read('worker/reliability-v4-guard.js');
 const xaml = read('src/HelpSys.Desktop/MainWindow.xaml');
 const desktopProject = read('src/HelpSys.Desktop/HelpSys.Desktop.csproj');
 
@@ -73,6 +74,8 @@ assert(!gate.includes('HttpClient') && !gate.includes('Task<'), 'PrivacyGate hot
 assert(!gate.includes('File.') && !gate.includes('Clipboard'), 'PrivacyGate must not read files or clipboard contents.');
 assert(!gate.includes('value = x.Value'), 'Raw UI input values must never be copied into outbound payloads.');
 assert(gate.includes('inputPresent = !x.Password && !string.IsNullOrEmpty(x.Value)'), 'Only boolean input-presence state may leave the UI candidate value boundary.');
+assert(gate.includes('BearerRegex') && gate.includes('JwtRegex') && gate.includes('KnownApiKeyRegex'), 'Outbound free-form text must redact common token/API-key forms.');
+assert(gate.includes('PassesLuhn'), 'Potential payment-card numbers must be checked locally before cloud use.');
 
 assert(evidence.includes('Full URLs can contain session IDs'), 'Guidance evidence must document why full URLs are local-only.');
 assert(/context\.Browser\?\.Domain,\s*null,\s*context\.Browser\?\.AddressFieldFocused/s.test(evidence), 'Cloud evidence must omit the full browser URL while preserving domain-level context.');
@@ -104,14 +107,18 @@ for (const forbidden of ['Screenshot', 'Ocr', 'BrowserUrl', 'DocumentBody', 'Mai
 assert(telemetry.includes('NullPrivacySafeTelemetrySink'), 'Telemetry must have a no-op default sink.');
 assert(telemetry.includes('HELPSYS_TELEMETRY'), 'Telemetry must require explicit opt-in.');
 
-aassertDiagnosticPolicy();
-function aassertDiagnosticPolicy() {
+assertDiagnosticPolicy();
+function assertDiagnosticPolicy() {
   assert(diagnostics.includes('HELPSYS_DIAGNOSTIC_MODE'), 'Diagnostic mode must require explicit opt-in.');
   assert(diagnostics.includes('HELPSYS_DIAGNOSTIC_RAW_SCREEN'), 'Raw diagnostic screen persistence must require a second explicit opt-in.');
   assert(diagnostics.includes('I_UNDERSTAND_RAW_SCREEN_DATA'), 'Raw screen diagnostic opt-in must be intentionally difficult to enable accidentally.');
   assert(diagnostics.includes('#if HELPSYS_SAFE_BUILD'), 'Safe build must compile out diagnostic raw-screen persistence.');
   assert(!diagnostics.includes('File.') && !diagnostics.includes('StreamWriter'), 'Diagnostic policy itself must not persist anything automatically.');
 }
+
+assert(serverGuard.includes('privacyHardenedEnv'), 'Production Worker must wrap text/vision inference in the no-storage environment.');
+assert(serverGuard.includes('{ ...options, store: false }'), 'Text/vision Workers AI inference must force store:false server-side.');
+assert(serverGuard.includes("url.pathname === '/v1/transcribe'"), 'ASR must remain separated from the GLM storage-option wrapper.');
 
 assert(desktopProject.includes("'$(SafeBuild)' == 'true'"), 'Desktop project must expose a separate compile-time Safe build.');
 assert(desktopProject.includes('HELPSYS_SAFE_BUILD'), 'Safe build must define its fixed privacy profile symbol.');
