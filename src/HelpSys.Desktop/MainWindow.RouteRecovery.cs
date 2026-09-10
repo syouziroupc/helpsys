@@ -86,6 +86,9 @@ public partial class MainWindow
                 continue;
             }
 
+            var privacy = _cloudGuide.PreflightPrivacy(context, candidates);
+            if (!privacy.CanSend) return false;
+
             ScreenCaptureFrame frame;
             try
             {
