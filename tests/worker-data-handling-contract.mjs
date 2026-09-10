@@ -26,6 +26,20 @@ assert(guard.includes('sanitizeScreenBody'), 'Production Worker entry must sanit
 assert(guard.includes('const { value, Value, ...safe } = element'), 'Worker boundary must remove raw UI value fields.');
 assert(guard.includes('const { url, Url, ...safeBrowser } = browser'), 'Worker boundary must remove full browser URL fields.');
 assert(guard.includes('const { browserUrl, BrowserUrl, ...safeEvidence } = evidence'), 'Worker boundary must remove full evidence URL fields.');
+assert(guard.includes('sanitizeOutboundText'), 'Worker screen boundary must re-sanitize free-form text from old or modified clients.');
+for (const marker of ['<email>', '<phone>', '<postal-code>', '<redacted-secret>', '<redacted-api-key>', '<redacted-card>'])
+  assert(guard.includes(marker), `Worker screen boundary is missing privacy replacement marker ${marker}.`);
+for (const pattern of ['EMAIL', 'JP_PHONE', 'JP_POSTAL', 'LABELED_SECRET', 'BEARER', 'JWT', 'API_KEY', 'CARD', 'URL'])
+  assert(guard.includes(`const ${pattern}`), `Worker screen boundary is missing ${pattern} sanitizer.`);
+assert(guard.includes('sanitizeAliasedText(body, \'request\', \'Request\''), 'Worker must sanitize the user request before model routing.');
+assert(guard.includes('sanitizeStringArray(safeEvidence'), 'Worker must sanitize free-form evidence arrays before model routing.');
 assert(guard.includes('store: false'), 'Production Worker AI wrapper must force store:false as defense in depth.');
+
+assert(education.includes('sanitizeEducationText'), 'Education Worker must sanitize learner-controlled text before inference.');
+for (const marker of ['<email>', '<phone>', '<postal-code>', '<redacted-secret>', '<redacted-api-key>', '<redacted-card>'])
+  assert(education.includes(marker), `Education Worker is missing privacy replacement marker ${marker}.`);
+assert(education.includes('const lessonTitle = sanitizeEducationText'), 'Education lesson titles must be sanitized before inference.');
+assert(education.includes('const objective = sanitizeEducationText'), 'Education objectives must be sanitized before inference.');
+assert(education.includes('const learnerMessage = sanitizeEducationText'), 'Education learner messages must be sanitized before inference.');
 
 console.log('HelpSys Worker privacy data-handling contract passed.');
