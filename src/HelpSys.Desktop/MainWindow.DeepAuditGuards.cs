@@ -175,11 +175,24 @@ public partial class MainWindow
                 return;
             }
 
-            _currentDecision = decision;
-            _currentTarget = fresh;
-            _guidedBounds = fresh.Bounds;
-            _speechOutput.Stop();
-            await CompleteCurrentStepV3Async();
+            // For type_text, the exact target, focus, non-secret expected value, and finishing key
+            // have now all been independently observed on the local machine. Requiring an additional
+            // page/topology transition would turn a correctly completed input into an unverified
+            // action when Enter merely commits the text without changing the screen. Record the
+            // verified text step and let the next planner observation decide what comes next.
+            _consecutiveFailures = 0;
+            _history.Add(new GuideHistoryItem(
+                ++_stepNumber,
+                "type_text",
+                DisplayName(fresh.Name, fresh.ControlType),
+                decision.Instruction));
+            if (_history.Count > 12) _history.RemoveAt(0);
+            ClearCurrentGuidanceV3();
+            _rejectedVisionTargets = 0;
+            SetState("入力内容を確認しました。現在の画面から次を確認しています…", speak: false);
+            await Task.Delay(120, _sessionCts.Token);
+            if (_sessionState.IsCurrent(generation) && !_sessionCts.IsCancellationRequested)
+                await AdvanceGuideAsync();
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
