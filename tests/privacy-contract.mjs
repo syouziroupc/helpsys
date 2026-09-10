@@ -84,6 +84,7 @@ assert(privacyUi.includes('プライバシー保護のため画面解析を一�
 assert(privacyUi.includes('_sessionCts?.Cancel()'), 'Privacy Mode must cancel in-flight planning.');
 assert(!privacyUi.includes('_activeRequest = null'), 'Privacy Mode must preserve the active task so it can resume.');
 assert(privacyUi.includes('TryResumePrivacyModeAsync'), 'Privacy Mode must support automatic safe-screen resumption.');
+assert(privacyUi.includes('Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState))'), 'Privacy-aware Safe startup state must survive later generic Loaded handlers.');
 assert(xaml.includes('x:Name="PrivacyButton"'), 'The user must have a one-click screen-analysis pause control.');
 
 assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Normal quality guidance must preflight privacy before screenshot creation.');
@@ -100,6 +101,9 @@ assert(capture.includes('if (current.IsPassword) return true;'), 'Password contr
 assert(capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'Every visible Edit/ComboBox must be redacted regardless of its current value.');
 assert(!capture.includes('valuePattern.Current.Value'), 'Screenshot redaction must not read raw input values.');
 assert(capture.includes('入力欄を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed.');
+assert(capture.includes('FullMonitorShellProcesses'), 'Only shell operation surfaces should retain full-monitor capture.');
+assert(capture.includes('return new CaptureArea(left, top, width, height);'), 'Normal application capture must be clipped to the active window.');
+assert(capture.includes('data minimization'), 'Active-window capture minimization must remain an explicit privacy invariant.');
 
 assert(telemetry.includes('sealed record PrivacySafeTelemetryEvent'), 'A fixed long-term telemetry allowlist type is required.');
 for (const forbidden of ['Screenshot', 'Ocr', 'BrowserUrl', 'DocumentBody', 'MailBody', 'InputValue', 'Cookie', 'Token', 'Password'])
