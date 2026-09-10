@@ -19,7 +19,11 @@ const prohibitedApis = [
   { re: /\bPasswordVault\b/, label: 'Windows PasswordVault' },
   { re: /\bPasswordCredential\b/, label: 'Windows PasswordCredential' },
   { re: /ProtectedData\.Unprotect\s*\(/, label: 'DPAPI credential decryption' },
-  { re: /Windows\.Security\.Credentials/, label: 'Windows credential namespace' }
+  { re: /Windows\.Security\.Credentials/, label: 'Windows credential namespace' },
+  { re: /File\.(?:WriteAllBytes|WriteAllText|WriteAllLines|AppendAllText|AppendAllLines)\s*\(/, label: 'automatic file persistence API' },
+  { re: /new\s+StreamWriter\s*\(/, label: 'automatic stream/file writer' },
+  { re: /File\.OpenWrite\s*\(/, label: 'automatic file write stream' },
+  { re: /new\s+FileStream\s*\([^\n]*(?:FileMode\.(?:Create|CreateNew|Append|OpenOrCreate)|FileAccess\.Write)/, label: 'automatic writable FileStream' }
 ];
 
 const browserSecretStoreTerms = [
@@ -27,8 +31,10 @@ const browserSecretStoreTerms = [
   'Web Data',
   'Network\\Cookies',
   'Network/Cookies',
+  'Cookies',
   'Local Storage',
-  'Session Storage'
+  'Session Storage',
+  'Local State'
 ];
 
 for (const file of walk('src/HelpSys.Desktop')) {
@@ -37,7 +43,7 @@ for (const file of walk('src/HelpSys.Desktop')) {
     assert(!re.test(source), `${label} is prohibited in HelpSys Desktop: ${file}`);
 
   for (const line of source.split(/\r?\n/)) {
-    const performsFileRead = /File\.(?:ReadAllBytes|ReadAllText|OpenRead|Open)\s*\(/.test(line) ||
+    const performsFileRead = /File\.(?:ReadAllBytes|ReadAllText|ReadAllLines|OpenRead|Open)\s*\(/.test(line) ||
       /new\s+FileStream\s*\(/.test(line) || /SQLiteConnection|SqliteConnection/.test(line);
     if (!performsFileRead) continue;
     for (const term of browserSecretStoreTerms)
@@ -45,4 +51,4 @@ for (const file of walk('src/HelpSys.Desktop')) {
   }
 }
 
-console.log('HelpSys prohibited-capability contract passed.');
+console.log('HelpSys prohibited-capability and persistence contract passed.');
