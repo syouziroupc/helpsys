@@ -15,9 +15,20 @@ public partial class MainWindow
         _cloudGuide.PrivacyBlocked += CloudGuide_PrivacyBlocked;
         _liveWatcher.Pulse += PrivacyWatcher_Pulse;
         UpdatePrivacyButton();
+
+        if (!_speechInput.CloudTranscriptionAllowed)
+        {
+            try { _commander.SetEnabled(false); } catch { }
+            VoiceButton.IsEnabled = false;
+            VoiceButton.ToolTip = "安全版では音声データをクラウドへ送信しません。文字入力を使用してください。";
+            CommanderButton.IsEnabled = false;
+            CommanderButton.Content = "コマンダー OFF";
+            CommanderButton.ToolTip = "安全版ではクラウド音声認識を使用しないため無効です。";
+        }
+
         SetState(
             _cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe
-                ? "安全版：画面情報を利用して案内します。秘密情報の画面では送信を止めます。画面解析はいつでも停止できます。"
+                ? "安全版：秘密情報の画面では送信を止めます。音声のクラウド送信も無効です。画面解析はいつでも停止できます。"
                 : "画面情報を利用して案内します。秘密情報の画面では送信を止めます。画面解析はいつでも停止できます。",
             speak: false);
     }
