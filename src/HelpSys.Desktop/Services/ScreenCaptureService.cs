@@ -19,6 +19,10 @@ public sealed class ScreenCaptureService
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const int MaxImageWidth = 1280;
     private const int MaxImageHeight = 720;
+    private static readonly HashSet<string> FullMonitorShellProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost"
+    };
     private readonly int _selfProcessId = Environment.ProcessId;
 
     public Task<ScreenCaptureFrame> CaptureAsync(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken = default)
@@ -34,9 +38,9 @@ public sealed class ScreenCaptureService
         if (captureArea.Width <= 0 || captureArea.Height <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
 
         // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
-        // Independently inspect UIA trees on the captured monitor. Every visible input control is
-        // redacted before egress; cloud guidance receives only its geometry/boolean input state.
-        // If this bounded scan cannot finish, fail closed instead of sending a partial image.
+        // Independently inspect UIA trees intersecting only the area that will leave the process.
+        // Every visible input control is redacted before egress. If this bounded scan cannot finish,
+        // fail closed instead of sending a partial image.
         var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
@@ -59,10 +63,13 @@ public sealed class ScreenCaptureService
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
             cancellationToken.ThrowIfCancellationRequested();
+            // Scan again after BitBlt to cover an input control that appeared during capture.
             var sensitiveRedactionsAfter = CaptureSensitiveInputBounds(captureArea, cancellationToken);
             var allRedactions = redactions
                 .Concat(sensitiveRedactionsBefore)
                 .Concat(sensitiveRedactionsAfter)
+                .Where(x => !x.IsEmpty)
+                .Distinct()
                 .ToArray();
 
             foreach (var rect in allRedactions)
@@ -97,8 +104,10 @@ public sealed class ScreenCaptureService
     private CaptureArea ResolveCaptureArea()
     {
         // HelpSys itself is topmost while the user asks for guidance. Walk behind it to the first
-        // normal visible application and capture only that monitor. This avoids transmitting an
-        // unrelated second monitor and preserves more pixels for the screen the user is operating.
+        // normal visible application. For normal applications, capture only that window clipped to
+        // its monitor. This is data minimization: unrelated desktop/background windows never enter
+        // the image. Shell surfaces need the whole monitor because the desktop, Start/search and
+        // taskbar are themselves the operation surface.
         var hwnd = GetForegroundWindow();
         if (BelongsToSelf(hwnd))
         {
@@ -118,19 +127,33 @@ public sealed class ScreenCaptureService
         IntPtr monitor = IntPtr.Zero;
         if (hwnd != IntPtr.Zero && !BelongsToSelf(hwnd)) monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
         if (monitor == IntPtr.Zero && GetCursorPos(out var cursorPoint)) monitor = MonitorFromPoint(cursorPoint, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+            throw new InvalidOperationException("操作中のモニターを特定できないため、画面画像を送信しません。");
 
-        if (monitor != IntPtr.Zero)
-        {
-            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            if (GetMonitorInfo(monitor, ref info))
-            {
-                var width = info.Monitor.Right - info.Monitor.Left;
-                var height = info.Monitor.Bottom - info.Monitor.Top;
-                if (width > 0 && height > 0) return new CaptureArea(info.Monitor.Left, info.Monitor.Top, width, height);
-            }
-        }
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info))
+            throw new InvalidOperationException("操作中のモニター領域を取得できないため、画面画像を送信しません。");
 
-        throw new InvalidOperationException("操作中のモニターを特定できないため、複数画面をまとめて送信せずVision案内を停止します。");
+        var monitorArea = new CaptureArea(
+            info.Monitor.Left,
+            info.Monitor.Top,
+            info.Monitor.Right - info.Monitor.Left,
+            info.Monitor.Bottom - info.Monitor.Top);
+        if (monitorArea.Width <= 0 || monitorArea.Height <= 0)
+            throw new InvalidOperationException("操作中のモニター領域が不正なため、画面画像を送信しません。");
+
+        if (hwnd == IntPtr.Zero || BelongsToSelf(hwnd) || IsShellSurface(hwnd) || !GetWindowRect(hwnd, out var windowRect))
+            return monitorArea;
+
+        var left = Math.Max(windowRect.Left, info.Monitor.Left);
+        var top = Math.Max(windowRect.Top, info.Monitor.Top);
+        var right = Math.Min(windowRect.Right, info.Monitor.Right);
+        var bottom = Math.Min(windowRect.Bottom, info.Monitor.Bottom);
+        var width = right - left;
+        var height = bottom - top;
+        if (width < 80 || height < 60) return monitorArea;
+
+        return new CaptureArea(left, top, width, height);
     }
 
     private bool BelongsToSelf(IntPtr hwnd)
@@ -138,6 +161,23 @@ public sealed class ScreenCaptureService
         if (hwnd == IntPtr.Zero) return false;
         GetWindowThreadProcessId(hwnd, out var pid);
         return unchecked((int)pid) == _selfProcessId;
+    }
+
+    private static bool IsShellSurface(IntPtr hwnd)
+    {
+        try
+        {
+            GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == 0) return true;
+            using var process = Process.GetProcessById(unchecked((int)pid));
+            return FullMonitorShellProcesses.Contains(process.ProcessName);
+        }
+        catch
+        {
+            // Unknown ownership must not shrink the image around a possibly wrong window.
+            // The Privacy Gate still controls whether the resulting image can leave the process.
+            return true;
+        }
     }
 
     private IReadOnlyList<Rect> CaptureSensitiveInputBounds(CaptureArea captureArea, CancellationToken cancellationToken)
