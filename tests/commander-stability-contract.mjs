@@ -12,6 +12,7 @@ const window = read('src/HelpSys.Desktop/MainWindow.Commander.cs');
 const qualityWindow = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
 const listeningOverlay = read('src/HelpSys.Desktop/ListeningOverlayWindow.xaml');
 const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
+const cloudAdapter = read('src/Shared/CloudAiAdapter.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
 const systemContext = read('src/HelpSys.Desktop/Services/SystemContextService.cs');
@@ -54,7 +55,7 @@ assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'Structured 
 assert(qualityWindow.includes('_speechInput.HideOverlay();'), 'Screen capture must remove the speech overlay first.');
 
 assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(9)'), 'Cloud guidance calls must have a short per-attempt timeout.');
-assert(cloud.includes('x-helpsys-request-id'), 'Guidance calls must carry request IDs for production debugging.');
+assert(cloudAdapter.includes('x-helpsys-request-id'), 'Cloud AI adapter must attach request IDs for production debugging.');
 
 assert(!watcher.includes('pump.GetAwaiter().GetResult()'), 'Live watcher shutdown must never synchronously block the WPF thread.');
 assert(watcher.includes('DrainStoppedPumpAsync'), 'Live watcher pump must drain asynchronously.');
