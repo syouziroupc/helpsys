@@ -319,6 +319,11 @@ public partial class MainWindow
         IReadOnlyList<UiElementCandidate> candidates,
         CancellationToken cancellationToken)
     {
+        var privacyContext = _systemContext.Capture();
+        var privacy = _cloudGuide.PreflightPrivacy(privacyContext, candidates);
+        if (!privacy.CanSend)
+            throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
+
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
         _speechInput.HideOverlay();
         _overlay.Hide();
