@@ -97,6 +97,30 @@ AssertThrows<InvalidOperationException>(
     "External plaintext HTTP must be rejected.");
 using (var loopback = new CloudAiAdapter("http://127.0.0.1:8787")) { }
 
+var oldNormalApiBase = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
+var oldSafeApiBase = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
+var oldSafeApiKey = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
+try
+{
+    // A normal endpoint must never silently configure Safe. Safe requires its own reviewed endpoint variable.
+    Environment.SetEnvironmentVariable("HELPSYS_API_BASE", "http://127.0.0.1:8787");
+    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_BASE", null);
+    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_KEY", null);
+    using var defaultAdapter = new CloudAiAdapter();
+    if (expectSafeProfile)
+        Assert(!defaultAdapter.IsConfigured,
+            "Safe build must fail closed when HELPSYS_SAFE_API_BASE is absent, even if HELPSYS_API_BASE is set.");
+    else
+        Assert(defaultAdapter.IsConfigured,
+            "Normal build should retain its configured/default cloud endpoint behavior.");
+}
+finally
+{
+    Environment.SetEnvironmentVariable("HELPSYS_API_BASE", oldNormalApiBase);
+    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_BASE", oldSafeApiBase);
+    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_KEY", oldSafeApiKey);
+}
+
 var oldDiagnostic = Environment.GetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE");
 var oldRawDiagnostic = Environment.GetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN");
 try
