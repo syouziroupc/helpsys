@@ -179,9 +179,22 @@ public partial class MainWindow
     private void UpdatePrivacyButton()
     {
         if (PrivacyButton is null) return;
-        PrivacyButton.Content = _cloudGuide.PrivacyGate.ManualPause ? "解析再開" : "解析停止";
-        PrivacyButton.ToolTip = _cloudGuide.PrivacyGate.ManualPause
-            ? "画面解析の再開を試みます"
-            : "画面解析を停止します";
+
+        if (_cloudGuide.PrivacyGate.ManualPause)
+        {
+            PrivacyButton.Content = "解析再開";
+            PrivacyButton.ToolTip = "画面解析の再開を試みます";
+            return;
+        }
+
+        if (_privacyPaused)
+        {
+            PrivacyButton.Content = "停止を固定";
+            PrivacyButton.ToolTip = "秘密情報を検出して自動停止中です。押すと手動停止に切り替えます。";
+            return;
+        }
+
+        PrivacyButton.Content = "解析停止";
+        PrivacyButton.ToolTip = "画面解析を停止します";
     }
 }
