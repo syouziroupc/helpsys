@@ -31,13 +31,24 @@ public sealed class CloudGuideService : IDisposable
     public bool CloudEndpointConfigured => _adapter.IsConfigured;
 
     /// <summary>
-    /// Lightweight local check used before a screenshot is even created. A blocked or unknown
-    /// state enters Privacy Mode immediately. The send-time gate still runs again as a TOCTOU guard.
+    /// Lightweight local check used before a screenshot is even created. A blocked, unknown, or
+    /// unconfigured Safe cloud state enters Privacy Mode immediately. The send-time gate still runs
+    /// again as a TOCTOU guard.
     /// </summary>
     public PrivacyAssessment PreflightPrivacy(
         SystemContextSnapshot systemContext,
         IReadOnlyList<UiElementCandidate> elements)
     {
+        if (!CloudEndpointConfigured)
+        {
+            var unavailable = new PrivacyAssessment(
+                PrivacyClassification.Unknown,
+                "cloud_endpoint_unconfigured",
+                "安全版の承認済みAI API接続先が設定されていないため、画面画像を取得せず外部送信を停止しています。");
+            PrivacyBlocked?.Invoke(unavailable);
+            return unavailable;
+        }
+
         var relevantElements = SelectRelevantElements(elements, systemContext);
         var assessment = _privacyGate.EvaluateState(systemContext, relevantElements);
         if (!assessment.CanSend) PrivacyBlocked?.Invoke(assessment);
