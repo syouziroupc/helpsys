@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSysは、GLMでWindows画面を確認し、次に操作する場所を案内するPC操作支援ツールです。通常版は『ねえコマンダー』で音声起動できます。">
+  <meta name="description" content="HelpSysは、Windows画面を確認し、次に操作する場所を案内するPC操作支援ツールです。通常版・安全版・Education版を提供しています。">
   <meta name="theme-color" content="#0b1020">
   <link rel="canonical" href="https://helpsys.syouziroupc.workers.dev/">
   <title>HelpSys — Windows操作を、画面上で案内。</title>
@@ -22,11 +22,12 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">WINDOWS 10 / 11 ・ RELIABILITY V8 PREVIEW</p>
+        <p class="eyebrow">WINDOWS 10 / 11 ・ PRIVACY GATE PREVIEW</p>
         <h1>次の操作を、<br><span>画面上で教える。</span></h1>
-        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。GLMが現在の画面とWindowsの構造情報を照合し、あなたが次にクリック・入力する場所を1手ずつ案内します。通常版は「ねえコマンダー」と呼びかけて音声で開始できます。</p>
+        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。現在の画面とWindowsの構造情報を照合し、あなたが次にクリック・入力する場所を1手ずつ案内します。通常版は「ねえコマンダー」と呼びかけて音声で開始できます。</p>
         <div class="actions" aria-label="ダウンロード">
           <a class="download-button" href="/download">通常版をダウンロード</a>
+          <a class="download-button ghost" href="/download/safe">安全版</a>
           <a class="download-button ghost" href="/download/education">Education版</a>
           <span class="download-note">Windows 10 / 11 ・ 64-bit ・ 開発版</span>
         </div>
@@ -49,20 +50,26 @@
 
     <section class="section">
       <div class="section-title">
-        <p class="eyebrow">TWO EDITIONS</p>
+        <p class="eyebrow">THREE EDITIONS</p>
         <h2>用途に合わせて選ぶ。</h2>
       </div>
       <div class="download-options">
         <article class="download-card">
           <p class="eyebrow">HELPSYS</p>
           <h3>通常版</h3>
-          <p>現在の画面から次の1手を案内します。Reliability v8ではGLMへ移行し、Commanderのマイク競合・フリーズ対策と、デスクトップショートカット等の物理操作判定を強化しました。</p>
+          <p>現在の画面から次の1手を案内します。画面取得・外部送信・保存を分離し、クラウドへ出す情報はPrivacy Gateで統制します。</p>
           <a class="download-button" href="/download">最新版ZIPをダウンロード</a>
+        </article>
+        <article class="download-card">
+          <p class="eyebrow">HELPSYS SAFE</p>
+          <h3>安全版</h3>
+          <p>通常版と同じ案内基盤を使いながら、金融・証券画面や開発者ツール等もより広くPrivacy Modeへ切り替える厳格プロファイルです。</p>
+          <a class="download-button ghost" href="/download/safe">安全版最新版ZIP</a>
         </article>
         <article class="download-card">
           <p class="eyebrow">HELPSYS EDUCATION</p>
           <h3>Education版</h3>
-          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。通常版の安定化を優先しているため、Educationの追加開発は現在優先していません。</p>
+          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。教育AIの通信も共通Cloud AI Adapterを利用します。</p>
           <a class="download-button ghost" href="/download/education">Education最新版ZIP</a>
         </article>
       </div>
@@ -77,50 +84,51 @@
         <article class="card">
           <span class="number">01</span>
           <h3>HelpSysを呼ぶ</h3>
-          <p>「ねえコマンダー」と呼びかけるか、画面右下のボタン、<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。v8では他の音声入力が動く前にCommanderのマイク待機を完全に解放します。</p>
+          <p>「ねえコマンダー」と呼びかけるか、画面右下のボタン、<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。</p>
         </article>
         <article class="card">
           <span class="number">02</span>
-          <h3>やりたいことを伝える</h3>
-          <p>「YouTubeを見たい」など目的を文字または音声で伝えます。GLM-5.3 Flashが現在のスクリーンショットとUI構造を同時に確認して次の操作を判断します。</p>
+          <h3>画面をローカルで確認</h3>
+          <p>画面取得層とPrivacy Gateがローカルで状態を確認します。秘密情報・認証・Cookie/Storage等の危険状態ではクラウド画面解析へ進みません。</p>
         </article>
         <article class="card">
           <span class="number">03</span>
           <h3>自分で操作する</h3>
-          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行い、HelpSysは操作後の画面変化を確認してから次へ進みます。</p>
+          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行い、HelpSysは操作後の意味のある画面変化を確認してから次へ進みます。</p>
         </article>
       </div>
     </section>
 
     <section class="section split-section">
       <div>
-        <p class="eyebrow">RELIABILITY V8</p>
-        <h2>正しさと応答速度を両立する。</h2>
+        <p class="eyebrow">PRIVACY GATE</p>
+        <h2>見る・送る・保存するを分離する。</h2>
       </div>
       <div class="feature-list">
-        <div><strong>GLMで画面を確認</strong><span>画面判断はGLM-5.3 Flash、通常テキスト処理はGLM-4.7 Flashを使用します。</span></div>
-        <div><strong>物理操作を再検証</strong><span>デスクトップショートカットはダブルクリック、タスクバーは1クリックなど、AI出力をそのまま表示せずWindows側の操作形態と照合します。</span></div>
-        <div><strong>Commanderを固めない</strong><span>音声recognizerの停止・破棄を状態lockから分離し、マイク解放完了後だけ次の認識へ進みます。</span></div>
-        <div><strong>待ちすぎない</strong><span>音声入力とモデル呼び出しに短い上限時間を設け、固まって見える長時間待機を避けます。</span></div>
+        <div><strong>送信経路を1か所へ</strong><span>画面由来のクラウド要求はPrivacy Gateを通過し、実際のHTTP通信はCloud AI Adapterへ集約します。</span></div>
+        <div><strong>危険状態をハードブロック</strong><span>Password、OTP、Token、API Key、Cookie/Storage、金融認証などはAIへ危険判定を依頼せずローカルで遮断します。</span></div>
+        <div><strong>UNKNOWNは送らない</strong><span>安全判定に失敗した場合はクラウドへ送らず、Privacy Modeのまま安全な画面へ戻るのを待ちます。</span></div>
+        <div><strong>意味のある変化だけ再解析</strong><span>フォーカス・ウィンドウ構造・選択状態・ページ遷移等をローカル監視し、文字入力1文字ごとの再送信は行いません。</span></div>
       </div>
     </section>
 
     <section class="privacy">
       <div>
-        <p class="eyebrow">PRIVACY</p>
-        <h2>送信前に画面を確認する。</h2>
+        <p class="eyebrow">PRIVACY MODE</p>
+        <h2>危険画面でも支援自体は終わらない。</h2>
       </div>
-      <p>Quality Firstでは案内判断に現在のスクリーンショットを使用します。ただし、安全にキャプチャできない場合はUI構造だけで推測して続行しません。パスワード、PIN、OTP、認証コード等をHelpSysへ入力するよう求める案内は拒否します。</p>
+      <p>プライバシー保護が必要な画面ではクラウド画面解析だけを一時停止します。HelpSysは現在の依頼を保持し、ローカル監視を続け、安全な画面へ戻ると案内を再開します。利用者自身も「解析停止」ボタンでいつでも停止できます。生スクリーンショットやOCR全文を通常ログとして保存する設計にはしません。</p>
     </section>
 
     <section class="download-panel">
       <div>
         <p class="eyebrow">DOWNLOAD</p>
         <h2>HelpSys for Windows</h2>
-        <p>Windows 10 / 11、64-bit環境向けの開発版です。通常版の最新版はReliability v8です。</p>
+        <p>Windows 10 / 11、64-bit環境向けの開発版です。既存の通常版ダウンロードURLはそのまま維持しています。</p>
       </div>
       <div class="download-panel-actions">
         <a class="download-button secondary" href="/download">通常版</a>
+        <a class="download-button secondary ghost" href="/download/safe">安全版</a>
         <a class="download-button secondary ghost" href="/download/education">Education版</a>
       </div>
     </section>
