@@ -35,6 +35,9 @@ jobs:
           node --check worker/transcribe-selftest.mjs
           node --check tests/site-release-contract.mjs
           node --check tests/commander-stability-contract.mjs
+          node --check tests/privacy-contract.mjs
+          node --check tests/privacy-capability-contract.mjs
+          node --check tests/safe-edition-contract.mjs
 
       - name: Test Worker contract
         run: |
@@ -45,6 +48,9 @@ jobs:
           node worker/reliability-v4-selftest.mjs
           node worker/quality-guide-selftest.mjs
           node worker/transcribe-selftest.mjs
+          node tests/privacy-contract.mjs
+          node tests/privacy-capability-contract.mjs
+          node tests/safe-edition-contract.mjs
 
       - name: Test site and release contract
         run: node tests/site-release-contract.mjs
@@ -52,8 +58,10 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Build
-        run: dotnet build HelpSys.sln -c Release --no-restore
+      - name: Build normal and Safe editions
+        run: |
+          dotnet build HelpSys.sln -c Release --no-restore
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:SafeBuild=true
 
       - name: Launch and capture desktop
         shell: pwsh
@@ -69,6 +77,7 @@ jobs:
           Start-Sleep -Seconds 3
 
           $exe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.exe'
+          $safeExe = Resolve-Path 'src/HelpSys.Desktop/bin/Release/net10.0-windows/HelpSys.Safe.exe'
           $overlayProcess = $null
           $process = $null
 
@@ -181,6 +190,29 @@ jobs:
             }
 
             Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
+
+            # Safe-specific GUI regression. It must boot normally but expose no cloud voice path.
+            Stop-Process -Id $process.Id -Force
+            $process.WaitForExit()
+            $process = Start-Process $safeExe -PassThru
+            Start-Sleep -Seconds 5
+            if ($process.HasExited) { throw 'HelpSys Safe exited before the Safe UI smoke screenshot.' }
+
+            $safeVoice = Find-HelpSysElement 'VoiceButton'
+            $safeCommander = Find-HelpSysElement 'CommanderButton'
+            $safePrivacy = Find-HelpSysElement 'PrivacyButton'
+            $safeState = Find-HelpSysElement 'StateText'
+            if ($null -eq $safeVoice -or $null -eq $safeCommander -or $null -eq $safePrivacy -or $null -eq $safeState) {
+              throw 'HelpSys Safe privacy controls were not exposed through UI Automation.'
+            }
+            if ($safeVoice.Current.IsEnabled) { throw 'HelpSys Safe cloud Voice button must be disabled.' }
+            if ($safeCommander.Current.IsEnabled) { throw 'HelpSys Safe Commander button must be disabled.' }
+            if (-not $safePrivacy.Current.IsEnabled) { throw 'HelpSys Safe screen-analysis pause control must remain available.' }
+            $safeStateText = $safeState.Current.Name
+            if ($safeStateText -notlike '*音声のクラウド送信も無効*') {
+              throw "HelpSys Safe did not disclose its cloud-voice restriction. State: $safeStateText"
+            }
+            Save-DesktopScreenshot 'artifacts/helpsys-safe-idle.png'
           }
           finally {
             Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
