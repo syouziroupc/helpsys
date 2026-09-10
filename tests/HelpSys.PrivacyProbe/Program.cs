@@ -1,10 +1,25 @@
 using System.Diagnostics;
+using System.Text.Json;
 using HelpSys.Models;
 using HelpSys.Services;
+using HelpSys.Shared;
 
 static void Assert(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
+}
+
+static void AssertThrows<T>(Action action, string message) where T : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (T)
+    {
+        return;
+    }
+    throw new InvalidOperationException(message);
 }
 
 var gate = new PrivacyGate();
@@ -44,6 +59,88 @@ Assert(gate.EvaluateState(safeContext, []).Classification == PrivacyClassificati
 gate.SetManualPause(false);
 Assert(gate.EvaluateState(safeContext, []).Classification == PrivacyClassification.Safe,
     "Manual pause must be resumable on a safe screen.");
+
+var browserContext = new SystemContextSnapshot(
+    "msedge",
+    "Example page",
+    2233,
+    true,
+    ["msedge"],
+    new BrowserContextSnapshot(
+        "msedge",
+        "Example page",
+        "https://example.com/account/reset?auth=SECRET_QUERY_VALUE#private",
+        "example.com",
+        true,
+        false));
+var editWithSecret = new UiElementCandidate(
+    "edit", "Search", "searchBox", "TextBox", "Edit", "msedge",
+    true, true, true, false, false,
+    10, 10, 200, 32, 2233,
+    "USER_TYPED_SECRET_VALUE");
+var frame = new ScreenCaptureFrame("data:image/png;base64,AA==", 0, 0, 100, 100, 100, 100);
+var approval = gate.ApproveQuality("open settings", frame, [editWithSecret], [], browserContext, false, null);
+Assert(approval.CanSend, "Benign browser context should remain usable after URL minimization.");
+var outboundJson = JsonSerializer.Serialize(approval.Body);
+Assert(!outboundJson.Contains("SECRET_QUERY_VALUE", StringComparison.Ordinal),
+    "Full URL query/fragment data must never enter outbound cloud evidence.");
+Assert(!outboundJson.Contains("/account/reset", StringComparison.Ordinal),
+    "Full browser URL path must never enter outbound cloud evidence.");
+Assert(outboundJson.Contains("example.com", StringComparison.Ordinal),
+    "Browser domain should remain available for useful cloud guidance.");
+Assert(!outboundJson.Contains("USER_TYPED_SECRET_VALUE", StringComparison.Ordinal),
+    "Raw UI input values must never enter outbound cloud payloads.");
+
+AssertThrows<InvalidOperationException>(
+    () => { using var _ = new CloudAiAdapter("http://example.com"); },
+    "External plaintext HTTP must be rejected.");
+using (var loopback = new CloudAiAdapter("http://127.0.0.1:8787")) { }
+
+var oldDiagnostic = Environment.GetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE");
+var oldRawDiagnostic = Environment.GetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN");
+try
+{
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE", null);
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", null);
+    var diagnosticsOff = new DiagnosticModePolicy();
+    Assert(!diagnosticsOff.Enabled && !diagnosticsOff.RawScreenPersistenceAllowed,
+        "Diagnostic mode and raw screen persistence must be off by default.");
+
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE", "1");
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", "I_UNDERSTAND_RAW_SCREEN_DATA");
+    var diagnosticsRequested = new DiagnosticModePolicy();
+#if HELPSYS_SAFE_BUILD
+    Assert(!diagnosticsRequested.Enabled && !diagnosticsRequested.RawScreenPersistenceAllowed,
+        "Safe build must permanently disable raw diagnostic screen persistence.");
+#else
+    Assert(diagnosticsRequested.Enabled && diagnosticsRequested.RawScreenPersistenceAllowed,
+        "Normal build requires both explicit diagnostic opt-ins before raw screen persistence may be considered.");
+#endif
+}
+finally
+{
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE", oldDiagnostic);
+    Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", oldRawDiagnostic);
+}
+
+var telemetryProperties = typeof(PrivacySafeTelemetryEvent).GetProperties().Select(x => x.Name).OrderBy(x => x).ToArray();
+var allowedTelemetryProperties = new[]
+{
+    "AppKind", "ErrorCode", "HelpSysVersion", "ResponseTimeMs", "SessionId", "Success", "SupportStage", "TaskKind"
+}.OrderBy(x => x).ToArray();
+Assert(telemetryProperties.SequenceEqual(allowedTelemetryProperties),
+    "Long-term telemetry schema contains a field outside the privacy allowlist.");
+
+var oldTelemetry = Environment.GetEnvironmentVariable("HELPSYS_TELEMETRY");
+try
+{
+    Environment.SetEnvironmentVariable("HELPSYS_TELEMETRY", null);
+    Assert(!new PrivacySafeTelemetry().Enabled, "Long-term telemetry must be disabled by default.");
+}
+finally
+{
+    Environment.SetEnvironmentVariable("HELPSYS_TELEMETRY", oldTelemetry);
+}
 
 var expectSafeProfile = args.Contains("--expect-safe-profile", StringComparer.OrdinalIgnoreCase);
 if (expectSafeProfile)
