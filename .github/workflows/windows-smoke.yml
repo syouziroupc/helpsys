@@ -38,6 +38,7 @@ jobs:
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
           node --check tests/safe-edition-contract.mjs
+          node --check tests/worker-data-handling-contract.mjs
 
       - name: Test Worker contract
         run: |
@@ -51,6 +52,7 @@ jobs:
           node tests/privacy-contract.mjs
           node tests/privacy-capability-contract.mjs
           node tests/safe-edition-contract.mjs
+          node tests/worker-data-handling-contract.mjs
 
       - name: Test site and release contract
         run: node tests/site-release-contract.mjs
@@ -243,6 +245,10 @@ jobs:
       - name: Password and OTP privacy GUI smoke
         shell: pwsh
         run: ./tests/privacy_gui_smoke.ps1
+
+      - name: Privacy Mode automatic resume GUI smoke
+        shell: pwsh
+        run: ./tests/privacy_resume_smoke.ps1
 
       - name: Upload smoke artifacts
         if: always()
