@@ -14,7 +14,7 @@ const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g
 const API_KEY = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/gi;
 const PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/gi;
 const CARD = /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g;
-const URL = /https?:\/\/[^\s<>"']+/gi;
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
 
 const APP_RULES = [
   { goal: /(excel|エクセル)/i, processes: ['excel'], search: 'Excel' },
@@ -145,7 +145,7 @@ export function sanitizeScreenBody(raw) {
 export function sanitizeOutboundText(value, max = 1200) {
   if (typeof value !== 'string') return value;
   let text = value.replace(/[\r\n]+/g, ' ').trim();
-  text = text.replace(URL, raw => stripUrlSecrets(raw));
+  text = text.replace(URL_PATTERN, raw => stripUrlSecrets(raw));
   text = text.replace(EMAIL, '<email>');
   text = text.replace(JP_PHONE, '<phone>');
   text = text.replace(JP_POSTAL, '<postal-code>');
