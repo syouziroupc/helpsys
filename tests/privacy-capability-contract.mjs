@@ -23,7 +23,17 @@ const prohibitedApis = [
   { re: /File\.(?:WriteAllBytes|WriteAllText|WriteAllLines|AppendAllText|AppendAllLines)\s*\(/, label: 'automatic file persistence API' },
   { re: /new\s+StreamWriter\s*\(/, label: 'automatic stream/file writer' },
   { re: /File\.OpenWrite\s*\(/, label: 'automatic file write stream' },
-  { re: /new\s+FileStream\s*\([^\n]*(?:FileMode\.(?:Create|CreateNew|Append|OpenOrCreate)|FileAccess\.Write)/, label: 'automatic writable FileStream' }
+  { re: /new\s+FileStream\s*\([^\n]*(?:FileMode\.(?:Create|CreateNew|Append|OpenOrCreate)|FileAccess\.Write)/, label: 'automatic writable FileStream' },
+
+  // HelpSys is a guidance product: the human performs every mouse/keyboard action.
+  // Observing low-level input is allowed, synthesizing/injecting it is not.
+  { re: /\bSendInput\s*\(/, label: 'Windows input injection API' },
+  { re: /\bmouse_event\s*\(/, label: 'legacy mouse injection API' },
+  { re: /\bkeybd_event\s*\(/, label: 'legacy keyboard injection API' },
+  { re: /\bSetCursorPos\s*\(/, label: 'automatic cursor movement API' },
+  { re: /\bSendKeys\s*\.\s*Send(?:Wait)?\s*\(/, label: 'synthetic keyboard input API' },
+  { re: /\bInputSimulator\b|WindowsInput\.Native/, label: 'input simulation library' },
+  { re: /\bIUIAutomationInvokePattern\b|\bIUIAutomationValuePattern\b/, label: 'UI Automation action pattern interface' }
 ];
 
 const browserSecretStoreTerms = [
@@ -51,4 +61,4 @@ for (const file of walk('src/HelpSys.Desktop')) {
   }
 }
 
-console.log('HelpSys prohibited-capability and persistence contract passed.');
+console.log('HelpSys prohibited-capability, persistence and input-injection contract passed.');
