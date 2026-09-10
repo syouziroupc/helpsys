@@ -39,8 +39,9 @@ export default {
 
       const text = typeof result?.text === 'string' ? result.text.trim() : '';
       return json({ text, model });
-    } catch (error) {
-      console.error('transcription failed', error);
+    } catch {
+      // Audio or provider context must never be serialized through exception logging.
+      console.error('transcription_failed');
       return json({ error: 'transcription_failed' }, 502);
     }
   }
