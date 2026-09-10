@@ -28,18 +28,16 @@ public sealed class CloudGuideService : IDisposable
     public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
 
-    public async Task<QualityGuideDecision> PlanQualityAsync(
+    public Task<QualityGuideDecision> PlanQualityAsync(
         string request,
         ScreenCaptureFrame frame,
         IReadOnlyList<UiElementCandidate> elements,
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
-    {
-        return await PlanQualityCoreAsync(request, frame, elements, history, systemContext, false, null, cancellationToken);
-    }
+        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, false, null, cancellationToken);
 
-    public async Task<QualityGuideDecision> PlanRecoveryAsync(
+    public Task<QualityGuideDecision> PlanRecoveryAsync(
         string request,
         string routeIssue,
         ScreenCaptureFrame frame,
@@ -47,9 +45,7 @@ public sealed class CloudGuideService : IDisposable
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
-    {
-        return await PlanQualityCoreAsync(request, frame, elements, history, systemContext, true, routeIssue, cancellationToken);
-    }
+        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, true, routeIssue, cancellationToken);
 
     private async Task<QualityGuideDecision> PlanQualityCoreAsync(
         string request,
@@ -62,21 +58,11 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken)
     {
         var relevantElements = SelectRelevantElements(elements, systemContext);
-        var approval = _privacyGate.ApproveQuality(
-            request,
-            frame,
-            relevantElements,
-            history,
-            systemContext,
-            recoveryMode,
-            routeIssue);
+        var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
-        var decision = await SendAsync<QualityGuideDecision>(
-            "/v1/quality-guide",
-            approval.Body!,
-            cancellationToken);
+        var decision = await SendAsync<QualityGuideDecision>("/v1/quality-guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
     }
@@ -101,6 +87,16 @@ public sealed class CloudGuideService : IDisposable
         return decision;
     }
 
+    // Compatibility overload for the old visual fallback. It is still gated; Quality First uses
+    // the overload that also supplies current UI candidates so password/OTP state can be blocked.
+    public Task<VisionGuideDecision> PlanVisionAsync(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken = default)
+        => PlanVisionAsync(request, frame, [], history, systemContext, cancellationToken);
+
     public async Task<VisionGuideDecision> PlanVisionAsync(
         string request,
         ScreenCaptureFrame frame,
@@ -123,9 +119,7 @@ public sealed class CloudGuideService : IDisposable
     {
         if (approval.CanSend) return;
         PrivacyBlocked?.Invoke(approval.Assessment);
-        throw new GuideServiceException(
-            GuideFailureKind.PrivacyBlocked,
-            approval.Assessment.UserMessage);
+        throw new GuideServiceException(GuideFailureKind.PrivacyBlocked, approval.Assessment.UserMessage);
     }
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(
@@ -134,7 +128,6 @@ public sealed class CloudGuideService : IDisposable
     {
         var foregroundName = systemContext.ForegroundProcess ?? string.Empty;
         var foregroundId = systemContext.ForegroundProcessId;
-
         if (foregroundId <= 0 && string.IsNullOrWhiteSpace(foregroundName)) return [];
 
         return elements
@@ -169,7 +162,6 @@ public sealed class CloudGuideService : IDisposable
         for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
             try
             {
                 var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
