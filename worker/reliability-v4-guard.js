@@ -4,6 +4,7 @@ import quality from './quality-guide.js';
 import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
+const SCREEN_ROUTES = new Set(['/v1/quality-guide', '/v1/guide', '/v1/vision-guide']);
 const APP_RULES = [
   { goal: /(excel|エクセル)/i, processes: ['excel'], search: 'Excel' },
   { goal: /(word|ワード)/i, processes: ['winword'], search: 'Word' },
@@ -29,10 +30,26 @@ export default {
     // to set it. This is a server-side defense in depth and is not a substitute for Privacy Gate.
     const privateEnv = privacyHardenedEnv(env);
 
+    let screenBody = null;
+    let screenRequest = request;
+    if (request.method === 'POST' && SCREEN_ROUTES.has(url.pathname)) {
+      try {
+        const raw = await request.clone().json();
+        screenBody = sanitizeScreenBody(raw);
+        screenRequest = rebuildJsonRequest(request, screenBody);
+      }
+      catch {
+        // Preserve downstream invalid-json handling without attempting to infer unsafe content.
+        screenBody = null;
+        screenRequest = request;
+      }
+    }
+
     // Quality-first normal HelpSys planning always receives the current screenshot and
-    // UI structure together. It owns its own deterministic validation and secret guard.
+    // UI structure together. The Worker boundary strips raw UI values/full browser URLs again,
+    // so older or modified clients cannot forward those fields to the model provider.
     if (url.pathname === '/v1/quality-guide') {
-      return quality.fetch(request, privateEnv, ctx);
+      return quality.fetch(screenRequest, privateEnv, ctx);
     }
 
     // Keep Education routing available, but normal HelpSys development is prioritized.
@@ -40,19 +57,11 @@ export default {
       return education.fetch(request, privateEnv, ctx);
     }
 
-    let bodyPromise = null;
-    try {
-      if (request.method === 'POST' && (url.pathname === '/v1/guide' || url.pathname === '/v1/vision-guide'))
-        bodyPromise = request.clone().json();
-    } catch { }
+    const response = await base.fetch(screenRequest, privateEnv, ctx);
+    if (!screenBody || response.status !== 200) return response;
 
-    const response = await base.fetch(request, privateEnv, ctx);
-    if (!bodyPromise || response.status !== 200) return response;
-
-    let body;
     let decision;
     try {
-      body = await bodyPromise;
       decision = await response.clone().json();
     } catch {
       return response;
@@ -61,10 +70,51 @@ export default {
     const secretOverride = guardSecretClarification(decision);
     if (secretOverride) return replaceJson(response, secretOverride);
 
-    const override = isStructuredGuide(request) ? preventBackgroundDone(body, decision) : null;
+    const override = isStructuredGuide(screenRequest) ? preventBackgroundDone(screenBody, decision) : null;
     return override ? replaceJson(response, override) : response;
   }
 };
+
+export function sanitizeScreenBody(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const body = { ...raw };
+
+  if (Array.isArray(raw.elements)) {
+    body.elements = raw.elements.map(element => {
+      if (!element || typeof element !== 'object' || Array.isArray(element)) return element;
+      const { value, Value, ...safe } = element;
+      const password = safe.password === true || safe.Password === true;
+      const hadValue = typeof value === 'string' ? value.length > 0 : typeof Value === 'string' ? Value.length > 0 : false;
+      if (safe.inputPresent === undefined && safe.InputPresent === undefined)
+        safe.inputPresent = !password && hadValue;
+      return safe;
+    });
+  }
+
+  const context = raw.systemContext ?? raw.SystemContext;
+  if (context && typeof context === 'object' && !Array.isArray(context)) {
+    const contextCopy = { ...context };
+    const browserKey = contextCopy.browser !== undefined ? 'browser' : contextCopy.Browser !== undefined ? 'Browser' : null;
+    if (browserKey) {
+      const browser = contextCopy[browserKey];
+      if (browser && typeof browser === 'object' && !Array.isArray(browser)) {
+        const { url, Url, ...safeBrowser } = browser;
+        contextCopy[browserKey] = safeBrowser;
+      }
+    }
+    if (raw.systemContext !== undefined) body.systemContext = contextCopy;
+    else body.SystemContext = contextCopy;
+  }
+
+  const evidence = raw.evidence ?? raw.Evidence;
+  if (evidence && typeof evidence === 'object' && !Array.isArray(evidence)) {
+    const { browserUrl, BrowserUrl, ...safeEvidence } = evidence;
+    if (raw.evidence !== undefined) body.evidence = safeEvidence;
+    else body.Evidence = safeEvidence;
+  }
+
+  return body;
+}
 
 export function guardSecretClarification(decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'clarify') return null;
@@ -145,6 +195,18 @@ function privacyHardenedEnv(env) {
       if (property === 'AI') return hardenedAi;
       return Reflect.get(target, property, receiver);
     }
+  });
+}
+
+function rebuildJsonRequest(request, body) {
+  const headers = new Headers(request.headers);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.delete('content-length');
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: JSON.stringify(body),
+    redirect: request.redirect
   });
 }
 
