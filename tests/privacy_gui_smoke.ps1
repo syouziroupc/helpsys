@@ -160,4 +160,5 @@ finally {
   if ($null -ne $mock -and -not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
 }
 
+& ./tests/manual_privacy_pause_smoke.ps1
 & ./tests/safe_configured_smoke.ps1
