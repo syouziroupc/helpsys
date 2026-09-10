@@ -1,4 +1,4 @@
-import guard, { guardSecretClarification } from './reliability-v4-guard.js';
+import guard, { guardSecretClarification, sanitizeScreenBody } from './reliability-v4-guard.js';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -12,6 +12,27 @@ async function guide(body) {
   assert(response.status === 200, `unexpected status ${response.status}`);
   return response.json();
 }
+
+const boundaryInput = {
+  request: 'open settings',
+  elements: [{
+    id: 'edit', name: 'Search', controlType: 'Edit', processName: 'msedge', password: false,
+    value: 'DO_NOT_FORWARD_UI_VALUE', inputPresent: true
+  }],
+  systemContext: {
+    foregroundProcess: 'msedge', foregroundProcessId: 88,
+    browser: { domain: 'example.com', url: 'https://example.com/reset?token=DO_NOT_FORWARD_URL_TOKEN#secret', https: true }
+  },
+  evidence: { browserDomain: 'example.com', browserUrl: 'https://example.com/private?session=DO_NOT_FORWARD_EVIDENCE_URL' }
+};
+const boundaryOutput = sanitizeScreenBody(boundaryInput);
+const boundaryJson = JSON.stringify(boundaryOutput);
+assert(!boundaryJson.includes('DO_NOT_FORWARD_UI_VALUE'), 'Worker boundary must remove raw UI values before model routing.');
+assert(!boundaryJson.includes('DO_NOT_FORWARD_URL_TOKEN'), 'Worker boundary must remove full browser URLs before model routing.');
+assert(!boundaryJson.includes('DO_NOT_FORWARD_EVIDENCE_URL'), 'Worker boundary must remove full evidence URLs before model routing.');
+assert(boundaryOutput.elements[0].inputPresent === true, 'Worker boundary may retain boolean input-presence state.');
+assert(boundaryOutput.systemContext.browser.domain === 'example.com', 'Worker boundary must retain useful domain-level context.');
+console.log('reliability v4 screen-payload privacy boundary self-test passed.');
 
 const background = await guide({
   request: 'Excelを開いて',
