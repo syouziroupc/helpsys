@@ -25,6 +25,7 @@ public sealed class CloudGuideService : IDisposable
         _ownsAdapter = adapter is null;
     }
 
+    public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
 
     public async Task<QualityGuideDecision> PlanQualityAsync(
@@ -118,9 +119,10 @@ public sealed class CloudGuideService : IDisposable
         return decision;
     }
 
-    private static void EnsureApproved(PrivacyApproval approval)
+    private void EnsureApproved(PrivacyApproval approval)
     {
         if (approval.CanSend) return;
+        PrivacyBlocked?.Invoke(approval.Assessment);
         throw new GuideServiceException(
             GuideFailureKind.PrivacyBlocked,
             approval.Assessment.UserMessage);
