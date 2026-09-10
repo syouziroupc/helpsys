@@ -23,9 +23,24 @@ public sealed class SpeechInputService : IDisposable
     private int _captureActive;
     private bool _disposed;
 
+    public bool CloudTranscriptionAllowed
+    {
+        get
+        {
+#if HELPSYS_SAFE_BUILD
+            return false;
+#else
+            return true;
+#endif
+        }
+    }
+
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!CloudTranscriptionAllowed)
+            throw new InvalidOperationException("安全版では音声データをクラウドへ送信しません。文字入力を使用してください。");
+
         if (Interlocked.Exchange(ref _captureActive, 1) != 0)
             throw new InvalidOperationException("別の音声入力がまだ終了していません。");
 
