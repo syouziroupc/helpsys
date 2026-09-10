@@ -93,13 +93,15 @@ export default {
         tools: [assistTool],
         tool_choice: 'required',
         parallel_tool_calls: false,
-        chat_template_kwargs: { enable_thinking: false }
+        chat_template_kwargs: { enable_thinking: false },
+        store: false
       });
       const raw = extractToolArguments(result, 'return_education_assist');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
       return json(guardAssist(raw, stage, hintLevel));
-    } catch (error) {
-      console.error('education inference failed', error);
+    } catch {
+      // Never log provider exception objects: they may contain request/provider context.
+      console.error('education_inference_failed');
       return json({ error: 'inference_failed' }, 502);
     }
   }
