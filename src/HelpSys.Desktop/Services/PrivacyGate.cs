@@ -213,10 +213,11 @@ public sealed class PrivacyGate
     public PrivacyApproval ApproveVision(
         string request,
         ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext)
     {
-        var assessment = EvaluateState(systemContext, []);
+        var assessment = EvaluateState(systemContext, elements);
         if (!assessment.CanSend) return new PrivacyApproval(assessment, null);
 
         var body = new
@@ -224,7 +225,7 @@ public sealed class PrivacyGate
             request = SanitizeGeneralText(request, 900),
             history = CompactHistory(history),
             systemContext = CompactSystemContext(systemContext),
-            evidence = GuidanceEvidenceService.Build(true, [], history, systemContext),
+            evidence = GuidanceEvidenceService.Build(true, elements, history, systemContext),
             image = frame.ImageDataUri,
             imageWidth = frame.ImageWidth,
             imageHeight = frame.ImageHeight
