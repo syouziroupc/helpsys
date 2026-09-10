@@ -29,6 +29,20 @@ public sealed class CloudGuideService : IDisposable
     public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
 
+    /// <summary>
+    /// Lightweight local check used before a screenshot is even created. A blocked or unknown
+    /// state enters Privacy Mode immediately. The send-time gate still runs again as a TOCTOU guard.
+    /// </summary>
+    public PrivacyAssessment PreflightPrivacy(
+        SystemContextSnapshot systemContext,
+        IReadOnlyList<UiElementCandidate> elements)
+    {
+        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var assessment = _privacyGate.EvaluateState(systemContext, relevantElements);
+        if (!assessment.CanSend) PrivacyBlocked?.Invoke(assessment);
+        return assessment;
+    }
+
     public Task<QualityGuideDecision> PlanQualityAsync(
         string request,
         ScreenCaptureFrame frame,
