@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Interop;
@@ -23,6 +24,40 @@ public sealed class ScreenCaptureService
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost"
     };
+
+    // These patterns are deliberately high-confidence. The goal is to remove obvious PII/secret
+    // strings from pixels before egress without blanket-redacting every useful label on screen.
+    private static readonly Regex VisibleEmailRegex = new(
+        @"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleJapanesePhoneRegex = new(
+        @"(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisiblePostalCodeRegex = new(
+        @"(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleLabeledSecretRegex = new(
+        @"(?i)\b(password|passwd|passcode|otp|totp|2fa|mfa|api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|backup[ _-]?code|recovery[ _-]?code)\b\s*[:=]\s*([^\s,;]{3,})",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleBearerRegex = new(
+        @"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleJwtRegex = new(
+        @"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleApiKeyRegex = new(
+        @"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisiblePrivateKeyRegex = new(
+        @"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly Regex VisibleCardNumberRegex = new(
+        @"(?<!\d)(?:\d[ -]?){13,19}(?!\d)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex VisibleSensitiveUrlRegex = new(
+        @"https?://[^\s<>""']*[?#][^\s<>""']+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
     private readonly int _selfProcessId = Environment.ProcessId;
 
     public Task<ScreenCaptureFrame> CaptureAsync(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken = default)
@@ -39,8 +74,8 @@ public sealed class ScreenCaptureService
 
         // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
         // Independently inspect UIA trees intersecting only the area that will leave the process.
-        // Every visible input control is redacted before egress. If this bounded scan cannot finish,
-        // fail closed instead of sending a partial image.
+        // Every visible input control plus high-confidence visible PII/secret text is redacted before
+        // egress. If this bounded scan cannot finish, fail closed instead of sending a partial image.
         var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
@@ -63,7 +98,7 @@ public sealed class ScreenCaptureService
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
             cancellationToken.ThrowIfCancellationRequested();
-            // Scan again after BitBlt to cover an input control that appeared during capture.
+            // Scan again after BitBlt to cover sensitive content that appeared during capture.
             var sensitiveRedactionsAfter = CaptureSensitiveInputBounds(captureArea, cancellationToken);
             var allRedactions = redactions
                 .Concat(sensitiveRedactionsBefore)
@@ -212,7 +247,7 @@ public sealed class ScreenCaptureService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (++visited > maxVisited || stopwatch.Elapsed > TimeSpan.FromSeconds(1.8))
-                    throw new InvalidOperationException("入力欄の安全確認を規定範囲内で完了できませんでした。");
+                    throw new InvalidOperationException("画面の安全確認を規定範囲内で完了できませんでした。");
 
                 var element = queue.Dequeue();
                 try
@@ -221,7 +256,9 @@ public sealed class ScreenCaptureService
                     if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
                     {
                         var bounds = current.BoundingRectangle;
-                        if (ShouldRedactInput(current) && !bounds.IsEmpty && captureRect.IntersectsWith(bounds)) result.Add(bounds);
+                        if ((ShouldRedactInput(current) || ShouldRedactVisibleSensitiveText(current.Name)) &&
+                            !bounds.IsEmpty && captureRect.IntersectsWith(bounds))
+                            result.Add(bounds);
                     }
 
                     var child = walker.GetFirstChild(element);
@@ -232,6 +269,7 @@ public sealed class ScreenCaptureService
                     }
                 }
                 catch (ElementNotAvailableException) { }
+                catch (InvalidOperationException) { }
             }
 
             return result;
@@ -242,7 +280,7 @@ public sealed class ScreenCaptureService
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException("入力欄を安全に確認できないため、画面画像は送信しません。", ex);
+            throw new InvalidOperationException("入力欄や表示済み秘密情報を安全に確認できないため、画面画像は送信しません。", ex);
         }
     }
 
@@ -250,6 +288,41 @@ public sealed class ScreenCaptureService
     {
         if (current.IsPassword) return true;
         return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;
+    }
+
+    private static bool ShouldRedactVisibleSensitiveText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var value = text.Length <= 800 ? text : text[..800];
+        if (VisibleEmailRegex.IsMatch(value) || VisibleJapanesePhoneRegex.IsMatch(value) || VisiblePostalCodeRegex.IsMatch(value) ||
+            VisibleLabeledSecretRegex.IsMatch(value) || VisibleBearerRegex.IsMatch(value) || VisibleJwtRegex.IsMatch(value) ||
+            VisibleApiKeyRegex.IsMatch(value) || VisiblePrivateKeyRegex.IsMatch(value) || VisibleSensitiveUrlRegex.IsMatch(value))
+            return true;
+
+        foreach (Match match in VisibleCardNumberRegex.Matches(value))
+        {
+            var digits = new string(match.Value.Where(char.IsDigit).ToArray());
+            if (digits.Length is >= 13 and <= 19 && PassesLuhn(digits)) return true;
+        }
+        return false;
+    }
+
+    private static bool PassesLuhn(string digits)
+    {
+        var sum = 0;
+        var alternate = false;
+        for (var i = digits.Length - 1; i >= 0; i--)
+        {
+            var n = digits[i] - '0';
+            if (alternate)
+            {
+                n *= 2;
+                if (n > 9) n -= 9;
+            }
+            sum += n;
+            alternate = !alternate;
+        }
+        return sum % 10 == 0;
     }
 
     private static BitmapSource ScaleToLimit(BitmapSource source)
@@ -274,7 +347,7 @@ public sealed class ScreenCaptureService
         if (right <= left || bottom <= top) return;
 
         if (!PatBlt(dc, left, top, right - left, bottom - top, Blackness))
-            throw new InvalidOperationException("入力欄を安全に黒塗りできないため、画面画像は送信しません。");
+            throw new InvalidOperationException("秘密情報の領域を安全に黒塗りできないため、画面画像は送信しません。");
     }
 
     private readonly record struct CaptureArea(int X, int Y, int Width, int Height);
