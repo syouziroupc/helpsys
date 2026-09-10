@@ -21,12 +21,14 @@ jobs:
           node --check worker/deep-audit-selftest.mjs
           node --check tests/deep-audit-contract.mjs
           node --check tests/privacy-contract.mjs
+          node --check tests/privacy-capability-contract.mjs
 
       - name: Run deep-audit regressions
         run: |
           node worker/deep-audit-selftest.mjs
           node tests/deep-audit-contract.mjs
           node tests/privacy-contract.mjs
+          node tests/privacy-capability-contract.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
