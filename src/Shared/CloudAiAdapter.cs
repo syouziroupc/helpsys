@@ -13,13 +13,14 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
 /// External endpoints must use HTTPS. Plain HTTP is accepted only for loopback development.
+/// Safe builds have no production cloud default: an explicitly reviewed endpoint is required.
 /// </summary>
 public sealed class CloudAiAdapter : IDisposable
 {
     public const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
 
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
-    private readonly string _apiBase;
+    private readonly string? _apiBase;
     private readonly string? _apiKey;
     private readonly string _apiKeyHeader;
     private bool _disposed;
@@ -29,11 +30,19 @@ public sealed class CloudAiAdapter : IDisposable
         string? apiKey = null,
         string apiKeyHeader = "x-helpsys-key")
     {
+#if HELPSYS_SAFE_BUILD
+        var resolvedBase = apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
+        _apiBase = string.IsNullOrWhiteSpace(resolvedBase) ? null : ValidateApiBase(resolvedBase.TrimEnd('/'));
+        _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
+#else
         var resolvedBase = (apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
         _apiBase = ValidateApiBase(resolvedBase);
         _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
+#endif
         _apiKeyHeader = apiKeyHeader;
     }
+
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(_apiBase);
 
     public Task<CloudAiResponse> PostJsonAsync(
         string path,
@@ -63,6 +72,8 @@ public sealed class CloudAiAdapter : IDisposable
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!IsConfigured)
+            throw new InvalidOperationException("安全版の承認済みAI API接続先が設定されていないため、外部送信を拒否しました。");
         ValidatePath(path);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
