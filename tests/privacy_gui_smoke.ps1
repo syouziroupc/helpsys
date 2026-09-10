@@ -162,3 +162,4 @@ finally {
 
 & ./tests/manual_privacy_pause_smoke.ps1
 & ./tests/safe_configured_smoke.ps1
+& ./tests/visible_pii_redaction_smoke.ps1
