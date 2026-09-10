@@ -8,7 +8,7 @@ const BEARER = /\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 const API_KEY = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/gi;
 const CARD = /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g;
-const URL = /https?:\/\/[^\s<>"']+/gi;
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
 
 const assistTool = {
   name: 'return_education_assist',
@@ -117,7 +117,7 @@ export default {
 export function sanitizeEducationText(value, max = MAX_TEXT) {
   if (typeof value !== 'string') return '';
   let safe = value.replace(/[\r\n]+/g, ' ').trim();
-  safe = safe.replace(URL, raw => {
+  safe = safe.replace(URL_PATTERN, raw => {
     try { return new URL(raw).origin; } catch { return '<url>'; }
   });
   safe = safe.replace(EMAIL, '<email>');
