@@ -14,22 +14,39 @@ async function guide(body) {
 }
 
 const boundaryInput = {
-  request: 'open settings',
+  request: 'contact alice@example.com phone 090-1234-5678 postal 123-4567 password=hunter2 card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_TOKEN#fragment',
+  routeIssue: 'Bearer AbCdEfGhIjKlMnOpQrStUvWxYz012345',
   elements: [{
-    id: 'edit', name: 'Search', controlType: 'Edit', processName: 'msedge', password: false,
+    id: 'edit', name: 'alice@example.com', automationId: 'Search', controlType: 'Edit', processName: 'msedge', password: false,
     value: 'DO_NOT_FORWARD_UI_VALUE', inputPresent: true
   }],
   systemContext: {
     foregroundProcess: 'msedge', foregroundProcessId: 88,
-    browser: { domain: 'example.com', url: 'https://example.com/reset?token=DO_NOT_FORWARD_URL_TOKEN#secret', https: true }
+    foregroundTitle: 'Call 090-1234-5678',
+    browser: { domain: 'example.com', windowTitle: '〒123-4567', url: 'https://example.com/reset?token=DO_NOT_FORWARD_URL_TOKEN#secret', https: true }
   },
-  evidence: { browserDomain: 'example.com', browserUrl: 'https://example.com/private?session=DO_NOT_FORWARD_EVIDENCE_URL' }
+  evidence: {
+    browserDomain: 'example.com',
+    browserUrl: 'https://example.com/private?session=DO_NOT_FORWARD_EVIDENCE_URL',
+    focusedElements: ['alice@example.com'],
+    recentTargets: ['090-1234-5678']
+  },
+  history: [{ step: 1, action: 'left_click', targetName: 'alice@example.com', instruction: 'postal 123-4567' }]
 };
 const boundaryOutput = sanitizeScreenBody(boundaryInput);
 const boundaryJson = JSON.stringify(boundaryOutput);
-assert(!boundaryJson.includes('DO_NOT_FORWARD_UI_VALUE'), 'Worker boundary must remove raw UI values before model routing.');
-assert(!boundaryJson.includes('DO_NOT_FORWARD_URL_TOKEN'), 'Worker boundary must remove full browser URLs before model routing.');
-assert(!boundaryJson.includes('DO_NOT_FORWARD_EVIDENCE_URL'), 'Worker boundary must remove full evidence URLs before model routing.');
+for (const forbidden of [
+  'DO_NOT_FORWARD_UI_VALUE', 'DO_NOT_FORWARD_URL_TOKEN', 'DO_NOT_FORWARD_EVIDENCE_URL',
+  'alice@example.com', '090-1234-5678', '123-4567', 'hunter2', '4242 4242 4242 4242',
+  'REQUEST_TOKEN', 'AbCdEfGhIjKlMnOpQrStUvWxYz012345'
+]) {
+  assert(!boundaryJson.includes(forbidden), `Worker boundary leaked sensitive legacy payload data: ${forbidden}`);
+}
+assert(boundaryJson.includes('<email>'), 'Worker boundary must replace email addresses.');
+assert(boundaryJson.includes('<phone>'), 'Worker boundary must replace Japanese phone numbers.');
+assert(boundaryJson.includes('<postal-code>'), 'Worker boundary must replace Japanese postal codes.');
+assert(boundaryJson.includes('<redacted-secret>'), 'Worker boundary must replace labeled/bearer secrets.');
+assert(boundaryJson.includes('<redacted-card>'), 'Worker boundary must replace valid payment-card numbers.');
 assert(boundaryOutput.elements[0].inputPresent === true, 'Worker boundary may retain boolean input-presence state.');
 assert(boundaryOutput.systemContext.browser.domain === 'example.com', 'Worker boundary must retain useful domain-level context.');
 console.log('reliability v4 screen-payload privacy boundary self-test passed.');
