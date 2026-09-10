@@ -28,6 +28,7 @@ public sealed class CloudGuideService : IDisposable
 
     public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
+    public bool CloudEndpointConfigured => _adapter.IsConfigured;
 
     /// <summary>
     /// Lightweight local check used before a screenshot is even created. A blocked or unknown
@@ -72,6 +73,7 @@ public sealed class CloudGuideService : IDisposable
         string? routeIssue,
         CancellationToken cancellationToken)
     {
+        EnsureCloudConfigured();
         var relevantElements = SelectRelevantElements(elements, systemContext);
         var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
         EnsureApproved(approval);
@@ -89,6 +91,7 @@ public sealed class CloudGuideService : IDisposable
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
     {
+        EnsureCloudConfigured();
         var relevantElements = SelectRelevantElements(elements, systemContext);
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
@@ -120,6 +123,7 @@ public sealed class CloudGuideService : IDisposable
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
     {
+        EnsureCloudConfigured();
         var relevantElements = SelectRelevantElements(elements, systemContext);
         var approval = _privacyGate.ApproveVision(request, frame, relevantElements, history, systemContext);
         EnsureApproved(approval);
@@ -128,6 +132,14 @@ public sealed class CloudGuideService : IDisposable
         var decision = await SendAsync<VisionGuideDecision>("/v1/vision-guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         return decision;
+    }
+
+    private void EnsureCloudConfigured()
+    {
+        if (CloudEndpointConfigured) return;
+        throw new GuideServiceException(
+            GuideFailureKind.Rejected,
+            "安全版の承認済みAI API接続先が設定されていないため、外部送信を拒否しました。");
     }
 
     private void EnsureApproved(PrivacyApproval approval)
