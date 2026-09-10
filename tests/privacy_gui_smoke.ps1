@@ -3,6 +3,15 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class HelpSysSmokeUser32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
@@ -46,6 +55,36 @@ function Find-ElementByName([System.Diagnostics.Process]$process, [string]$name)
     $name)
   $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $nameCondition)
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Focus-TargetWindow([System.Diagnostics.Process]$target, [string]$caseName) {
+  $deadline = [DateTime]::UtcNow.AddSeconds(8)
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $target.Id)
+
+  do {
+    if ($target.HasExited) { throw "$caseName target exited before it could become foreground." }
+    $target.Refresh()
+    $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+    if ($null -ne $window) {
+      try { $window.SetFocus() } catch { }
+      try {
+        $handle = [IntPtr]$window.Current.NativeWindowHandle
+        if ($handle -ne [IntPtr]::Zero) { [void][HelpSysSmokeUser32]::SetForegroundWindow($handle) }
+      } catch { }
+    }
+
+    Start-Sleep -Milliseconds 150
+    $foreground = [HelpSysSmokeUser32]::GetForegroundWindow()
+    [uint32]$foregroundPid = 0
+    [void][HelpSysSmokeUser32]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+    if ($foregroundPid -eq [uint32]$target.Id) { return }
+  } while ([DateTime]::UtcNow -lt $deadline)
+
+  Save-DesktopScreenshot "artifacts/helpsys-$($caseName.ToLower())-foreground-failure.png"
+  throw "$caseName test surface could not be made the real foreground window."
 }
 
 function Run-ListeningOverlayCase {
@@ -105,6 +144,9 @@ function Run-PrivacyCase([string]$mode, [string]$expectedStateText, [string]$art
 
     $value = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $value.SetValue('help me continue on this screen')
+    Focus-TargetWindow $target $mode
+    Remove-Item 'artifacts/mock-last-request.json' -Force -ErrorAction SilentlyContinue
+
     $invoke = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Start-Sleep -Seconds 6
