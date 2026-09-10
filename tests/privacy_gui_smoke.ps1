@@ -127,6 +127,10 @@ function Run-PrivacyCase([string]$mode, [string]$expectedStateText, [string]$art
     if (-not $privacyButton.Current.IsEnabled) {
       throw "Privacy pause/resume control became unavailable during $mode Privacy Mode."
     }
+    if ($privacyButton.Current.Name -ne '停止を固定') {
+      Save-DesktopScreenshot "artifacts/$artifactName-failure.png"
+      throw "Automatic Privacy Mode must show the safe action '停止を固定' instead of pretending analysis is still running. Button: $($privacyButton.Current.Name)"
+    }
 
     Save-DesktopScreenshot "artifacts/$artifactName.png"
   }
