@@ -22,6 +22,7 @@ static void AssertThrows<T>(Action action, string message) where T : Exception
     throw new InvalidOperationException(message);
 }
 
+var expectSafeProfile = args.Contains("--expect-safe-profile", StringComparer.OrdinalIgnoreCase);
 var gate = new PrivacyGate();
 var safeContext = new SystemContextSnapshot(
     "explorer",
@@ -109,13 +110,16 @@ try
     Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE", "1");
     Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", "I_UNDERSTAND_RAW_SCREEN_DATA");
     var diagnosticsRequested = new DiagnosticModePolicy();
-#if HELPSYS_SAFE_BUILD
-    Assert(!diagnosticsRequested.Enabled && !diagnosticsRequested.RawScreenPersistenceAllowed,
-        "Safe build must permanently disable raw diagnostic screen persistence.");
-#else
-    Assert(diagnosticsRequested.Enabled && diagnosticsRequested.RawScreenPersistenceAllowed,
-        "Normal build requires both explicit diagnostic opt-ins before raw screen persistence may be considered.");
-#endif
+    if (expectSafeProfile)
+    {
+        Assert(!diagnosticsRequested.Enabled && !diagnosticsRequested.RawScreenPersistenceAllowed,
+            "Safe build must permanently disable raw diagnostic screen persistence.");
+    }
+    else
+    {
+        Assert(diagnosticsRequested.Enabled && diagnosticsRequested.RawScreenPersistenceAllowed,
+            "Normal build requires both explicit diagnostic opt-ins before raw screen persistence may be considered.");
+    }
 }
 finally
 {
@@ -142,7 +146,6 @@ finally
     Environment.SetEnvironmentVariable("HELPSYS_TELEMETRY", oldTelemetry);
 }
 
-var expectSafeProfile = args.Contains("--expect-safe-profile", StringComparer.OrdinalIgnoreCase);
 if (expectSafeProfile)
     Assert(gate.Profile == PrivacyPolicyProfile.Safe, "Safe build did not compile with the Safe privacy profile.");
 else
