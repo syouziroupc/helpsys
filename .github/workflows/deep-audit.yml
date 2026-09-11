@@ -22,6 +22,7 @@ jobs:
           node --check tests/deep-audit-contract.mjs
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
+          node --check tests/privacy-resume-contract.mjs
           node --check tests/safe-edition-contract.mjs
           node --check tests/worker-data-handling-contract.mjs
 
@@ -31,6 +32,7 @@ jobs:
           node tests/deep-audit-contract.mjs
           node tests/privacy-contract.mjs
           node tests/privacy-capability-contract.mjs
+          node tests/privacy-resume-contract.mjs
           node tests/safe-edition-contract.mjs
           node tests/worker-data-handling-contract.mjs
 
