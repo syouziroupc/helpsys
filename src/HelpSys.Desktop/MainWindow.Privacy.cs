@@ -32,8 +32,6 @@ public partial class MainWindow
             CommanderButton.ToolTip = "安全版ではクラウド音声認識を使用しないため無効です。";
         }
 
-        // XAML's Privacy Loaded handler runs before the constructor-added generic OnLoaded handler.
-        // Queue the privacy-aware status once so the generic idle text cannot overwrite Safe state.
         Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState));
     }
 
@@ -162,9 +160,6 @@ public partial class MainWindow
             return;
         }
 
-        // Even when no task is active, never clear Privacy Mode merely because there is nothing to
-        // resume. First prove that the current foreground context is safe. This prevents a blocked
-        // Password/OTP screen from being cosmetically marked safe by an idle-state shortcut.
         var context = _systemContext.Capture();
         if (!HasUsableForeground(context)) return;
 
@@ -174,6 +169,11 @@ public partial class MainWindow
             SetState($"プライバシー保護のため画面解析を一時停止中。{contextAssessment.UserMessage}", speak: false);
             return;
         }
+
+        // A fresh Guide/Answer action may have been intercepted before the normal handler was
+        // allowed to create its session. Restore only the local typed intent after the foreground
+        // has independently passed the context-only Privacy Gate; cloud/UIA work still waits below.
+        PrivacySentinel_RestorePendingInputForResume();
 
         if (_activeRequest is null)
         {
