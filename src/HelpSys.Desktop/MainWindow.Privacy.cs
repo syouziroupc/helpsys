@@ -68,6 +68,7 @@ public partial class MainWindow
         _privacyPaused = true;
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _speechOutput.Stop();
+        PrivacySentinel_SuspendCloudAudio();
         _overlay.Hide();
         _keyHint.Hide();
         _currentDecision = null;
@@ -134,16 +135,27 @@ public partial class MainWindow
             return;
         }
 
+        // Even when no task is active, never clear Privacy Mode merely because there is nothing to
+        // resume. First prove that the current foreground context is safe. This prevents a blocked
+        // Password/OTP screen from being cosmetically marked safe by an idle-state shortcut.
+        var context = _systemContext.Capture();
+        if (!HasUsableForeground(context)) return;
+
+        var contextAssessment = _cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>());
+        if (!contextAssessment.CanSend)
+        {
+            SetState($"プライバシー保護のため画面解析を一時停止中。{contextAssessment.UserMessage}", speak: false);
+            return;
+        }
+
         if (_activeRequest is null)
         {
             _privacyPaused = false;
             UpdatePrivacyButton();
-            SetState("画面解析を再開しました。やりたいことを入力してください。", speak: false);
+            PrivacySentinel_RestoreCloudAudio();
+            SetState("安全な画面を確認したため、画面解析を再開しました。やりたいことを入力してください。", speak: false);
             return;
         }
-
-        var context = _systemContext.Capture();
-        if (!HasUsableForeground(context)) return;
 
         IReadOnlyList<UiElementCandidate> candidates;
         try
@@ -172,6 +184,7 @@ public partial class MainWindow
         _liveSystem = null;
         try { _actionObserver.Start(); } catch { }
         UpdatePrivacyButton();
+        PrivacySentinel_RestoreCloudAudio();
         SetState("安全な画面に戻ったため、画面解析を再開します…", speak: false);
         await AdvanceGuideAsync();
     }
