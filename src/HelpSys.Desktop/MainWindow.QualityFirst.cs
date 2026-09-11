@@ -324,6 +324,21 @@ public partial class MainWindow
         if (!privacy.CanSend)
             throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
 
+        var candidateProcessIds = candidates
+            .Select(x => x.ProcessId)
+            .Where(x => x > 0)
+            .Distinct()
+            .Take(2)
+            .ToArray();
+        if (candidateProcessIds.Length > 1)
+            throw new InvalidOperationException("操作対象候補が複数プロセスに分かれているため、画面画像を送信しません。");
+
+        var expectedProcessId = candidateProcessIds.Length == 1
+            ? candidateProcessIds[0]
+            : privacyContext.ForegroundProcessId;
+        if (expectedProcessId <= 0)
+            throw new InvalidOperationException("操作対象プロセスを安全に特定できないため、画面画像を送信しません。");
+
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
         _speechInput.HideOverlay();
         _overlay.Hide();
@@ -333,7 +348,7 @@ public partial class MainWindow
         {
             Opacity = 0;
             await Task.Delay(130, cancellationToken);
-            return await _screenCapture.CaptureAsync(passwordBounds, cancellationToken);
+            return await _screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken);
         }
         finally
         {
