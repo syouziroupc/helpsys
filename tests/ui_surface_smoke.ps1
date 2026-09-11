@@ -68,13 +68,15 @@ try {
   $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
   Start-Sleep -Seconds 2
 
+  $startupMaximumMs = 4000
+  $guideMaximumMs = 5000
   $startup = [System.Diagnostics.Stopwatch]::StartNew()
   $helpSys = Start-Process $exe -PassThru
 
   $ids = @('RequestBox','VoiceButton','SpeakButton','ClearButton','GuideButton','PrivacyButton','CommanderButton','ExitButton','StateText')
   $controls = @{}
   $window = $null
-  while ($startup.Elapsed -lt [TimeSpan]::FromSeconds(5)) {
+  while ($startup.Elapsed.TotalMilliseconds -lt $startupMaximumMs) {
     if ($helpSys.HasExited) { throw 'HelpSys exited during UI surface startup smoke.' }
     $window = Find-MainWindow $helpSys
     foreach ($id in $ids) {
@@ -91,7 +93,7 @@ try {
   $missing = @($ids | Where-Object { $null -eq $controls[$_] })
   if ($null -eq $window -or $missing.Count -gt 0) {
     Save-Screenshot 'helpsys-ui-startup-failure.png'
-    throw "Core UI did not become available within 5 seconds. Missing: $($missing -join ', ')"
+    throw "Core UI did not become available within $startupMaximumMs ms. Missing: $($missing -join ', ')"
   }
 
   $windowRect = $window.Current.BoundingRectangle
@@ -142,7 +144,7 @@ try {
 
   $guideTimer = [System.Diagnostics.Stopwatch]::StartNew()
   $invokePattern.Invoke()
-  while ($guideTimer.Elapsed -lt [TimeSpan]::FromSeconds(8) -and -not (Test-Path 'artifacts/mock-last-request.json')) {
+  while ($guideTimer.Elapsed.TotalMilliseconds -lt $guideMaximumMs -and -not (Test-Path 'artifacts/mock-last-request.json')) {
     if ($helpSys.HasExited) { throw 'HelpSys exited during perceived-performance smoke.' }
     Start-Sleep -Milliseconds 100
   }
@@ -150,7 +152,7 @@ try {
 
   if (-not (Test-Path 'artifacts/mock-last-request.json')) {
     Save-Screenshot 'helpsys-ui-guide-latency-failure.png'
-    throw "Guide action did not reach the local planner within 8 seconds. Elapsed=$([math]::Round($guideTimer.Elapsed.TotalMilliseconds)) ms"
+    throw "Guide action did not reach the local planner within $guideMaximumMs ms. Elapsed=$([math]::Round($guideTimer.Elapsed.TotalMilliseconds)) ms"
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -160,12 +162,12 @@ try {
 
   $metrics = [ordered]@{
     startupCoreUiMilliseconds = [math]::Round($startup.Elapsed.TotalMilliseconds)
-    startupMaximumMilliseconds = 5000
+    startupMaximumMilliseconds = $startupMaximumMs
     idleWindowWidth = [math]::Round($windowRect.Width)
     idleWindowHeight = [math]::Round($windowRect.Height)
     statusAreaWidth = [math]::Round($stateRect.Width)
     guideToLocalApiMilliseconds = [math]::Round($guideTimer.Elapsed.TotalMilliseconds)
-    guideMaximumMilliseconds = 8000
+    guideMaximumMilliseconds = $guideMaximumMs
   }
   $metrics | ConvertTo-Json | Set-Content 'artifacts/helpsys-ui-performance.json' -Encoding UTF8
   Write-Host "HelpSys UI surface smoke passed. Startup=$($metrics.startupCoreUiMilliseconds) ms; guide-to-API=$($metrics.guideToLocalApiMilliseconds) ms; size=$($metrics.idleWindowWidth)x$($metrics.idleWindowHeight)."
