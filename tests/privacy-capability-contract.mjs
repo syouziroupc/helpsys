@@ -67,4 +67,13 @@ assert(scanner.includes('string.IsNullOrEmpty(valueValue.Current.Value) ? null :
 assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input text must never be assigned to a local variable.');
 assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
 
-console.log('HelpSys prohibited-capability, persistence, input-injection and local-input-minimization contract passed.');
+const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
+assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
+assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
+assert(capture.indexOf('var occluderRedactionsBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before the desktop pixels are copied.');
+assert(capture.indexOf('var occluderRedactionsAfter') > capture.indexOf('BitBlt('), 'Occluders must be rechecked after capture to close the race window.');
+assert(capture.includes('.Concat(occluderRedactionsBefore)') && capture.includes('.Concat(occluderRedactionsAfter)'), 'Both occluder scans must be part of the final redaction set.');
+assert(capture.includes('count > maxWindows || !visited.Add(hwnd)'), 'Z-order enumeration must fail closed on overflow or cycles.');
+assert(capture.includes('前面に重なった別画面を安全に除外できないため、画面画像は送信しません'), 'Occluder uncertainty must fail closed instead of sending the screenshot.');
+
+console.log('HelpSys prohibited-capability, persistence, input-injection, local-input-minimization and screenshot-occluder contract passed.');
