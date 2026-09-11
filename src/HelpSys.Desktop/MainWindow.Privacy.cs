@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using HelpSys.Models;
 using HelpSys.Services;
 
@@ -8,12 +9,17 @@ public partial class MainWindow
 {
     private bool _privacyPaused;
     private int _privacyPulseBusy;
+    private readonly DispatcherTimer _privacyResumeTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(900)
+    };
 
     private void MainWindow_PrivacyLoaded(object sender, RoutedEventArgs e)
     {
         MainWindow_CombinedLoaded(sender, e);
         _cloudGuide.PrivacyBlocked += CloudGuide_PrivacyBlocked;
         _liveWatcher.Pulse += PrivacyWatcher_Pulse;
+        _privacyResumeTimer.Tick += PrivacyResumeTimer_Tick;
         UpdatePrivacyButton();
 
         if (!_speechInput.CloudTranscriptionAllowed)
@@ -52,6 +58,8 @@ public partial class MainWindow
 
     private void MainWindow_PrivacyClosed(object? sender, EventArgs e)
     {
+        _privacyResumeTimer.Stop();
+        _privacyResumeTimer.Tick -= PrivacyResumeTimer_Tick;
         _cloudGuide.PrivacyBlocked -= CloudGuide_PrivacyBlocked;
         _liveWatcher.Pulse -= PrivacyWatcher_Pulse;
     }
@@ -80,6 +88,12 @@ public partial class MainWindow
         _liveReplanPending = false;
         _liveRestartAfterPlanCancel = false;
         try { _sessionCts?.Cancel(); } catch { }
+
+        if (assessment.Classification == PrivacyClassification.ManualPause || !_cloudGuide.CloudEndpointConfigured)
+            _privacyResumeTimer.Stop();
+        else
+            _privacyResumeTimer.Start();
+
         UpdatePrivacyButton();
         SetState($"プライバシー保護のため画面解析を一時停止中。{assessment.UserMessage}", speak: false);
     }
@@ -98,6 +112,7 @@ public partial class MainWindow
 
         _cloudGuide.PrivacyGate.SetManualPause(false);
         _privacyPaused = true;
+        if (_cloudGuide.CloudEndpointConfigured) _privacyResumeTimer.Start();
         UpdatePrivacyButton();
         SetState("画面解析を再開できる安全な状態か確認しています…", speak: false);
         await TryResumePrivacyModeAsync();
@@ -105,7 +120,18 @@ public partial class MainWindow
 
     private void PrivacyWatcher_Pulse(object? sender, EventArgs e)
     {
-        if (!_privacyPaused || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        QueuePrivacyResumeCheck();
+    }
+
+    private void PrivacyResumeTimer_Tick(object? sender, EventArgs e)
+    {
+        QueuePrivacyResumeCheck();
+    }
+
+    private void QueuePrivacyResumeCheck()
+    {
+        if (!_privacyPaused || _cloudGuide.PrivacyGate.ManualPause ||
+            Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
         if (Interlocked.Exchange(ref _privacyPulseBusy, 1) != 0) return;
 
         try
@@ -129,6 +155,7 @@ public partial class MainWindow
 
         if (!_cloudGuide.CloudEndpointConfigured)
         {
+            _privacyResumeTimer.Stop();
             SetState(
                 "画面解析を停止中。安全版の承認済みAI接続先が未設定です。",
                 speak: false);
@@ -151,6 +178,7 @@ public partial class MainWindow
         if (_activeRequest is null)
         {
             _privacyPaused = false;
+            _privacyResumeTimer.Stop();
             UpdatePrivacyButton();
             PrivacySentinel_RestoreCloudAudio();
             SetState("画面解析を再開しました。やりたいことを入力してください。", speak: false);
@@ -168,7 +196,12 @@ public partial class MainWindow
             return;
         }
 
-        var assessment = _cloudGuide.PrivacyGate.EvaluateState(context, candidates);
+        var freshContext = _systemContext.Capture();
+        if (freshContext.ForegroundProcessId != context.ForegroundProcessId ||
+            freshContext.ForegroundWindowHandle != context.ForegroundWindowHandle)
+            return;
+
+        var assessment = _cloudGuide.PrivacyGate.EvaluateState(freshContext, candidates);
         if (!assessment.CanSend)
         {
             SetState($"プライバシー保護のため画面解析を一時停止中。{assessment.UserMessage}", speak: false);
@@ -176,6 +209,7 @@ public partial class MainWindow
         }
 
         _privacyPaused = false;
+        _privacyResumeTimer.Stop();
         var oldCts = _sessionCts;
         _sessionCts = new CancellationTokenSource();
         try { oldCts?.Dispose(); } catch { }
