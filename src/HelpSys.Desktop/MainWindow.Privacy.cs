@@ -38,15 +38,15 @@ public partial class MainWindow
         if (_cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe && !_cloudGuide.CloudEndpointConfigured)
         {
             SetState(
-                "安全版：承認済みAI API接続先が未設定です。画面画像は取得・送信しません。音声のクラウド送信も無効です。",
+                "安全版：AI接続先未設定。画面送信とクラウド音声は無効です。",
                 speak: false);
             return;
         }
 
         SetState(
             _cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe
-                ? "安全版：秘密情報の画面では送信を止めます。音声のクラウド送信も無効です。画面解析はいつでも停止できます。"
-                : "画面情報を利用して案内します。秘密情報の画面では送信を止めます。画面解析はいつでも停止できます。",
+                ? "安全版：秘密情報の画面は送信停止。クラウド音声は無効です。"
+                : "画面を見て案内します。秘密情報の画面では送信を停止します。",
             speak: false);
     }
 
@@ -130,7 +130,7 @@ public partial class MainWindow
         if (!_cloudGuide.CloudEndpointConfigured)
         {
             SetState(
-                "プライバシー保護のため画面解析を一時停止中。安全版の承認済みAI API接続先が未設定のため、画像を取得・送信しません。",
+                "画面解析を停止中。安全版の承認済みAI接続先が未設定です。",
                 speak: false);
             return;
         }
@@ -153,7 +153,7 @@ public partial class MainWindow
             _privacyPaused = false;
             UpdatePrivacyButton();
             PrivacySentinel_RestoreCloudAudio();
-            SetState("安全な画面を確認したため、画面解析を再開しました。やりたいことを入力してください。", speak: false);
+            SetState("画面解析を再開しました。やりたいことを入力してください。", speak: false);
             return;
         }
 
