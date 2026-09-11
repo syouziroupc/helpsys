@@ -44,14 +44,14 @@ public partial class MainWindow
         if (_cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe && !_cloudGuide.CloudEndpointConfigured)
         {
             SetState(
-                "安全版：AI接続先未設定。画面送信とクラウド音声は無効です。",
+                "安全版：AI接続先未設定。画面送信停止。音声のクラウド送信も無効です。",
                 speak: false);
             return;
         }
 
         SetState(
             _cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe
-                ? "安全版：秘密情報の画面は送信停止。クラウド音声は無効です。"
+                ? "安全版：秘密情報は送信停止。音声のクラウド送信も無効です。"
                 : "画面を見て案内します。秘密情報の画面では送信を停止します。",
             speak: false);
     }
