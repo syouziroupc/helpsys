@@ -16,7 +16,6 @@ public sealed class ScreenCaptureService
     private const uint Srccopy = 0x00CC0020;
     private const uint CaptureBlt = 0x40000000;
     private const uint Blackness = 0x00000042;
-    private const uint GwHwndNext = 2;
     private const uint GwHwndPrev = 3;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const int MaxImageWidth = 1280;
@@ -62,20 +61,37 @@ public sealed class ScreenCaptureService
     public Task<ScreenCaptureFrame> CaptureAsync(
         IReadOnlyList<Rect> redactions,
         int expectedProcessId,
+        nint expectedWindowHandle,
         CancellationToken cancellationToken = default)
-        => Task.Run(() => Capture(redactions, expectedProcessId, cancellationToken), cancellationToken);
+        => Task.Run(() => Capture(redactions, expectedProcessId, expectedWindowHandle, cancellationToken), cancellationToken);
+
+    // Compatibility overloads deliberately fail closed. Screen egress is allowed only when the
+    // caller supplies both the verified process identity and exact HWND from SystemContextService.
+    public Task<ScreenCaptureFrame> CaptureAsync(
+        IReadOnlyList<Rect> redactions,
+        int expectedProcessId,
+        CancellationToken cancellationToken = default)
+        => Task.FromException<ScreenCaptureFrame>(new InvalidOperationException(
+            "検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません。"));
 
     public Task<ScreenCaptureFrame> CaptureAsync(IReadOnlyList<Rect> redactions, CancellationToken cancellationToken = default)
-        => Task.Run(() => Capture(redactions, 0, cancellationToken), cancellationToken);
+        => Task.FromException<ScreenCaptureFrame>(new InvalidOperationException(
+            "検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません。"));
 
-    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions) => Capture(redactions, 0, CancellationToken.None);
+    public ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions)
+        => throw new InvalidOperationException("検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません。");
 
-    private ScreenCaptureFrame Capture(IReadOnlyList<Rect> redactions, int expectedProcessId, CancellationToken cancellationToken)
+    private ScreenCaptureFrame Capture(
+        IReadOnlyList<Rect> redactions,
+        int expectedProcessId,
+        nint expectedWindowHandle,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var captureArea = ResolveCaptureArea(expectedProcessId);
-        if (captureArea.Width <= 0 || captureArea.Height <= 0) throw new InvalidOperationException("画面サイズを取得できませんでした。");
+        var captureArea = ResolveCaptureArea(expectedProcessId, expectedWindowHandle);
+        if (captureArea.Width <= 0 || captureArea.Height <= 0)
+            throw new InvalidOperationException("画面サイズを取得できませんでした。");
 
         var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
         var occluderRedactionsBefore = CaptureOccluderBounds(captureArea, cancellationToken);
@@ -93,7 +109,8 @@ public sealed class ScreenCaptureService
             cancellationToken.ThrowIfCancellationRequested();
             memoryDc = CreateCompatibleDC(desktopDc);
             bitmap = CreateCompatibleBitmap(desktopDc, captureArea.Width, captureArea.Height);
-            if (memoryDc == IntPtr.Zero || bitmap == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャー用バッファーを作成できませんでした。");
+            if (memoryDc == IntPtr.Zero || bitmap == IntPtr.Zero)
+                throw new InvalidOperationException("画面キャプチャー用バッファーを作成できませんでした。");
 
             previous = SelectObject(memoryDc, bitmap);
             if (!BitBlt(memoryDc, 0, 0, captureArea.Width, captureArea.Height, desktopDc, captureArea.X, captureArea.Y, Srccopy | CaptureBlt))
@@ -137,41 +154,29 @@ public sealed class ScreenCaptureService
         encoder.Save(stream);
         var dataUri = "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
 
-        return new ScreenCaptureFrame(dataUri, captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height, output.PixelWidth, output.PixelHeight);
+        return new ScreenCaptureFrame(
+            dataUri,
+            captureArea.X,
+            captureArea.Y,
+            captureArea.Width,
+            captureArea.Height,
+            output.PixelWidth,
+            output.PixelHeight);
     }
 
-    private CaptureArea ResolveCaptureArea(int expectedProcessId)
+    private CaptureArea ResolveCaptureArea(int expectedProcessId, nint expectedWindowHandle)
     {
-        var hwnd = expectedProcessId > 0
-            ? FindTopLevelWindowForProcess(expectedProcessId)
-            : GetForegroundWindow();
-
-        if (expectedProcessId <= 0 && BelongsToSelf(hwnd))
-        {
-            var cursor = hwnd;
-            var foundTarget = false;
-            for (var i = 0; i < 96; i++)
-            {
-                cursor = GetWindow(cursor, GwHwndNext);
-                if (cursor == IntPtr.Zero) break;
-                if (!IsWindowVisible(cursor) || IsIconic(cursor) || BelongsToSelf(cursor)) continue;
-                if (!GetWindowRect(cursor, out var rect)) continue;
-                if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) continue;
-                hwnd = cursor;
-                foundTarget = true;
-                break;
-            }
-            if (!foundTarget)
-                throw new InvalidOperationException("操作対象のウィンドウを安全に特定できないため、画面画像を送信しません。");
-        }
-
-        if (hwnd == IntPtr.Zero || BelongsToSelf(hwnd))
+        if (expectedProcessId <= 0 || expectedWindowHandle == nint.Zero)
             throw new InvalidOperationException("操作対象のウィンドウを安全に特定できないため、画面画像を送信しません。");
+
+        var hwnd = (IntPtr)expectedWindowHandle;
+        if (BelongsToSelf(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd))
+            throw new InvalidOperationException("検証済み操作対象ウィンドウが現在利用できないため、画面画像を送信しません。");
 
         GetWindowThreadProcessId(hwnd, out var rawTargetPid);
         var targetProcessId = unchecked((int)rawTargetPid);
-        if (targetProcessId <= 0 || (expectedProcessId > 0 && targetProcessId != expectedProcessId))
-            throw new InvalidOperationException("操作対象プロセスを安全に特定できないため、画面画像を送信しません。");
+        if (targetProcessId <= 0 || targetProcessId != expectedProcessId)
+            throw new InvalidOperationException("操作対象プロセスとウィンドウの対応を確認できないため、画面画像を送信しません。");
 
         var shellSurface = IsShellSurface(hwnd);
         var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
@@ -193,8 +198,7 @@ public sealed class ScreenCaptureService
         if (monitorArea.Width <= 0 || monitorArea.Height <= 0)
             throw new InvalidOperationException("操作中のモニター領域が不正なため、画面画像を送信しません。");
 
-        if (shellSurface)
-            return monitorArea;
+        if (shellSurface) return monitorArea;
 
         if (!GetWindowRect(hwnd, out var windowRect))
             throw new InvalidOperationException("操作対象ウィンドウの領域を取得できないため、画面画像を送信しません。");
@@ -209,22 +213,6 @@ public sealed class ScreenCaptureService
             throw new InvalidOperationException("操作対象ウィンドウを安全な範囲で取得できないため、画面画像を送信しません。");
 
         return new CaptureArea(left, top, width, height, hwnd, targetProcessId, false);
-    }
-
-    private static IntPtr FindTopLevelWindowForProcess(int processId)
-    {
-        if (processId <= 0) return IntPtr.Zero;
-        var found = IntPtr.Zero;
-        EnumWindows((hwnd, _) =>
-        {
-            GetWindowThreadProcessId(hwnd, out var rawPid);
-            if (unchecked((int)rawPid) != processId || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return true;
-            if (!GetWindowRect(hwnd, out var rect)) return true;
-            if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) return true;
-            found = hwnd;
-            return false;
-        }, IntPtr.Zero);
-        return found;
     }
 
     private bool BelongsToSelf(IntPtr hwnd)
@@ -460,11 +448,6 @@ public sealed class ScreenCaptureService
         int TargetProcessId,
         bool ShellSurface);
 
-    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PointNative { public int X; public int Y; }
-
     [StructLayout(LayoutKind.Sequential)]
     private struct RectNative { public int Left; public int Top; public int Right; public int Bottom; }
 
@@ -478,17 +461,10 @@ public sealed class ScreenCaptureService
     }
 
     [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr window);
 
     [DllImport("user32.dll")]
     private static extern int ReleaseDC(IntPtr window, IntPtr dc);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
