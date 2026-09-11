@@ -38,7 +38,8 @@ function Save-DesktopScreenshot([string]$name) {
 }
 
 function Assert-HasSolidRedaction([string]$path) {
-  $bitmap = New-Object System.Drawing.Bitmap (Resolve-Path $path)
+  $resolvedPath = (Resolve-Path $path).Path
+  $bitmap = [System.Drawing.Bitmap]::new($resolvedPath)
   try {
     $rowsWithLongBlackRun = 0
     $maxRun = 0
