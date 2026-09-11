@@ -86,13 +86,16 @@ public partial class MainWindow
                 continue;
             }
 
+            var afterScanContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(context, afterScanContext)) continue;
+
             var privacy = _cloudGuide.PreflightPrivacy(context, candidates);
             if (!privacy.CanSend) return false;
 
             ScreenCaptureFrame frame;
             try
             {
-                frame = await CaptureQualityFrameAsync(candidates, cancellationToken);
+                frame = await CaptureQualityFrameAsync(candidates, context, cancellationToken);
             }
             catch (OperationCanceledException) { throw; }
             catch
@@ -103,7 +106,8 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return false;
-            if (HasSystemTransitionV3(context, _systemContext.Capture())) continue;
+            var afterCaptureContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(context, afterCaptureContext) || HasSystemTransitionV3(context, afterCaptureContext)) continue;
             if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) continue;
 
             var evidence = GuidanceEvidenceService.Build(true, candidates, _history, context);
@@ -133,7 +137,8 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return false;
-            if (HasSystemTransitionV3(context, _systemContext.Capture())) continue;
+            var afterPlanContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(context, afterPlanContext) || HasSystemTransitionV3(context, afterPlanContext)) continue;
 
             if (recovery.Status.Equals("done", StringComparison.OrdinalIgnoreCase) &&
                 recovery.ScreenConfirmed &&
@@ -195,7 +200,8 @@ public partial class MainWindow
 
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, context.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation) || freshTarget is null) continue;
-            if (HasSystemTransitionV3(context, _systemContext.Capture())) continue;
+            var beforePresentContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(context, beforePresentContext) || HasSystemTransitionV3(context, beforePresentContext)) continue;
 
             ShowStructuredTarget(decision, freshTarget, candidates, context, generation);
             return true;
@@ -245,7 +251,8 @@ public partial class MainWindow
         catch (OperationCanceledException) { throw; }
         catch { }
 
-        if (!_sessionState.IsCurrent(generation) || HasSystemTransitionV3(context, _systemContext.Capture())) return false;
+        var current = _systemContext.Capture();
+        if (!_sessionState.IsCurrent(generation) || !HasSameCaptureIdentity(context, current) || HasSystemTransitionV3(context, current)) return false;
         if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
         else if (recovery.Confidence < MinimumVisualOnlyTargetConfidence) return false;
 
