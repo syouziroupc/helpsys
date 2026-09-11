@@ -61,4 +61,10 @@ for (const file of walk('src/HelpSys.Desktop')) {
   }
 }
 
-console.log('HelpSys prohibited-capability, persistence and input-injection contract passed.');
+const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
+assert(scanner.includes('isInput ? "[input field]"'), 'Edit/ComboBox accessibility names must be minimized before candidate storage.');
+assert(scanner.includes('string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present"'), 'UI input state must be reduced immediately to a fixed presence marker.');
+assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input text must never be assigned to a local variable.');
+assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
+
+console.log('HelpSys prohibited-capability, persistence, input-injection and local-input-minimization contract passed.');
