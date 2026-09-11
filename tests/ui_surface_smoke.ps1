@@ -96,6 +96,12 @@ try {
     throw "Core UI did not become available within $startupMaximumMs ms. Missing: $($missing -join ', ')"
   }
 
+  foreach ($id in @('RequestBox','VoiceButton','SpeakButton','ClearButton','GuideButton','PrivacyButton','CommanderButton','ExitButton')) {
+    if (-not $controls[$id].Current.IsEnabled) {
+      throw "Normal HelpSys surface feature unexpectedly became disabled: $id"
+    }
+  }
+
   $windowRect = $window.Current.BoundingRectangle
   if ($windowRect.Width -lt 580 -or $windowRect.Width -gt 650) {
     throw "HelpSys width regressed from the compact surface: $($windowRect.Width)"
@@ -131,9 +137,18 @@ try {
   }
   if ($privacyRect.Right -gt ($exitRect.Left + 2)) { throw 'Privacy and Exit controls overlap.' }
   if ((Center-Y $commanderRect) -le ((Center-Y $requestRect) + 8)) { throw 'Commander no longer occupies the footer/status band.' }
-  if ($stateRect.Width -lt 260) { throw "Normal status text area is too narrow: $($stateRect.Width) px" }
+  if ($stateRect.Width -lt 390) { throw "Normal status text area is too narrow: $($stateRect.Width) px" }
+  if ($stateRect.Height -gt 24) {
+    Save-Screenshot 'helpsys-ui-status-wrap-regression.png'
+    throw "Normal idle status wrapped beyond one compact line: $($stateRect.Height) px"
+  }
   if ($requestRect.Height -lt 34 -or $requestRect.Height -gt 44 -or $guideRect.Height -lt 34 -or $guideRect.Height -gt 44) {
     throw 'Primary interaction controls no longer retain the established ~38px height.'
+  }
+
+  $normalState = $controls['StateText'].Current.Name
+  if ($normalState -like '*安全版*' -or $normalState -like '*無効*') {
+    throw "Normal edition surfaced a Safe/disabled state unexpectedly: $normalState"
   }
 
   Save-Screenshot 'helpsys-ui-surface.png'
@@ -166,11 +181,12 @@ try {
     idleWindowWidth = [math]::Round($windowRect.Width)
     idleWindowHeight = [math]::Round($windowRect.Height)
     statusAreaWidth = [math]::Round($stateRect.Width)
+    statusAreaHeight = [math]::Round($stateRect.Height)
     guideToLocalApiMilliseconds = [math]::Round($guideTimer.Elapsed.TotalMilliseconds)
     guideMaximumMilliseconds = $guideMaximumMs
   }
   $metrics | ConvertTo-Json | Set-Content 'artifacts/helpsys-ui-performance.json' -Encoding UTF8
-  Write-Host "HelpSys UI surface smoke passed. Startup=$($metrics.startupCoreUiMilliseconds) ms; guide-to-API=$($metrics.guideToLocalApiMilliseconds) ms; size=$($metrics.idleWindowWidth)x$($metrics.idleWindowHeight)."
+  Write-Host "HelpSys UI surface smoke passed. Startup=$($metrics.startupCoreUiMilliseconds) ms; guide-to-API=$($metrics.guideToLocalApiMilliseconds) ms; size=$($metrics.idleWindowWidth)x$($metrics.idleWindowHeight); status=$($metrics.statusAreaWidth)x$($metrics.statusAreaHeight)."
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
