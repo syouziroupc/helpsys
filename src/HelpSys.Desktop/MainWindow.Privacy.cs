@@ -72,7 +72,13 @@ public partial class MainWindow
     private void EnterPrivacyMode(PrivacyAssessment assessment)
     {
         _privacyPaused = true;
-        _sessionState.Invalidate(GuidanceSessionState.Idle);
+
+        // Cancel the old work before releasing its planner slot. This prevents a stale operation
+        // from overlapping with a future safe-screen restart while still allowing that restart to
+        // acquire the session controller immediately after the Privacy Gate approves the screen.
+        try { _sessionCts?.Cancel(); } catch { }
+        _sessionState.AbortCurrentOperation(GuidanceSessionState.Idle);
+
         _speechOutput.Stop();
         PrivacySentinel_SuspendCloudAudio();
         _overlay.Hide();
@@ -85,7 +91,6 @@ public partial class MainWindow
         _actionObserver.Stop();
         _liveReplanPending = false;
         _liveRestartAfterPlanCancel = false;
-        try { _sessionCts?.Cancel(); } catch { }
 
         if (assessment.Classification == PrivacyClassification.ManualPause || !_cloudGuide.CloudEndpointConfigured)
             _privacyResumeTimer.Stop();
@@ -208,12 +213,17 @@ public partial class MainWindow
             return;
         }
 
-        _privacyPaused = false;
-        _privacyResumeTimer.Stop();
+        // This is an explicit restart boundary after the old operation token was canceled by
+        // EnterPrivacyMode. Releasing any stale planner slot here is safe and prevents a canceled
+        // generation from blocking the replacement operation at TryBeginOperation().
         var oldCts = _sessionCts;
+        try { oldCts?.Cancel(); } catch { }
+        _sessionState.AbortCurrentOperation(GuidanceSessionState.Idle);
         _sessionCts = new CancellationTokenSource();
         try { oldCts?.Dispose(); } catch { }
-        _sessionState.Invalidate(GuidanceSessionState.Idle);
+
+        _privacyPaused = false;
+        _privacyResumeTimer.Stop();
         _liveElements = [];
         _liveSystem = null;
         try { _actionObserver.Start(); } catch { }
