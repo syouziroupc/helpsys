@@ -13,13 +13,27 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
 /// External endpoints must use HTTPS. Plain HTTP is accepted only for loopback development.
-/// Safe builds have no production cloud default: an explicitly reviewed endpoint is required.
+/// Safe builds have no production cloud default and only accept the explicitly reviewed origin.
+/// Redirects and cookies are disabled so approved requests cannot be silently rerouted or persisted.
 /// </summary>
 public sealed class CloudAiAdapter : IDisposable
 {
     public const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
 
-    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HashSet<string> AllowedApiKeyHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "x-helpsys-key",
+        "x-helpsys-education-key"
+    };
+
+    private readonly HttpClient _http = new(new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false
+    })
+    {
+        Timeout = Timeout.InfiniteTimeSpan
+    };
     private readonly string? _apiBase;
     private readonly string? _apiKey;
     private readonly string _apiKeyHeader;
@@ -30,9 +44,12 @@ public sealed class CloudAiAdapter : IDisposable
         string? apiKey = null,
         string apiKeyHeader = "x-helpsys-key")
     {
+        if (!AllowedApiKeyHeaders.Contains(apiKeyHeader))
+            throw new ArgumentException("HelpSysで許可されていないAPIキーヘッダーです。", nameof(apiKeyHeader));
+
 #if HELPSYS_SAFE_BUILD
         var resolvedBase = apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
-        _apiBase = string.IsNullOrWhiteSpace(resolvedBase) ? null : ValidateApiBase(resolvedBase.TrimEnd('/'));
+        _apiBase = string.IsNullOrWhiteSpace(resolvedBase) ? null : ValidateSafeApiBase(resolvedBase.TrimEnd('/'));
         _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
 #else
         var resolvedBase = (apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
@@ -86,9 +103,31 @@ public sealed class CloudAiAdapter : IDisposable
         if (!string.IsNullOrWhiteSpace(_apiKey))
             request.Headers.TryAddWithoutValidation(_apiKeyHeader, _apiKey);
 
-        using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token).ConfigureAwait(false);
         var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         return new CloudAiResponse((int)response.StatusCode, responseBody);
+    }
+
+    private static string ValidateSafeApiBase(string value)
+    {
+        var validated = ValidateApiBase(value);
+        if (!Uri.TryCreate(validated, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("安全版AI APIの接続先が不正です。");
+
+        if (uri.IsLoopback)
+            return validated;
+
+        var approved = new Uri(DefaultApiBase, UriKind.Absolute);
+        var sameApprovedOrigin =
+            uri.Scheme.Equals(approved.Scheme, StringComparison.OrdinalIgnoreCase) &&
+            uri.Host.Equals(approved.Host, StringComparison.OrdinalIgnoreCase) &&
+            uri.Port == approved.Port &&
+            (uri.AbsolutePath.Length == 0 || uri.AbsolutePath == "/");
+
+        if (!sameApprovedOrigin)
+            throw new InvalidOperationException("安全版はコードで承認されたAI API接続先以外へ送信できません。");
+
+        return validated;
     }
 
     private static string ValidateApiBase(string value)
