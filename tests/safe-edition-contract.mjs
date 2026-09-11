@@ -27,6 +27,13 @@ assert(adapter.includes('#if HELPSYS_SAFE_BUILD'), 'Cloud adapter must compile a
 assert(adapter.includes('HELPSYS_SAFE_API_BASE'), 'Safe build must require a dedicated reviewed endpoint variable.');
 assert(adapter.includes('HELPSYS_SAFE_API_KEY'), 'Safe build must use a dedicated Safe API key variable.');
 assert(adapter.includes('string.IsNullOrWhiteSpace(resolvedBase) ? null'), 'Safe build must have no production cloud endpoint fallback.');
+assert(adapter.includes('ValidateSafeApiBase'), 'Safe build must validate its endpoint against a code-level allowlist.');
+assert(adapter.includes('uri.Host.Equals(approved.Host'), 'Safe external endpoint host must match the reviewed origin exactly.');
+assert(adapter.includes('uri.Port == approved.Port'), 'Safe external endpoint port must match the reviewed origin exactly.');
+assert(adapter.includes('uri.AbsolutePath.Length == 0 || uri.AbsolutePath == "/"'), 'Safe endpoint must not hide an unreviewed base path.');
+assert(adapter.includes('AllowAutoRedirect = false'), 'Cloud transport must never follow redirects to another origin.');
+assert(adapter.includes('UseCookies = false'), 'Cloud transport must not persist or replay cookies.');
+assert(adapter.includes('AllowedApiKeyHeaders'), 'Cloud transport must use an allowlist for API-key header names.');
 assert(adapter.includes('if (!IsConfigured)'), 'Cloud transport must fail closed when no Safe endpoint is configured.');
 assert(cloud.includes('cloud_endpoint_unconfigured'), 'Cloud preflight must classify an unconfigured Safe endpoint before screenshot creation.');
 assert(cloud.includes('画面画像を取得せず外部送信を停止しています'), 'Cloud preflight must explicitly stop image acquisition when Safe is unconfigured.');
