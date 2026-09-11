@@ -80,7 +80,10 @@ public sealed class SystemContextService
             ? GetCachedBrowser(hwnd, processName, title)
             : null;
 
-        return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser);
+        return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser)
+        {
+            ForegroundWindowHandle = hwnd
+        };
     }
 
     private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
