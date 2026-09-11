@@ -65,7 +65,7 @@ public partial class MainWindow
             ScreenCaptureFrame frame;
             try
             {
-                frame = await CaptureQualityFrameAsync(candidates, cancellationToken);
+                frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -82,7 +82,7 @@ public partial class MainWindow
             if (!_sessionState.IsCurrent(generation)) return;
 
             var afterCaptureContext = _systemContext.Capture();
-            if (HasSystemTransitionV3(systemContext, afterCaptureContext))
+            if (!HasSameCaptureIdentity(systemContext, afterCaptureContext) || HasSystemTransitionV3(systemContext, afterCaptureContext))
             {
                 await TryRouteRecoveryAsync("確認中に画面が切り替わった", generation, cancellationToken);
                 return;
@@ -116,7 +116,8 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
-            if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
+            var postPlanContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(systemContext, postPlanContext) || HasSystemTransitionV3(systemContext, postPlanContext))
             {
                 await TryRouteRecoveryAsync("判断中に画面が変化した", generation, cancellationToken);
                 return;
@@ -206,7 +207,8 @@ public partial class MainWindow
 
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
-            if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
+            var prePresentContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(systemContext, prePresentContext) || HasSystemTransitionV3(systemContext, prePresentContext))
             {
                 await TryRouteRecoveryAsync("案内表示の直前に画面が変わった", generation, cancellationToken);
                 return;
@@ -268,7 +270,8 @@ public partial class MainWindow
         CancellationToken cancellationToken)
     {
         if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
-        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+        var currentBeforeScan = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, currentBeforeScan) || HasSystemTransitionV3(expectedContext, currentBeforeScan)) return false;
 
         SetState("画像だけでは確定できないため、Windowsの構造情報から次の操作を再確認しています…", speak: false);
 
@@ -281,7 +284,8 @@ public partial class MainWindow
         catch { return false; }
 
         if (!_sessionState.IsCurrent(generation) || candidates.Count == 0) return false;
-        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+        var currentAfterScan = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, currentAfterScan) || HasSystemTransitionV3(expectedContext, currentAfterScan)) return false;
 
         GuideDecision fallback;
         try
@@ -291,7 +295,9 @@ public partial class MainWindow
         catch (OperationCanceledException) { throw; }
         catch { return false; }
 
-        if (!_sessionState.IsCurrent(generation) || HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+        if (!_sessionState.IsCurrent(generation)) return false;
+        var currentAfterPlan = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, currentAfterPlan) || HasSystemTransitionV3(expectedContext, currentAfterPlan)) return false;
 
         if (fallback.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(fallback.Question))
         {
@@ -309,7 +315,8 @@ public partial class MainWindow
 
         var freshTarget = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
         if (!_sessionState.IsCurrent(generation) || freshTarget is null) return false;
-        if (HasSystemTransitionV3(expectedContext, _systemContext.Capture())) return false;
+        var currentBeforePresent = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, currentBeforePresent) || HasSystemTransitionV3(expectedContext, currentBeforePresent)) return false;
 
         ShowStructuredTarget(fallback, freshTarget, candidates, expectedContext, generation);
         return true;
@@ -317,9 +324,16 @@ public partial class MainWindow
 
     private async Task<ScreenCaptureFrame> CaptureQualityFrameAsync(
         IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot expectedContext,
         CancellationToken cancellationToken)
     {
+        if (!HasUsableForeground(expectedContext) || expectedContext.ForegroundWindowHandle == nint.Zero)
+            throw new InvalidOperationException("検証済み操作対象ウィンドウが無いため、画面画像を送信しません。");
+
         var privacyContext = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, privacyContext))
+            throw new InvalidOperationException("操作対象ウィンドウが変わったため、古い画面画像を送信しません。");
+
         var privacy = _cloudGuide.PreflightPrivacy(privacyContext, candidates);
         if (!privacy.CanSend)
             throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
@@ -335,9 +349,9 @@ public partial class MainWindow
 
         var expectedProcessId = candidateProcessIds.Length == 1
             ? candidateProcessIds[0]
-            : privacyContext.ForegroundProcessId;
-        if (expectedProcessId <= 0)
-            throw new InvalidOperationException("操作対象プロセスを安全に特定できないため、画面画像を送信しません。");
+            : expectedContext.ForegroundProcessId;
+        if (expectedProcessId <= 0 || expectedProcessId != expectedContext.ForegroundProcessId)
+            throw new InvalidOperationException("操作対象プロセスと前面ウィンドウを安全に対応付けできないため、画面画像を送信しません。");
 
         var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
         _speechInput.HideOverlay();
@@ -347,13 +361,34 @@ public partial class MainWindow
         try
         {
             Opacity = 0;
-            await Task.Delay(130, cancellationToken);
-            return await _screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken);
+            await Task.Delay(70, cancellationToken);
+
+            var captureContext = _systemContext.Capture();
+            if (!HasSameCaptureIdentity(expectedContext, captureContext))
+                throw new InvalidOperationException("撮影直前に操作対象ウィンドウが変わったため、画面画像を送信しません。");
+
+            var secondPrivacy = _cloudGuide.PreflightPrivacy(captureContext, candidates);
+            if (!secondPrivacy.CanSend)
+                throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
+
+            return await _screenCapture.CaptureAsync(
+                passwordBounds,
+                expectedProcessId,
+                expectedContext.ForegroundWindowHandle,
+                cancellationToken);
         }
         finally
         {
             Opacity = previousOpacity;
         }
+    }
+
+    private static bool HasSameCaptureIdentity(SystemContextSnapshot expected, SystemContextSnapshot current)
+    {
+        if (expected.ForegroundProcessId <= 0 || expected.ForegroundWindowHandle == nint.Zero) return false;
+        if (current.ForegroundProcessId != expected.ForegroundProcessId) return false;
+        if (current.ForegroundWindowHandle != expected.ForegroundWindowHandle) return false;
+        return current.ForegroundProcess.Equals(expected.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ShowQualityVisualTargetAsync(
@@ -377,7 +412,8 @@ public partial class MainWindow
         catch (OperationCanceledException) { throw; }
 
         if (!_sessionState.IsCurrent(generation)) return;
-        if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
+        var currentContext = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(systemContext, currentContext) || HasSystemTransitionV3(systemContext, currentContext))
         {
             await TryRouteRecoveryAsync("画像上の候補を確認中に画面が変わった", generation, cancellationToken);
             return;
