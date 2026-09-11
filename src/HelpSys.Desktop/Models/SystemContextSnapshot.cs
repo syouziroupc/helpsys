@@ -35,10 +35,12 @@ public sealed record BrowserContextSnapshot(
             if (scheme is "chrome" or "edge" or "about")
             {
                 var local = text.ToLowerInvariant();
+                // Canonical danger categories deliberately contain vocabulary already recognized by
+                // PrivacyGate SecretTerms/StorageTerms, so minimization can never weaken blocking.
                 if (ContainsAny(local, "password", "passkey", "login", "logins"))
-                    return $"{scheme}:password-manager";
+                    return $"{scheme}://passwords";
                 if (ContainsAny(local, "cookie", "storage", "localstorage", "sessionstorage"))
-                    return $"{scheme}:browser-storage";
+                    return $"{scheme}://localstorage";
 
                 if (scheme == "about") return "about:internal";
                 return string.IsNullOrWhiteSpace(uri.Host) ? $"{scheme}:internal" : $"{scheme}://{uri.Host}";
