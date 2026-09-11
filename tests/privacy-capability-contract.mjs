@@ -58,6 +58,12 @@ assert(scanner.includes('string.IsNullOrEmpty(valueValue.Current.Value) ? null :
 assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input text must never be assigned to a local variable.');
 assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
 
+const contextModel = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
+assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Url);'), 'Browser URL must be minimized at the snapshot storage boundary.');
+assert(contextModel.includes('Origin only. UserInfo, path, query and fragment are deliberately discarded.'), 'HTTP(S) browser snapshots must explicitly discard path/query/fragment data.');
+assert(contextModel.includes('password-manager') && contextModel.includes('browser-storage'), 'Sensitive internal browser routes must be reduced to danger categories.');
+assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain an UNKNOWN-triggering marker instead of becoming empty/safe.');
+
 const systemContext = fs.readFileSync('src/HelpSys.Desktop/Services/SystemContextService.cs', 'utf8');
 assert(systemContext.includes('EventSystemForeground = 0x0003'), 'System context must observe Windows foreground-change events.');
 assert(systemContext.includes('SetWinEventHook('), 'System context must track a real external foreground HWND instead of inferring one from Z-order.');
@@ -97,4 +103,4 @@ assert(capture.includes('EnumWindows('), 'Process-bound target selection must en
 assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
 assert(quality.includes('_screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken)'), 'Quality and recovery screenshots must pass the process-bound target identity into the capture service.');
 
-console.log('HelpSys prohibited-capability, persistence, input-injection, verified-foreground, Privacy Sentinel and process-bound screenshot contract passed.');
+console.log('HelpSys prohibited-capability, persistence, browser-context minimization, verified-foreground, Privacy Sentinel and process-bound screenshot contract passed.');
