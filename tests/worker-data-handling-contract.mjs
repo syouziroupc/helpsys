@@ -7,6 +7,9 @@ const quality = read('worker/quality-guide.js');
 const education = read('worker/education.js');
 const transcribe = read('worker/transcribe.js');
 const guard = read('worker/reliability-v4-guard.js');
+const wrangler = read('wrangler.jsonc');
+const educationWrangler = read('wrangler.education.jsonc');
+const packageJson = JSON.parse(read('package.json'));
 
 for (const [name, source] of [['quality', quality], ['education', education], ['transcribe', transcribe]]) {
   assert(!/catch\s*\(\s*(?:error|err|ex|exception)\s*\)[\s\S]{0,240}console\.(?:log|error|warn|info|debug)\s*\([^)]*,/i.test(source),
@@ -43,4 +46,11 @@ assert(education.includes('const lessonTitle = sanitizeEducationText'), 'Educati
 assert(education.includes('const objective = sanitizeEducationText'), 'Education objectives must be sanitized before inference.');
 assert(education.includes('const learnerMessage = sanitizeEducationText'), 'Education learner messages must be sanitized before inference.');
 
-console.log('HelpSys Worker privacy data-handling contract passed.');
+for (const [name, config] of [['main', wrangler], ['education', educationWrangler]]) {
+  const compact = config.replace(/\s+/g, '');
+  assert(compact.includes('"cache":{"enabled":false}'), `${name} Worker must explicitly disable Workers HTTP caching.`);
+}
+assert(/^\^4\.(?:6[9-9]|[7-9]\d|\d{3,})\./.test(String(packageJson.devDependencies?.wrangler || '')),
+  'Wrangler must be pinned to a version that supports explicit cache.enabled=false configuration.');
+
+console.log('HelpSys Worker privacy data-handling and HTTP-cache contract passed.');
