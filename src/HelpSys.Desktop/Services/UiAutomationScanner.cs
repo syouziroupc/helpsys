@@ -213,7 +213,8 @@ public sealed class UiAutomationScanner
                     var rect = current.BoundingRectangle;
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                     var isPassword = current.IsPassword;
-                    var name = isPassword ? "[password field]" : current.Name ?? string.Empty;
+                    var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
+                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : current.Name ?? string.Empty;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
                     var isInteractive = IsInteractiveType(typeName);
@@ -271,8 +272,9 @@ public sealed class UiAutomationScanner
             if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
                 element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
             {
-                var raw = valueValue.Current.Value ?? string.Empty;
-                value = Trim(raw, 320);
+                // Keep only whether a value exists. The user-entered string itself is intentionally discarded
+                // immediately and never stored in UiElementCandidate, history, telemetry or cloud payloads.
+                value = string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present";
             }
         }
         catch (ElementNotAvailableException) { }
