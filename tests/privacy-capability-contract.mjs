@@ -63,6 +63,7 @@ assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Ur
 assert(contextModel.includes('Origin only. UserInfo, path, query and fragment are deliberately discarded.'), 'HTTP(S) browser snapshots must explicitly discard path/query/fragment data.');
 assert(contextModel.includes('return $"{scheme}://passwords";') && contextModel.includes('return $"{scheme}://localstorage";'), 'Sensitive internal browser routes must collapse to PrivacyGate-recognized danger categories.');
 assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain an UNKNOWN-triggering marker instead of becoming empty/safe.');
+assert(contextModel.includes('ForegroundWindowHandle'), 'System context must carry the locally verified foreground HWND without sending it to cloud evidence.');
 
 const systemContext = fs.readFileSync('src/HelpSys.Desktop/Services/SystemContextService.cs', 'utf8');
 assert(systemContext.includes('EventSystemForeground = 0x0003'), 'System context must observe Windows foreground-change events.');
@@ -70,6 +71,7 @@ assert(systemContext.includes('SetWinEventHook('), 'System context must track a 
 assert(systemContext.includes('WineventSkipownprocess'), 'Foreground tracking must skip HelpSys own-process events.');
 assert(systemContext.includes('_lastExternalForeground'), 'System context must retain the last verified external foreground window.');
 assert(systemContext.includes('return IsUsableExternalWindow(_lastExternalForeground) ? _lastExternalForeground : nint.Zero;'), 'When HelpSys owns foreground, context must use only a previously verified external foreground HWND or fail closed.');
+assert(systemContext.includes('ForegroundWindowHandle = hwnd'), 'Captured system context must preserve the verified HWND locally.');
 assert(!systemContext.includes('GwHwndNext'), 'System context must not walk behind HelpSys and guess the work surface from Z-order.');
 assert(!systemContext.includes('GetWindow(cursor'), 'System context must not select an unrelated notification merely because it sits behind HelpSys.');
 
@@ -85,6 +87,7 @@ assert(sentinel.includes('_commander.SetEnabled(false)'), 'Commander wake monito
 
 const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
 const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
+const recovery = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs', 'utf8');
 assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
 assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
 assert(capture.indexOf('var occluderRedactionsBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before the desktop pixels are copied.');
@@ -96,11 +99,16 @@ assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownersh
 assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
 assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
 assert(/if\s*\(shellSurface\)\s*return monitorArea;/s.test(capture), 'Only a positively identified shell surface may use full-monitor capture.');
-assert(capture.includes('int expectedProcessId'), 'Screenshot capture must accept the expected foreground process identity.');
-assert(capture.includes('FindTopLevelWindowForProcess(expectedProcessId)'), 'Screenshot target selection must bind to the expected process instead of whichever window happens to be behind HelpSys.');
-assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject a selected window whose process does not match the expected process.');
-assert(capture.includes('EnumWindows('), 'Process-bound target selection must enumerate top-level windows explicitly.');
+assert(capture.includes('int expectedProcessId') && capture.includes('nint expectedWindowHandle'), 'Screenshot capture must require both process identity and exact HWND.');
+assert(capture.includes('var hwnd = (IntPtr)expectedWindowHandle;'), 'Screenshot target selection must use the supplied exact HWND, not enumerate another same-process window.');
+assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
+assert(!capture.includes('FindTopLevelWindowForProcess'), 'Screenshot capture must not select an arbitrary same-process top-level window.');
+assert(!capture.includes('EnumWindows('), 'Exact-HWND capture must not enumerate top-level windows to guess the target.');
+assert(capture.includes('検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません'), 'Legacy capture overloads must fail closed without an exact HWND.');
 assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
-assert(quality.includes('_screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken)'), 'Quality and recovery screenshots must pass the process-bound target identity into the capture service.');
+assert(quality.includes('HasSameCaptureIdentity'), 'Quality planning must bind pre-capture, post-capture and pre-present checks to the same HWND.');
+assert(quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality capture must pass the verified foreground HWND into the capture service.');
+assert(quality.includes('_screenCapture.CaptureAsync(') && quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality screenshot creation must use process + exact HWND.');
+assert(recovery.includes('CaptureQualityFrameAsync(candidates, context, cancellationToken)'), 'Recovery screenshots must reuse the same exact-HWND capture boundary.');
 
-console.log('HelpSys prohibited-capability, persistence, browser-context minimization, verified-foreground, Privacy Sentinel and process-bound screenshot contract passed.');
+console.log('HelpSys prohibited-capability, persistence, browser-context minimization, verified-foreground, Privacy Sentinel and exact-HWND screenshot contract passed.');
