@@ -26,11 +26,7 @@ public sealed class CloudAiAdapter : IDisposable
         "x-helpsys-education-key"
     };
 
-    private readonly HttpClient _http = new(new HttpClientHandler
-    {
-        AllowAutoRedirect = false,
-        UseCookies = false
-    })
+    private readonly HttpClient _http = new(CreateHandler())
     {
         Timeout = Timeout.InfiniteTimeSpan
     };
@@ -100,12 +96,29 @@ public sealed class CloudAiAdapter : IDisposable
             Content = content
         };
         request.Headers.TryAddWithoutValidation("x-helpsys-request-id", Guid.NewGuid().ToString("N"));
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true, NoCache = true };
+        request.Headers.Pragma.ParseAdd("no-cache");
         if (!string.IsNullOrWhiteSpace(_apiKey))
             request.Headers.TryAddWithoutValidation(_apiKeyHeader, _apiKey);
 
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token).ConfigureAwait(false);
         var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
         return new CloudAiResponse((int)response.StatusCode, responseBody);
+    }
+
+    private static HttpClientHandler CreateHandler()
+    {
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            CheckCertificateRevocationList = true
+        };
+#if HELPSYS_SAFE_BUILD
+        // Safe must not inherit an OS/user proxy that could become an unreviewed intermediary.
+        handler.UseProxy = false;
+#endif
+        return handler;
     }
 
     private static string ValidateSafeApiBase(string value)
