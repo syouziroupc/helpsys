@@ -45,6 +45,10 @@ assert(adapter.includes('request.Headers.Pragma.ParseAdd("no-cache")'), 'Cloud r
 assert(adapter.includes('AllowedApiKeyHeaders'), 'Cloud transport must use an allowlist for API-key header names.');
 assert(!adapter.includes('DangerousAcceptAnyServerCertificateValidator'), 'TLS certificate validation must never be bypassed.');
 assert(!adapter.includes('ServerCertificateCustomValidationCallback'), 'Safe transport must not install a custom certificate-validation bypass.');
+assert(adapter.includes('MaxResponseBodyBytes = 1024 * 1024'), 'Cloud response bodies must have a strict memory-safety ceiling.');
+assert(adapter.includes('content.Headers.ContentLength is > MaxResponseBodyBytes'), 'Declared oversized cloud responses must be rejected before buffering.');
+assert(adapter.includes('buffer.Length + read > MaxResponseBodyBytes'), 'Chunked cloud responses must be bounded by measured bytes while streaming.');
+assert(adapter.includes('Array.Clear(chunk') && adapter.includes('Array.Clear(segment.Array'), 'Temporary cloud response byte buffers must be cleared after decoding.');
 assert(adapter.includes('if (!IsConfigured)'), 'Cloud transport must fail closed when no Safe endpoint is configured.');
 assert(cloud.includes('cloud_endpoint_unconfigured'), 'Cloud preflight must classify an unconfigured Safe endpoint before screenshot creation.');
 assert(cloud.includes('画面画像を取得せず外部送信を停止しています'), 'Cloud preflight must explicitly stop image acquisition when Safe is unconfigured.');
