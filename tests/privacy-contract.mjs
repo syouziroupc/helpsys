@@ -117,7 +117,11 @@ for (const requiredPattern of ['VisibleEmailRegex', 'VisibleJapanesePhoneRegex',
 assert(capture.includes('入力欄や表示済み秘密情報を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed for both input and displayed sensitive data.');
 assert(capture.includes('FullMonitorShellProcesses'), 'Only shell operation surfaces should retain full-monitor capture.');
 assert(capture.includes('return new CaptureArea(left, top, width, height, hwnd, targetProcessId, false);'), 'Normal application capture must be clipped to the verified target window.');
-assert(capture.includes('data minimization'), 'Active-window capture minimization must remain an explicit privacy invariant.');
+assert(capture.includes('var left = Math.Max(windowRect.Left, info.Monitor.Left);') &&
+       capture.includes('var top = Math.Max(windowRect.Top, info.Monitor.Top);') &&
+       capture.includes('var right = Math.Min(windowRect.Right, info.Monitor.Right);') &&
+       capture.includes('var bottom = Math.Min(windowRect.Bottom, info.Monitor.Bottom);'),
+       'Normal application capture must be clipped to the target window and monitor boundary.');
 
 assert(telemetry.includes('sealed record PrivacySafeTelemetryEvent'), 'A fixed long-term telemetry allowlist type is required.');
 for (const forbidden of ['Screenshot', 'Ocr', 'BrowserUrl', 'DocumentBody', 'MailBody', 'InputValue', 'Cookie', 'Token', 'Password'])
