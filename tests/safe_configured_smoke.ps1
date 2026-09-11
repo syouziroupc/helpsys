@@ -5,7 +5,12 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-$safeExe = Resolve-Path 'smoke-bin/safe/HelpSys.Safe.exe'
+New-Item -ItemType Directory -Force -Path 'smoke-bin/safe-test' | Out-Null
+
+dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:SafeBuild=true -p:SafeTestBuild=true -o smoke-bin/safe-test
+if ($LASTEXITCODE -ne 0) { throw 'Safe test-only build failed.' }
+$safeExe = Resolve-Path 'smoke-bin/safe-test/HelpSys.Safe.Test.exe'
+
 $mock = $null
 $target = $null
 $helpSys = $null
@@ -50,7 +55,7 @@ try {
   Start-Sleep -Seconds 3
   $helpSys = Start-Process $safeExe -PassThru
   Start-Sleep -Seconds 5
-  if ($helpSys.HasExited) { throw 'Configured HelpSys Safe exited during startup.' }
+  if ($helpSys.HasExited) { throw 'Configured HelpSys Safe test build exited during startup.' }
 
   $request = Find-Element $helpSys 'RequestBox'
   $guide = Find-Element $helpSys 'GuideButton'
@@ -58,7 +63,7 @@ try {
   $commander = Find-Element $helpSys 'CommanderButton'
   $state = Find-Element $helpSys 'StateText'
   if ($null -eq $request -or $null -eq $guide -or $null -eq $voice -or $null -eq $commander -or $null -eq $state) {
-    throw 'Configured HelpSys Safe did not expose required UI controls.'
+    throw 'Configured HelpSys Safe test build did not expose required UI controls.'
   }
   if ($voice.Current.IsEnabled) { throw 'Configured Safe must still keep cloud Voice disabled.' }
   if ($commander.Current.IsEnabled) { throw 'Configured Safe must still keep Commander cloud voice disabled.' }
@@ -69,13 +74,13 @@ try {
 
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   while (-not (Test-Path 'artifacts/mock-last-request.json') -and [DateTime]::UtcNow -lt $deadline) {
-    if ($helpSys.HasExited) { throw 'Configured HelpSys Safe exited before reaching its approved endpoint.' }
+    if ($helpSys.HasExited) { throw 'Configured HelpSys Safe test build exited before reaching its approved loopback endpoint.' }
     Start-Sleep -Milliseconds 200
   }
 
   if (-not (Test-Path 'artifacts/mock-last-request.json')) {
     Save-Screenshot 'helpsys-safe-configured-failure.png'
-    throw 'Configured Safe did not reach the explicitly configured approved endpoint.'
+    throw 'Configured Safe test build did not reach its explicitly test-only loopback endpoint.'
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -90,7 +95,7 @@ try {
   }
 
   Save-Screenshot 'helpsys-safe-configured-guidance.png'
-  Write-Host 'HelpSys configured Safe edition E2E smoke passed.'
+  Write-Host 'HelpSys configured Safe test-only E2E smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_SAFE_API_BASE -ErrorAction SilentlyContinue
