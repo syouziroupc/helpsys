@@ -38,7 +38,13 @@ assert(adapter.includes('#if HELPSYS_SAFE_TEST_BUILD'), 'Safe loopback must be g
 assert(adapter.includes('安全版本番ビルドではloopback AI接続先を許可しません'), 'Production Safe must explicitly reject loopback endpoints.');
 assert(adapter.includes('AllowAutoRedirect = false'), 'Cloud transport must never follow redirects to another origin.');
 assert(adapter.includes('UseCookies = false'), 'Cloud transport must not persist or replay cookies.');
+assert(adapter.includes('CheckCertificateRevocationList = true'), 'Cloud transport must check TLS certificate revocation.');
+assert(adapter.includes('handler.UseProxy = false'), 'Safe transport must not inherit an OS/user HTTP proxy.');
+assert(adapter.includes('NoStore = true') && adapter.includes('NoCache = true'), 'Cloud requests must ask intermediaries not to store HTTP payloads.');
+assert(adapter.includes('request.Headers.Pragma.ParseAdd("no-cache")'), 'Cloud requests must include legacy no-cache protection for intermediaries.');
 assert(adapter.includes('AllowedApiKeyHeaders'), 'Cloud transport must use an allowlist for API-key header names.');
+assert(!adapter.includes('DangerousAcceptAnyServerCertificateValidator'), 'TLS certificate validation must never be bypassed.');
+assert(!adapter.includes('ServerCertificateCustomValidationCallback'), 'Safe transport must not install a custom certificate-validation bypass.');
 assert(adapter.includes('if (!IsConfigured)'), 'Cloud transport must fail closed when no Safe endpoint is configured.');
 assert(cloud.includes('cloud_endpoint_unconfigured'), 'Cloud preflight must classify an unconfigured Safe endpoint before screenshot creation.');
 assert(cloud.includes('画面画像を取得せず外部送信を停止しています'), 'Cloud preflight must explicitly stop image acquisition when Safe is unconfigured.');
