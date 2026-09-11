@@ -24,9 +24,6 @@ const prohibitedApis = [
   { re: /new\s+StreamWriter\s*\(/, label: 'automatic stream/file writer' },
   { re: /File\.OpenWrite\s*\(/, label: 'automatic file write stream' },
   { re: /new\s+FileStream\s*\([^\n]*(?:FileMode\.(?:Create|CreateNew|Append|OpenOrCreate)|FileAccess\.Write)/, label: 'automatic writable FileStream' },
-
-  // HelpSys is a guidance product: the human performs every mouse/keyboard action.
-  // Observing low-level input is allowed, synthesizing/injecting it is not.
   { re: /\bSendInput\s*\(/, label: 'Windows input injection API' },
   { re: /\bmouse_event\s*\(/, label: 'legacy mouse injection API' },
   { re: /\bkeybd_event\s*\(/, label: 'legacy keyboard injection API' },
@@ -37,14 +34,8 @@ const prohibitedApis = [
 ];
 
 const browserSecretStoreTerms = [
-  'Login Data',
-  'Web Data',
-  'Network\\Cookies',
-  'Network/Cookies',
-  'Cookies',
-  'Local Storage',
-  'Session Storage',
-  'Local State'
+  'Login Data', 'Web Data', 'Network\\Cookies', 'Network/Cookies', 'Cookies',
+  'Local Storage', 'Session Storage', 'Local State'
 ];
 
 for (const file of walk('src/HelpSys.Desktop')) {
@@ -75,5 +66,10 @@ assert(capture.indexOf('var occluderRedactionsAfter') > capture.indexOf('BitBlt(
 assert(capture.includes('.Concat(occluderRedactionsBefore)') && capture.includes('.Concat(occluderRedactionsAfter)'), 'Both occluder scans must be part of the final redaction set.');
 assert(capture.includes('count > maxWindows || !visited.Add(hwnd)'), 'Z-order enumeration must fail closed on overflow or cycles.');
 assert(capture.includes('前面に重なった別画面を安全に除外できないため、画面画像は送信しません'), 'Occluder uncertainty must fail closed instead of sending the screenshot.');
+assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
+assert(capture.includes('Unknown ownership is never upgraded to a full-monitor capture'), 'Full-monitor capture must be restricted to positively identified shell surfaces.');
+assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
+assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
+assert(capture.includes('if (shellSurface)\n            return monitorArea;'), 'Only a positively identified shell surface may use full-monitor capture.');
 
-console.log('HelpSys prohibited-capability, persistence, input-injection, local-input-minimization and screenshot-occluder contract passed.');
+console.log('HelpSys prohibited-capability, persistence, input-injection, local-input-minimization and fail-closed screenshot contract passed.');
