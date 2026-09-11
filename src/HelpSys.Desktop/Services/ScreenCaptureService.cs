@@ -17,6 +17,7 @@ public sealed class ScreenCaptureService
     private const uint CaptureBlt = 0x40000000;
     private const uint Blackness = 0x00000042;
     private const uint GwHwndNext = 2;
+    private const uint GwHwndPrev = 3;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const int MaxImageWidth = 1280;
     private const int MaxImageHeight = 720;
@@ -75,8 +76,11 @@ public sealed class ScreenCaptureService
         // The ranked guidance candidate list is finite, so it cannot be the privacy boundary.
         // Independently inspect UIA trees intersecting only the area that will leave the process.
         // Every visible input control plus high-confidence visible PII/secret text is redacted before
-        // egress. If this bounded scan cannot finish, fail closed instead of sending a partial image.
+        // egress. Windows layered above the selected work surface are also redacted so unrelated
+        // notifications, overlays and popups cannot hitchhike into the outbound screenshot.
+        // If any bounded privacy scan cannot finish, fail closed instead of sending a partial image.
         var sensitiveRedactionsBefore = CaptureSensitiveInputBounds(captureArea, cancellationToken);
+        var occluderRedactionsBefore = CaptureOccluderBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
         if (desktopDc == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャーを開始できませんでした。");
@@ -98,11 +102,15 @@ public sealed class ScreenCaptureService
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
             cancellationToken.ThrowIfCancellationRequested();
-            // Scan again after BitBlt to cover sensitive content that appeared during capture.
+            // Scan again after BitBlt to cover sensitive content or an occluding window that appeared
+            // during capture. A race must make the result more redacted, never less.
             var sensitiveRedactionsAfter = CaptureSensitiveInputBounds(captureArea, cancellationToken);
+            var occluderRedactionsAfter = CaptureOccluderBounds(captureArea, cancellationToken);
             var allRedactions = redactions
                 .Concat(sensitiveRedactionsBefore)
                 .Concat(sensitiveRedactionsAfter)
+                .Concat(occluderRedactionsBefore)
+                .Concat(occluderRedactionsAfter)
                 .Where(x => !x.IsEmpty)
                 .Distinct()
                 .ToArray();
@@ -159,6 +167,14 @@ public sealed class ScreenCaptureService
             }
         }
 
+        var targetProcessId = 0;
+        if (hwnd != IntPtr.Zero && !BelongsToSelf(hwnd))
+        {
+            GetWindowThreadProcessId(hwnd, out var rawTargetPid);
+            targetProcessId = unchecked((int)rawTargetPid);
+        }
+        var shellSurface = hwnd != IntPtr.Zero && targetProcessId > 0 && IsShellSurface(hwnd);
+
         IntPtr monitor = IntPtr.Zero;
         if (hwnd != IntPtr.Zero && !BelongsToSelf(hwnd)) monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
         if (monitor == IntPtr.Zero && GetCursorPos(out var cursorPoint)) monitor = MonitorFromPoint(cursorPoint, MonitorDefaultToNearest);
@@ -173,11 +189,14 @@ public sealed class ScreenCaptureService
             info.Monitor.Left,
             info.Monitor.Top,
             info.Monitor.Right - info.Monitor.Left,
-            info.Monitor.Bottom - info.Monitor.Top);
+            info.Monitor.Bottom - info.Monitor.Top,
+            hwnd,
+            targetProcessId,
+            shellSurface);
         if (monitorArea.Width <= 0 || monitorArea.Height <= 0)
             throw new InvalidOperationException("操作中のモニター領域が不正なため、画面画像を送信しません。");
 
-        if (hwnd == IntPtr.Zero || BelongsToSelf(hwnd) || IsShellSurface(hwnd) || !GetWindowRect(hwnd, out var windowRect))
+        if (hwnd == IntPtr.Zero || BelongsToSelf(hwnd) || shellSurface || !GetWindowRect(hwnd, out var windowRect))
             return monitorArea;
 
         var left = Math.Max(windowRect.Left, info.Monitor.Left);
@@ -188,7 +207,7 @@ public sealed class ScreenCaptureService
         var height = bottom - top;
         if (width < 80 || height < 60) return monitorArea;
 
-        return new CaptureArea(left, top, width, height);
+        return new CaptureArea(left, top, width, height, hwnd, targetProcessId, false);
     }
 
     private bool BelongsToSelf(IntPtr hwnd)
@@ -212,6 +231,72 @@ public sealed class ScreenCaptureService
             // Unknown ownership must not shrink the image around a possibly wrong window.
             // The Privacy Gate still controls whether the resulting image can leave the process.
             return true;
+        }
+    }
+
+    private static bool IsRelatedShellProcess(int processId)
+    {
+        if (processId <= 0) return false;
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return FullMonitorShellProcesses.Contains(process.ProcessName);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private IReadOnlyList<Rect> CaptureOccluderBounds(CaptureArea captureArea, CancellationToken cancellationToken)
+    {
+        if (captureArea.TargetWindow == IntPtr.Zero || captureArea.TargetProcessId <= 0) return [];
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var captureRect = new Rect(captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height);
+            var result = new List<Rect>();
+            var visited = new HashSet<IntPtr>();
+            var hwnd = GetWindow(captureArea.TargetWindow, GwHwndPrev);
+
+            const int maxWindows = 256;
+            var count = 0;
+            while (hwnd != IntPtr.Zero)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++count > maxWindows || !visited.Add(hwnd))
+                    throw new InvalidOperationException("前面ウィンドウの安全確認を規定範囲内で完了できませんでした。");
+
+                if (IsWindowVisible(hwnd) && !IsIconic(hwnd))
+                {
+                    GetWindowThreadProcessId(hwnd, out var rawPid);
+                    var processId = unchecked((int)rawPid);
+                    var relatedShell = captureArea.ShellSurface && IsRelatedShellProcess(processId);
+                    if (!relatedShell && GetWindowRect(hwnd, out var windowRect))
+                    {
+                        var rect = new Rect(
+                            windowRect.Left,
+                            windowRect.Top,
+                            Math.Max(0, windowRect.Right - windowRect.Left),
+                            Math.Max(0, windowRect.Bottom - windowRect.Top));
+                        if (!rect.IsEmpty && rect.Width >= 2 && rect.Height >= 2 && captureRect.IntersectsWith(rect))
+                            result.Add(Rect.Intersect(captureRect, rect));
+                    }
+                }
+
+                hwnd = GetWindow(hwnd, GwHwndPrev);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("前面に重なった別画面を安全に除外できないため、画面画像は送信しません。", ex);
         }
     }
 
@@ -350,7 +435,14 @@ public sealed class ScreenCaptureService
             throw new InvalidOperationException("秘密情報の領域を安全に黒塗りできないため、画面画像は送信しません。");
     }
 
-    private readonly record struct CaptureArea(int X, int Y, int Width, int Height);
+    private readonly record struct CaptureArea(
+        int X,
+        int Y,
+        int Width,
+        int Height,
+        IntPtr TargetWindow,
+        int TargetProcessId,
+        bool ShellSurface);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct PointNative { public int X; public int Y; }
