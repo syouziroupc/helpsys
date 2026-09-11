@@ -118,12 +118,20 @@ Assert(browserContext.Browser?.Url?.Contains("SECRET_QUERY_VALUE", StringCompari
     "Browser snapshot must not retain URL path/query/fragment data.");
 var internalPasswordContext = new BrowserContextSnapshot(
     "chrome", "Settings", "chrome://settings/passwords?search=secret", null, null, false);
-Assert(internalPasswordContext.Url == "chrome:password-manager",
+Assert(internalPasswordContext.Url == "chrome://passwords",
     "Sensitive internal browser routes must collapse to a danger category rather than retain the raw route.");
 Assert(gate.EvaluateState(
         safeContext with { ForegroundProcess = "chrome", ForegroundProcessId = 8233, Browser = internalPasswordContext },
         []).Classification == PrivacyClassification.Blocked,
-    "Minimized password-manager route must still trigger the local hard block.");
+    "Minimized password route must still trigger the local hard block.");
+var internalStorageContext = new BrowserContextSnapshot(
+    "chrome", "Settings", "chrome://settings/content/siteData?search=storage", null, null, false);
+Assert(internalStorageContext.Url == "chrome://localstorage",
+    "Sensitive internal storage routes must collapse to a gate-recognized storage category.");
+Assert(gate.EvaluateState(
+        safeContext with { ForegroundProcess = "chrome", ForegroundProcessId = 8733, Browser = internalStorageContext },
+        []).Classification == PrivacyClassification.Blocked,
+    "Minimized storage route must still trigger the local hard block.");
 var malformedBrowserContext = new BrowserContextSnapshot(
     "chrome", "Unknown page", "%%%not-a-url%%%", null, null, false);
 Assert(malformedBrowserContext.Url == "unparseable",
