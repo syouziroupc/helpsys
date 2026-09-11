@@ -1,54 +1,55 @@
 $ErrorActionPreference = 'Stop'
 
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-Add-Type -TypeDefinition @'
-using System.Windows.Forms;
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
 
-public sealed class HelpSysNoActivateOverlay : Form
-{
-    protected override bool ShowWithoutActivation => true;
+$window = New-Object System.Windows.Window
+$window.Title = 'Unrelated Overlay Smoke'
+$window.Width = 340
+$window.Height = 130
+$window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+$window.Topmost = $true
+$window.ShowInTaskbar = $false
+$window.ResizeMode = [System.Windows.ResizeMode]::NoResize
+$window.WindowStyle = [System.Windows.WindowStyle]::ToolWindow
+$window.ShowActivated = $false
+$window.Background = [System.Windows.Media.Brushes]::White
 
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            const int WS_EX_NOACTIVATE = 0x08000000;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_NOACTIVATE;
-            return cp;
-        }
-    }
-}
-'@ -ReferencedAssemblies System.Windows.Forms.dll,System.Drawing.dll
+$border = New-Object System.Windows.Controls.Border
+$border.Background = [System.Windows.Media.Brushes]::White
+$border.Padding = [System.Windows.Thickness]::new(8)
 
-$form = New-Object HelpSysNoActivateOverlay
-$form.Text = 'Unrelated Overlay Smoke'
-$form.Width = 340
-$form.Height = 130
-$form.StartPosition = 'CenterScreen'
-$form.TopMost = $true
-$form.ShowInTaskbar = $false
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedToolWindow
-$form.BackColor = [System.Drawing.Color]::White
-
-$label = New-Object System.Windows.Forms.Label
+$label = New-Object System.Windows.Controls.TextBlock
 $label.Text = 'UNRELATED OVERLAY - MUST BE REDACTED'
-$label.AutoSize = $false
-$label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-$label.Dock = [System.Windows.Forms.DockStyle]::Fill
-$label.Font = New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.FontStyle]::Bold)
-$form.Controls.Add($label)
+$label.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI')
+$label.FontSize = 18
+$label.FontWeight = [System.Windows.FontWeights]::Bold
+$label.Foreground = [System.Windows.Media.Brushes]::Black
+$label.TextAlignment = [System.Windows.TextAlignment]::Center
+$label.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+$label.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+$label.TextWrapping = [System.Windows.TextWrapping]::Wrap
+$border.Child = $label
+$window.Content = $border
 
-$form.Add_Shown({
+$window.Add_ContentRendered({
     New-Item -ItemType Directory -Force -Path artifacts | Out-Null
     [pscustomobject]@{
-        left = $form.Left
-        top = $form.Top
-        width = $form.Width
-        height = $form.Height
+        left = [math]::Round($window.Left)
+        top = [math]::Round($window.Top)
+        width = [math]::Round($window.ActualWidth)
+        height = [math]::Round($window.ActualHeight)
         processId = $PID
+        showActivated = $window.ShowActivated
+        topmost = $window.Topmost
     } | ConvertTo-Json -Compress | Set-Content -Path 'artifacts/occluder-overlay-bounds.json' -Encoding UTF8
 })
 
-[System.Windows.Forms.Application]::Run($form)
+$window.Add_Closed({
+    [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvokeShutdown(
+        [System.Windows.Threading.DispatcherPriority]::Background)
+})
+
+$window.Show()
+[System.Windows.Threading.Dispatcher]::Run()
