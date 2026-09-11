@@ -12,7 +12,7 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// <summary>
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
-/// External endpoints must use HTTPS. Plain HTTP is accepted only for loopback development.
+/// External endpoints must use HTTPS. Plain HTTP loopback is accepted only in explicit test builds.
 /// Safe builds have no production cloud default and only accept the explicitly reviewed origin.
 /// Redirects and cookies are disabled so approved requests cannot be silently rerouted or persisted.
 /// </summary>
@@ -115,7 +115,13 @@ public sealed class CloudAiAdapter : IDisposable
             throw new InvalidOperationException("安全版AI APIの接続先が不正です。");
 
         if (uri.IsLoopback)
+        {
+#if HELPSYS_SAFE_TEST_BUILD
             return validated;
+#else
+            throw new InvalidOperationException("安全版本番ビルドではloopback AI接続先を許可しません。");
+#endif
+        }
 
         var approved = new Uri(DefaultApiBase, UriKind.Absolute);
         var sameApprovedOrigin =
