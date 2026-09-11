@@ -61,7 +61,7 @@ assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be r
 const contextModel = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
 assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Url);'), 'Browser URL must be minimized at the snapshot storage boundary.');
 assert(contextModel.includes('Origin only. UserInfo, path, query and fragment are deliberately discarded.'), 'HTTP(S) browser snapshots must explicitly discard path/query/fragment data.');
-assert(contextModel.includes('password-manager') && contextModel.includes('browser-storage'), 'Sensitive internal browser routes must be reduced to danger categories.');
+assert(contextModel.includes('return $"{scheme}://passwords";') && contextModel.includes('return $"{scheme}://localstorage";'), 'Sensitive internal browser routes must collapse to PrivacyGate-recognized danger categories.');
 assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain an UNKNOWN-triggering marker instead of becoming empty/safe.');
 
 const systemContext = fs.readFileSync('src/HelpSys.Desktop/Services/SystemContextService.cs', 'utf8');
