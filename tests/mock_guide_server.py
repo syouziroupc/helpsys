@@ -26,15 +26,24 @@ def eligible_elements(payload):
     ]
 
 
-def preserve_pii_smoke_image(payload):
+def preserve_smoke_image(payload):
     request = str(field(payload, "request", "") or "")
     image = str(field(payload, "image", "") or "")
-    if "PII redaction smoke" not in request or not image.startswith("data:image/png;base64,"):
+    if not image.startswith("data:image/png;base64,"):
         return
+
+    filename = None
+    if "PII redaction smoke" in request:
+        filename = "helpsys-pii-egress-image.png"
+    elif "OCCLUDER redaction smoke" in request:
+        filename = "helpsys-occluder-egress-image.png"
+    if filename is None:
+        return
+
     encoded = image.split(",", 1)[1]
     data = base64.b64decode(encoded, validate=True)
     Path("artifacts").mkdir(exist_ok=True)
-    Path("artifacts/helpsys-pii-egress-image.png").write_bytes(data)
+    Path("artifacts", filename).write_bytes(data)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,9 +133,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if has_image:
                 try:
-                    preserve_pii_smoke_image(payload)
+                    preserve_smoke_image(payload)
                 except Exception:
-                    self._json({"error": "pii_smoke_image_decode_failed"}, 500)
+                    self._json({"error": "smoke_image_decode_failed"}, 500)
                     return
 
             target = next(
