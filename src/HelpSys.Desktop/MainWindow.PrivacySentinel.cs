@@ -17,6 +17,8 @@ public partial class MainWindow
     private PrivacySentinelWinEventProc? _privacySentinelCallback;
     private int _privacySentinelBusy;
     private bool _privacySentinelRestoreCommander;
+    private string? _privacySentinelPendingInput;
+    private bool _privacySentinelPendingClarification;
 
     static MainWindow()
     {
@@ -76,18 +78,27 @@ public partial class MainWindow
     {
         if (sender is not Button button || Window.GetWindow(button) is not MainWindow window) return;
 
-        var startsCloudWork = button.Name is "GuideButton" or "AnswerButton";
+        var startsGuideWork = button.Name is "GuideButton" or "AnswerButton";
+        var startsCloudWork = startsGuideWork;
         if (button.Name is "VoiceButton" or "AnswerVoiceButton")
             startsCloudWork = window._voiceCts is null;
         if (button.Name == "CommanderButton")
             startsCloudWork = !window._commander.Enabled;
 
         if (!startsCloudWork) return;
-        if (window.PrivacySentinel_AllowCloudAction()) return;
+        if (window.PrivacySentinel_AllowCloudAction())
+        {
+            if (startsGuideWork) window.PrivacySentinel_ClearPendingInput();
+            return;
+        }
+
+        if (startsGuideWork)
+            window.PrivacySentinel_StagePendingInput(button.Name == "AnswerButton" ? window.AnswerBox : window.RequestBox);
 
         // Class handlers run before the XAML instance Click handler. Marking the routed event
         // handled prevents the original handler from starting UIA scanning, microphone capture or
-        // cloud work on a known-dangerous/unknown screen.
+        // cloud work on a known-dangerous/unknown screen. The user's typed request is retained only
+        // in local memory so the same task can continue after a safe foreground is verified.
         e.Handled = true;
     }
 
@@ -95,8 +106,70 @@ public partial class MainWindow
     {
         if (e.Key != Key.Enter || sender is not TextBox box || Window.GetWindow(box) is not MainWindow window) return;
         if (box.Name is not ("RequestBox" or "AnswerBox")) return;
-        if (window.PrivacySentinel_AllowCloudAction()) return;
+        if (window.PrivacySentinel_AllowCloudAction())
+        {
+            window.PrivacySentinel_ClearPendingInput();
+            return;
+        }
+
+        window.PrivacySentinel_StagePendingInput(box);
         e.Handled = true;
+    }
+
+    private void PrivacySentinel_StagePendingInput(TextBox source)
+    {
+        var text = source.Text.Trim();
+        if (text.Length == 0) return;
+        _privacySentinelPendingInput = text;
+        _privacySentinelPendingClarification = source.Name == "AnswerBox" || _awaitingClarification;
+    }
+
+    private void PrivacySentinel_ClearPendingInput()
+    {
+        _privacySentinelPendingInput = null;
+        _privacySentinelPendingClarification = false;
+    }
+
+    private bool PrivacySentinel_RestorePendingInputForResume()
+    {
+        var pending = _privacySentinelPendingInput;
+        if (string.IsNullOrWhiteSpace(pending)) return _activeRequest is not null;
+
+        var clarification = _privacySentinelPendingClarification;
+        PrivacySentinel_ClearPendingInput();
+
+        if (clarification && _activeRequest is not null)
+        {
+            _history.Add(new GuideHistoryItem(
+                _stepNumber,
+                "clarification_answer",
+                pending,
+                _clarificationQuestion ?? "確認質問"));
+            if (_history.Count > 12) _history.RemoveAt(0);
+            _activeRequest += $"\n利用者からの追加回答: {pending}";
+            _clarificationQuestion = null;
+            GuideButton.Content = "案内";
+            RequestBox.Text = _originalRequest ?? _activeRequest;
+            RequestBox.CaretIndex = RequestBox.Text.Length;
+            ClarificationPanel.Visibility = Visibility.Collapsed;
+            AnswerBox.Clear();
+            return true;
+        }
+
+        // A fresh request can be blocked by the class-level preflight before the normal Guide
+        // handler has a chance to establish a session. Recreate only the local session state here;
+        // no UIA scan, screenshot, microphone or network work happens until the safe-screen checks
+        // in TryResumePrivacyModeAsync finish.
+        EndSession();
+        _originalRequest = pending;
+        _activeRequest = pending;
+        _stepNumber = 0;
+        _history.Clear();
+        _clarificationQuestion = null;
+        GuideButton.Content = "案内";
+        RequestBox.Text = pending;
+        RequestBox.CaretIndex = RequestBox.Text.Length;
+        return true;
     }
 
     private bool PrivacySentinel_AllowCloudAction()
@@ -121,7 +194,8 @@ public partial class MainWindow
         uint eventTime)
     {
         if (hwnd == nint.Zero || eventType != PrivacySentinelEventSystemForeground) return;
-        if (_activeRequest is null && !_privacyPaused && _voiceCts is null && _commanderInteractionCts is null) return;
+        if (_activeRequest is null && string.IsNullOrWhiteSpace(_privacySentinelPendingInput) &&
+            !_privacyPaused && _voiceCts is null && _commanderInteractionCts is null) return;
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
         if (Interlocked.Exchange(ref _privacySentinelBusy, 1) != 0) return;
 
@@ -155,7 +229,8 @@ public partial class MainWindow
         var eventPid = unchecked((int)rawEventPid);
         var context = _systemContext.Capture();
 
-        if (eventPid <= 0 || !HasUsableForeground(context) || context.ForegroundProcessId != eventPid)
+        if (eventPid <= 0 || !HasUsableForeground(context) || context.ForegroundProcessId != eventPid ||
+            context.ForegroundWindowHandle != eventWindow)
         {
             PrivacySentinel_SuspendCloudAudio();
             EnterPrivacyMode(new PrivacyAssessment(
