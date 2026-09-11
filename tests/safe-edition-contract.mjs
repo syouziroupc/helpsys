@@ -9,8 +9,11 @@ const diagnostics = read('src/HelpSys.Desktop/Services/DiagnosticModePolicy.cs')
 const adapter = read('src/Shared/CloudAiAdapter.cs');
 const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
 const project = read('src/HelpSys.Desktop/HelpSys.Desktop.csproj');
+const safeConfiguredSmoke = read('tests/safe_configured_smoke.ps1');
 
 assert(project.includes('HELPSYS_SAFE_BUILD'), 'Safe build compile-time symbol is required.');
+assert(project.includes('HELPSYS_SAFE_TEST_BUILD'), 'Loopback capability must exist only behind a distinct Safe test-build symbol.');
+assert(project.includes("'$(SafeBuild)' == 'true' and '$(SafeTestBuild)' == 'true'"), 'Safe test capability must require both SafeBuild and SafeTestBuild.');
 assert(speech.includes('#if HELPSYS_SAFE_BUILD'), 'Safe build must compile a distinct cloud speech policy.');
 assert(speech.includes('return false;') && speech.includes('CloudTranscriptionAllowed'), 'Safe build must report cloud transcription as disabled.');
 assert(speech.indexOf('if (!CloudTranscriptionAllowed)') < speech.indexOf('MicrophoneCoordinator.BeginForegroundCapture'), 'Safe cloud-speech block must run before microphone capture starts.');
@@ -31,12 +34,17 @@ assert(adapter.includes('ValidateSafeApiBase'), 'Safe build must validate its en
 assert(adapter.includes('uri.Host.Equals(approved.Host'), 'Safe external endpoint host must match the reviewed origin exactly.');
 assert(adapter.includes('uri.Port == approved.Port'), 'Safe external endpoint port must match the reviewed origin exactly.');
 assert(adapter.includes('uri.AbsolutePath.Length == 0 || uri.AbsolutePath == "/"'), 'Safe endpoint must not hide an unreviewed base path.');
+assert(adapter.includes('#if HELPSYS_SAFE_TEST_BUILD'), 'Safe loopback must be gated at compile time for test builds only.');
+assert(adapter.includes('安全版本番ビルドではloopback AI接続先を許可しません'), 'Production Safe must explicitly reject loopback endpoints.');
 assert(adapter.includes('AllowAutoRedirect = false'), 'Cloud transport must never follow redirects to another origin.');
 assert(adapter.includes('UseCookies = false'), 'Cloud transport must not persist or replay cookies.');
 assert(adapter.includes('AllowedApiKeyHeaders'), 'Cloud transport must use an allowlist for API-key header names.');
 assert(adapter.includes('if (!IsConfigured)'), 'Cloud transport must fail closed when no Safe endpoint is configured.');
 assert(cloud.includes('cloud_endpoint_unconfigured'), 'Cloud preflight must classify an unconfigured Safe endpoint before screenshot creation.');
 assert(cloud.includes('画面画像を取得せず外部送信を停止しています'), 'Cloud preflight must explicitly stop image acquisition when Safe is unconfigured.');
+
+assert(safeConfiguredSmoke.includes('-p:SafeBuild=true -p:SafeTestBuild=true'), 'Loopback Safe E2E must build a separate test-only Safe binary.');
+assert(safeConfiguredSmoke.includes('HelpSys.Safe.Test.exe'), 'Loopback Safe E2E must not execute the production Safe binary.');
 
 assert(diagnostics.includes('#if HELPSYS_SAFE_BUILD'), 'Safe diagnostics policy must be compile-time fixed.');
 assert(diagnostics.includes('RawScreenPersistenceAllowed = false'), 'Safe build must permanently forbid raw screen persistence.');
