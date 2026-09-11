@@ -13,6 +13,7 @@ const capture = read('src/HelpSys.Desktop/Services/ScreenCaptureService.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const evidence = read('src/HelpSys.Desktop/Services/GuidanceEvidenceService.cs');
 const privacyUi = read('src/HelpSys.Desktop/MainWindow.Privacy.cs');
+const privacySentinel = read('src/HelpSys.Desktop/MainWindow.PrivacySentinel.cs');
 const qualityUi = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
 const recoveryUi = read('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs');
 const telemetry = read('src/HelpSys.Desktop/Services/PrivacySafeTelemetry.cs');
@@ -90,6 +91,13 @@ const stateTextXaml = xaml.match(/<TextBlock x:Name="StateText"[\s\S]*?\/>/)?.[0
 assert(stateTextXaml.includes('TextWrapping="Wrap"'), 'Privacy and safety status reasons must wrap instead of disappearing off-screen.');
 assert(!stateTextXaml.includes('TextTrimming='), 'Privacy and safety status reasons must not be ellipsized.');
 
+assert(privacySentinel.includes('PrivacySentinelEventSystemForeground'), 'Privacy Sentinel must monitor foreground changes independently from planning.');
+assert(privacySentinel.includes('PrivacySentinel_AllowCloudAction'), 'Guide/answer/audio starts must have a context-only gate before their original handlers.');
+assert(privacySentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must use the centralized gate before UIA candidate collection or cloud audio starts.');
+assert(privacySentinel.includes('e.Handled = true;'), 'Unsafe routed UI actions must be stopped before normal handlers begin work.');
+assert(privacySentinel.includes('foreground_transition_unverified'), 'Foreground tracking disagreement must become UNKNOWN, never SAFE.');
+assert(privacySentinel.includes('PrivacySentinel_SuspendCloudAudio'), 'Privacy Sentinel must cancel cloud speech when a dangerous screen appears.');
+
 assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Normal quality guidance must preflight privacy before screenshot creation.');
 assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Privacy preflight must happen before quality screenshot creation.');
 assert(recoveryUi.includes('_cloudGuide.PreflightPrivacy'), 'Recovery guidance must preflight privacy before screenshot creation.');
@@ -108,7 +116,7 @@ for (const requiredPattern of ['VisibleEmailRegex', 'VisibleJapanesePhoneRegex',
   assert(capture.includes(requiredPattern), `Screenshot visible-data redaction is missing ${requiredPattern}.`);
 assert(capture.includes('入力欄や表示済み秘密情報を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed for both input and displayed sensitive data.');
 assert(capture.includes('FullMonitorShellProcesses'), 'Only shell operation surfaces should retain full-monitor capture.');
-assert(capture.includes('return new CaptureArea(left, top, width, height);'), 'Normal application capture must be clipped to the active window.');
+assert(capture.includes('return new CaptureArea(left, top, width, height, hwnd, targetProcessId, false);'), 'Normal application capture must be clipped to the verified target window.');
 assert(capture.includes('data minimization'), 'Active-window capture minimization must remain an explicit privacy invariant.');
 
 assert(telemetry.includes('sealed record PrivacySafeTelemetryEvent'), 'A fixed long-term telemetry allowlist type is required.');
