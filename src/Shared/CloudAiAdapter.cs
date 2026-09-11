@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 
 namespace HelpSys.Shared;
 
@@ -19,6 +20,7 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 public sealed class CloudAiAdapter : IDisposable
 {
     public const string DefaultApiBase = "https://helpsys.syouziroupc.workers.dev";
+    private const int MaxResponseBodyBytes = 1024 * 1024;
 
     private static readonly HashSet<string> AllowedApiKeyHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -102,8 +104,38 @@ public sealed class CloudAiAdapter : IDisposable
             request.Headers.TryAddWithoutValidation(_apiKeyHeader, _apiKey);
 
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token).ConfigureAwait(false);
-        var responseBody = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+        var responseBody = await ReadBoundedResponseBodyAsync(response.Content, timeoutCts.Token).ConfigureAwait(false);
         return new CloudAiResponse((int)response.StatusCode, responseBody);
+    }
+
+    private static async Task<string> ReadBoundedResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is > MaxResponseBodyBytes)
+            throw new InvalidOperationException("AI APIの応答が安全上限を超えているため処理を中止しました。");
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream(Math.Min(MaxResponseBodyBytes, 64 * 1024));
+        var chunk = new byte[16 * 1024];
+        try
+        {
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk.AsMemory(0, chunk.Length), cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                if (buffer.Length + read > MaxResponseBodyBytes)
+                    throw new InvalidOperationException("AI APIの応答が安全上限を超えているため処理を中止しました。");
+                buffer.Write(chunk, 0, read);
+            }
+
+            var backing = buffer.GetBuffer();
+            return Encoding.UTF8.GetString(backing, 0, checked((int)buffer.Length));
+        }
+        finally
+        {
+            Array.Clear(chunk, 0, chunk.Length);
+            if (buffer.TryGetBuffer(out var segment) && segment.Array is not null)
+                Array.Clear(segment.Array, segment.Offset, segment.Count);
+        }
     }
 
     private static HttpClientHandler CreateHandler()
