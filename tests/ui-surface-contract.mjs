@@ -40,7 +40,7 @@ assert(!state.includes('TextTrimming='), 'Safety reasons must not be silently el
 
 assert(privacy.includes('画面を見て案内します。秘密情報の画面では送信を停止します。'),
   'Normal idle privacy disclosure must stay concise enough for the established compact surface.');
-assert(privacy.includes('安全版：秘密情報の画面は送信停止。クラウド音声は無効です。'),
+assert(privacy.includes('安全版：秘密情報は送信停止。音声のクラウド送信も無効です。'),
   'Safe idle privacy disclosure must stay concise while retaining the key restriction.');
 assert(!privacy.includes('画面情報を利用して案内します。秘密情報の画面では送信を止めます。画面解析はいつでも停止できます。'),
   'Verbose former startup copy must not reintroduce an unnecessary two-line normal idle state.');
