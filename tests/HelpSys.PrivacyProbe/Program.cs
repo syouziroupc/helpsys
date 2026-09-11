@@ -111,6 +111,28 @@ var browserContext = new SystemContextSnapshot(
         "example.com",
         true,
         false));
+Assert(browserContext.Browser?.Url == "https://example.com",
+    "Browser snapshot must reduce HTTP(S) URLs to origin before they enter the cached system context.");
+Assert(browserContext.Browser?.Url?.Contains("SECRET_QUERY_VALUE", StringComparison.Ordinal) != true &&
+       browserContext.Browser?.Url?.Contains("/account/reset", StringComparison.Ordinal) != true,
+    "Browser snapshot must not retain URL path/query/fragment data.");
+var internalPasswordContext = new BrowserContextSnapshot(
+    "chrome", "Settings", "chrome://settings/passwords?search=secret", null, null, false);
+Assert(internalPasswordContext.Url == "chrome:password-manager",
+    "Sensitive internal browser routes must collapse to a danger category rather than retain the raw route.");
+Assert(gate.EvaluateState(
+        safeContext with { ForegroundProcess = "chrome", ForegroundProcessId = 8233, Browser = internalPasswordContext },
+        []).Classification == PrivacyClassification.Blocked,
+    "Minimized password-manager route must still trigger the local hard block.");
+var malformedBrowserContext = new BrowserContextSnapshot(
+    "chrome", "Unknown page", "%%%not-a-url%%%", null, null, false);
+Assert(malformedBrowserContext.Url == "unparseable",
+    "Unparseable browser addresses must retain only an invalid marker.");
+Assert(gate.EvaluateState(
+        safeContext with { ForegroundProcess = "chrome", ForegroundProcessId = 9233, Browser = malformedBrowserContext },
+        []).Classification == PrivacyClassification.Unknown,
+    "An unparseable browser address must remain fail-closed after minimization.");
+
 var editWithSecret = new UiElementCandidate(
     "edit", "Search", "searchBox", "TextBox", "Edit", "msedge",
     true, true, true, false, false,
