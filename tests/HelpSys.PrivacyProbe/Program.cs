@@ -150,7 +150,20 @@ Assert(!outboundJson.Contains("REQUEST_SECRET", StringComparison.Ordinal) && !ou
 AssertThrows<InvalidOperationException>(
     () => { using var _ = new CloudAiAdapter("http://example.com"); },
     "External plaintext HTTP must be rejected.");
-using (var loopback = new CloudAiAdapter("http://127.0.0.1:8787")) { }
+
+if (expectSafeProfile)
+{
+    AssertThrows<InvalidOperationException>(
+        () => { using var _ = new CloudAiAdapter("http://127.0.0.1:8787"); },
+        "Production Safe build must reject loopback endpoints; loopback is test-build only.");
+    AssertThrows<InvalidOperationException>(
+        () => { using var _ = new CloudAiAdapter("https://example.com"); },
+        "Production Safe build must reject HTTPS origins outside the code-reviewed allowlist.");
+}
+else
+{
+    using var loopback = new CloudAiAdapter("http://127.0.0.1:8787");
+}
 
 var oldNormalApiBase = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
 var oldSafeApiBase = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
