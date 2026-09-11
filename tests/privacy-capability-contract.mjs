@@ -67,6 +67,16 @@ assert(systemContext.includes('return IsUsableExternalWindow(_lastExternalForegr
 assert(!systemContext.includes('GwHwndNext'), 'System context must not walk behind HelpSys and guess the work surface from Z-order.');
 assert(!systemContext.includes('GetWindow(cursor'), 'System context must not select an unrelated notification merely because it sits behind HelpSys.');
 
+const sentinel = fs.readFileSync('src/HelpSys.Desktop/MainWindow.PrivacySentinel.cs', 'utf8');
+assert(sentinel.includes('PrivacySentinelEventSystemForeground = 0x0003'), 'Privacy Sentinel must observe every real foreground transition.');
+assert(sentinel.includes('PrivacySentinelSkipOwnProcess'), 'Privacy Sentinel must ignore HelpSys own foreground events.');
+assert(sentinel.includes('PrivacySentinel_AllowCloudAction'), 'Cloud-starting UI actions must have an immediate context-only privacy preflight.');
+assert(sentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must reuse the centralized Privacy Gate instead of duplicating policy.');
+assert(sentinel.includes('e.Handled = true;'), 'Unsafe Guide/answer/voice/Commander starts must be intercepted before original handlers run.');
+assert(sentinel.includes('foreground_transition_unverified'), 'Foreground-hook disagreement must fail closed as UNKNOWN.');
+assert(sentinel.includes('_voiceCts?.Cancel()') && sentinel.includes('_commanderInteractionCts?.Cancel()'), 'Dangerous foreground transitions must cancel active cloud speech interactions.');
+assert(sentinel.includes('_commander.SetEnabled(false)'), 'Commander wake monitoring must stop while Privacy Mode protects a dangerous screen.');
+
 const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
 const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
 assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
@@ -79,7 +89,7 @@ assert(capture.includes('前面に重なった別画面を安全に除外でき�
 assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
 assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
 assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
-assert(capture.includes('if (shellSurface)\n            return monitorArea;'), 'Only a positively identified shell surface may use full-monitor capture.');
+assert(/if\s*\(shellSurface\)\s*return monitorArea;/s.test(capture), 'Only a positively identified shell surface may use full-monitor capture.');
 assert(capture.includes('int expectedProcessId'), 'Screenshot capture must accept the expected foreground process identity.');
 assert(capture.includes('FindTopLevelWindowForProcess(expectedProcessId)'), 'Screenshot target selection must bind to the expected process instead of whichever window happens to be behind HelpSys.');
 assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject a selected window whose process does not match the expected process.');
@@ -87,4 +97,4 @@ assert(capture.includes('EnumWindows('), 'Process-bound target selection must en
 assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
 assert(quality.includes('_screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken)'), 'Quality and recovery screenshots must pass the process-bound target identity into the capture service.');
 
-console.log('HelpSys prohibited-capability, persistence, input-injection, verified-foreground and process-bound screenshot contract passed.');
+console.log('HelpSys prohibited-capability, persistence, input-injection, verified-foreground, Privacy Sentinel and process-bound screenshot contract passed.');
