@@ -3,6 +3,21 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class HelpSysOccluderNative
+{
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+}
+'@
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
@@ -24,6 +39,43 @@ function Find-Element([System.Diagnostics.Process]$process, [string]$automationI
     $automationId)
   $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $idCondition)
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Find-SmokeTargetWindow([System.Diagnostics.Process]$process) {
+  if ($null -eq $process -or $process.HasExited) { return $null }
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $process.Id)
+  $nameCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::NameProperty,
+    'HelpSys Smoke Target')
+  $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $nameCondition)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+}
+
+function Activate-SmokeTarget([System.Diagnostics.Process]$process) {
+  $deadline = [DateTime]::UtcNow.AddSeconds(6)
+  $targetWindow = $null
+  while ($null -eq $targetWindow -and [DateTime]::UtcNow -lt $deadline) {
+    if ($process.HasExited) { throw 'Smoke target exited before its work surface could be activated.' }
+    $targetWindow = Find-SmokeTargetWindow $process
+    if ($null -eq $targetWindow) { Start-Sleep -Milliseconds 100 }
+  }
+  if ($null -eq $targetWindow) { throw 'Could not locate the HelpSys Smoke Target top-level window.' }
+
+  $hwnd = [IntPtr]$targetWindow.Current.NativeWindowHandle
+  if ($hwnd -eq [IntPtr]::Zero) { throw 'Smoke target UI Automation element did not expose a native window handle.' }
+
+  [void][HelpSysOccluderNative]::ShowWindow($hwnd, 5)
+  [void][HelpSysOccluderNative]::SetForegroundWindow($hwnd)
+  Start-Sleep -Milliseconds 350
+
+  $foreground = [HelpSysOccluderNative]::GetForegroundWindow()
+  if ($foreground -ne $hwnd) {
+    throw "Occluder harness could not make the real smoke target foreground. expected=$hwnd actual=$foreground"
+  }
+  return $hwnd
 }
 
 function Save-DesktopScreenshot([string]$name) {
@@ -90,8 +142,13 @@ try {
   Start-Sleep -Seconds 1
 
   $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
-  Start-Sleep -Seconds 3
+  Start-Sleep -Seconds 2
   if ($target.HasExited) { throw 'Smoke target exited before occluder test.' }
+
+  # GitHub-hosted Windows runners can keep Windows Terminal foreground even though the dedicated
+  # WinForms target is visible. Force the exact target HWND foreground BEFORE creating the
+  # non-activating overlay. The later overlay must stay visually above it without changing focus.
+  $targetHwnd = Activate-SmokeTarget $target
 
   $overlay = Start-Process powershell.exe `
     -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' `
@@ -113,6 +170,12 @@ try {
   $overlayBounds = Get-Content 'artifacts/occluder-overlay-bounds.json' -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($overlayBounds.showActivated -ne $false -or $overlayBounds.topmost -ne $true) {
     throw 'Occluder helper did not preserve the required non-activating TopMost test condition.'
+  }
+
+  Start-Sleep -Milliseconds 250
+  $foregroundAfterOverlay = [HelpSysOccluderNative]::GetForegroundWindow()
+  if ($foregroundAfterOverlay -ne $targetHwnd) {
+    throw "No-activate overlay unexpectedly stole foreground from the real target. expected=$targetHwnd actual=$foregroundAfterOverlay"
   }
 
   Save-DesktopScreenshot 'helpsys-occluder-source.png'
@@ -145,7 +208,7 @@ try {
   if ($diagnostics.path -ne '/v1/quality-guide') { throw "Occluder smoke used wrong route: $($diagnostics.path)" }
   if ($diagnostics.hasScreenshot -ne $true) { throw 'Occluder smoke did not send a screenshot.' }
   if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
-    throw 'Occluder smoke lost the real target surface and did not preserve SmokeButton.'
+    throw "Occluder smoke lost the real target surface and did not preserve SmokeButton. foreground=$($diagnostics.foreground) pid=$($diagnostics.foregroundProcessId)"
   }
   if ($diagnosticsRaw.Contains('UNRELATED OVERLAY', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Unrelated overlay text leaked into outbound structured UI evidence.'
