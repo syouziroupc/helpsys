@@ -21,7 +21,7 @@ public partial class MainWindow
 
         // The global UI Automation focus hook is useful once guidance is active, but registering it
         // synchronously inside WPF Loaded can delay the first visible frame on slower machines.
-        // Queue only the watcher startup behind the initial render. Privacy Sentinel remains active
+        // Queue only watcher startup behind the initial render. Privacy Sentinel remains active
         // independently, and SetForegroundProcessAsync can still establish a task-specific scope if
         // the user starts guidance before this low-priority callback runs.
         Dispatcher.BeginInvoke(
@@ -143,8 +143,9 @@ public partial class MainWindow
 
             var hardChange = HasHardStableLiveChange(_liveSystem, nowSystem);
             var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
-            var meaningful = hardChange || semanticChange;
-            if (!meaningful)
+            var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
+
+            if (!hardChange && !topologyChange)
             {
                 _liveElements = nowElements;
                 _liveSystem = nowSystem;
@@ -154,23 +155,39 @@ public partial class MainWindow
                 return;
             }
 
-            var signature = BuildStableLiveSignature(nowElements, nowSystem);
-            var now = DateTime.UtcNow;
-            if (!string.Equals(_stableLiveChangeSignature, signature, StringComparison.Ordinal))
+            // Property-change callbacks already pass through the watcher's quiet period. A semantic
+            // state change on the same current control is therefore strong enough to invalidate one
+            // stale instruction without requiring a large whole-screen topology difference.
+            if (!hardChange && !semanticChange && !ConfirmStableLiveChange(nowElements, nowSystem))
             {
-                _stableLiveChangeSignature = signature;
-                _stableLiveChangeSinceUtc = now;
-                _stableLiveChangeSamples = 1;
+                await ValidateCurrentVisionTargetAsync(token);
                 return;
             }
-
-            _stableLiveChangeSamples++;
-            if (_stableLiveChangeSamples < 2 || now - _stableLiveChangeSinceUtc < TimeSpan.FromMilliseconds(350)) return;
 
             _liveElements = nowElements;
             _liveSystem = nowSystem;
             ClearStableLiveChangeCandidate();
-            if (!_verifyingAction) InvalidatePlannerForLiveContextChange();
+            _rejectedVisionTargets = 0;
+            _validatedVisionInstruction = null;
+
+            if (!_verifyingAction)
+            {
+                var hadInstruction = _currentDecision is not null || _awaitingClarification;
+                if (hadInstruction)
+                {
+                    _history.Add(new GuideHistoryItem(
+                        _stepNumber,
+                        semanticChange ? "semantic_state_changed" : "screen_changed",
+                        "現在の画面",
+                        semanticChange
+                            ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
+                            : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
+                    if (_history.Count > 12) _history.RemoveAt(0);
+                }
+
+                InvalidatePlannerForLiveContextChange();
+            }
+
             await ValidateCurrentVisionTargetAsync(token);
             await TryRunPendingLiveReplanAsync();
         }
@@ -180,6 +197,43 @@ public partial class MainWindow
         }
     }
 
+    private bool ConfirmStableLiveChange(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot system)
+    {
+        var signature = StableLiveSignature(elements, system);
+        var now = DateTime.UtcNow;
+
+        if (!string.Equals(signature, _stableLiveChangeSignature, StringComparison.Ordinal))
+        {
+            _stableLiveChangeSignature = signature;
+            _stableLiveChangeSinceUtc = now;
+            _stableLiveChangeSamples = 1;
+            return false;
+        }
+
+        _stableLiveChangeSamples++;
+        return _stableLiveChangeSamples >= 2 && (now - _stableLiveChangeSinceUtc) >= TimeSpan.FromMilliseconds(650);
+    }
+
+    private void InvalidatePlannerForLiveContextChange()
+    {
+        var plannerWasInFlight = _sessionState.PlannerInFlight;
+        var hadGuidance = _currentDecision is not null || _awaitingClarification;
+        if (!plannerWasInFlight && !hadGuidance && !_liveReplanPending) return;
+
+        _sessionState.Invalidate(GuidanceSessionState.Idle);
+        _speechOutput.Stop();
+        InvalidateCurrentGuidanceForLiveChange();
+
+        if (plannerWasInFlight)
+        {
+            _liveRestartAfterPlanCancel = true;
+            try { _sessionCts?.Cancel(); } catch { }
+        }
+
+        _liveReplanPending = true;
+        SetState("操作中の画面が切り替わったため、古い案内を破棄しました。新しい画面が落ち着いてから案内を作り直します…", speak: false);
+    }
+
     private void ClearStableLiveChangeCandidate()
     {
         _stableLiveChangeSignature = null;
@@ -187,13 +241,109 @@ public partial class MainWindow
         _stableLiveChangeSamples = 0;
     }
 
-    private static string BuildStableLiveSignature(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot system)
+    private static bool HasHardStableLiveChange(SystemContextSnapshot before, SystemContextSnapshot after)
     {
-        var ids = elements
-            .Where(x => x.Enabled && !x.Bounds.IsEmpty)
-            .Take(24)
-            .Select(x => $"{x.AutomationId}|{x.ControlType}|{Math.Round(x.Bounds.Left / 8)}|{Math.Round(x.Bounds.Top / 8)}")
-            .OrderBy(x => x, StringComparer.Ordinal);
-        return $"{system.ForegroundProcessId}|{system.ForegroundWindowHandle}|{system.ForegroundProcessName}|{system.ForegroundWindowTitle}|{string.Join(';', ids)}";
+        if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
+        if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
+
+        var beforeUrl = before.Browser?.Url ?? string.Empty;
+        var afterUrl = after.Browser?.Url ?? string.Empty;
+        return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) &&
+               (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
+    }
+
+    private static bool HasSemanticLiveStateChanged(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        SystemContextSnapshot beforeSystem,
+        IReadOnlyList<UiElementCandidate> afterElements,
+        SystemContextSnapshot afterSystem)
+    {
+        var before = SemanticLiveStateMap(beforeElements, beforeSystem.ForegroundProcess);
+        var after = SemanticLiveStateMap(afterElements, afterSystem.ForegroundProcess);
+
+        foreach (var pair in before)
+        {
+            if (after.TryGetValue(pair.Key, out var afterState) &&
+                !string.Equals(pair.Value, afterState, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static Dictionary<string, string> SemanticLiveStateMap(
+        IReadOnlyList<UiElementCandidate> elements,
+        string foregroundProcess)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var item in elements.Where(x => x.Interactable && IsRelevantProcess(x.ProcessName, foregroundProcess)))
+        {
+            var identity = StableLiveElementIdentity(item);
+            if (map.ContainsKey(identity)) continue;
+            map[identity] = SemanticLiveState(item);
+        }
+        return map;
+    }
+
+    private static bool HasStableLiveTopologyChanged(
+        IReadOnlyList<UiElementCandidate> beforeElements,
+        SystemContextSnapshot beforeSystem,
+        IReadOnlyList<UiElementCandidate> afterElements,
+        SystemContextSnapshot afterSystem)
+    {
+        var before = StableRelevantLiveKeys(beforeElements, beforeSystem.ForegroundProcess);
+        var after = StableRelevantLiveKeys(afterElements, afterSystem.ForegroundProcess);
+
+        if (before.Count == 0 || after.Count == 0) return before.Count != after.Count;
+        if (Math.Abs(before.Count - after.Count) >= 10) return true;
+
+        var overlap = before.Count(x => after.Contains(x));
+        var similarity = overlap / (double)Math.Max(before.Count, after.Count);
+        return similarity < 0.72;
+    }
+
+    private static HashSet<string> StableRelevantLiveKeys(IReadOnlyList<UiElementCandidate> elements, string foregroundProcess)
+    {
+        return elements
+            .Where(x => IsRelevantProcess(x.ProcessName, foregroundProcess))
+            .Where(x => x.Interactable || x.ControlType is "Window" or "Pane" or "Document" or "Text")
+            .Select(StableLiveElementKey)
+            .Take(180)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static string StableLiveElementKey(UiElementCandidate x) =>
+        $"{StableLiveElementIdentity(x)}|{SemanticLiveState(x)}";
+
+    private static string StableLiveElementIdentity(UiElementCandidate x)
+    {
+        var bx = (int)Math.Round(x.X / 24d);
+        var by = (int)Math.Round(x.Y / 24d);
+        var bw = (int)Math.Round(x.Width / 24d);
+        var bh = (int)Math.Round(x.Height / 24d);
+        var stableName = IsStableNamedControl(x.ControlType) ? NormalizeStableName(x.Name) : string.Empty;
+        return $"{x.ProcessName}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
+    }
+
+    private static string SemanticLiveState(UiElementCandidate x) => x.Interactable
+        ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
+        : string.Empty;
+
+    private static bool IsStableNamedControl(string controlType) => controlType.ToLowerInvariant() is
+        "button" or "menuitem" or "listitem" or "treeitem" or "tabitem" or "hyperlink" or "checkbox" or "radiobutton";
+
+    private static string NormalizeStableName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var normalized = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 72 ? normalized : normalized[..72];
+    }
+
+    private static string StableLiveSignature(IReadOnlyList<UiElementCandidate> elements, SystemContextSnapshot system)
+    {
+        var keys = StableRelevantLiveKeys(elements, system.ForegroundProcess)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .Take(120);
+        var browser = system.Browser?.Url ?? string.Empty;
+        return $"{system.ForegroundProcess.ToLowerInvariant()}|{browser.ToLowerInvariant()}|{string.Join("\n", keys)}";
     }
 }
