@@ -5,6 +5,7 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 
 const xaml = read('src/HelpSys.Desktop/MainWindow.xaml');
 const privacy = read('src/HelpSys.Desktop/MainWindow.Privacy.cs');
+const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
 
 assert(xaml.includes('Width="620" MinHeight="122"'), 'Main HelpSys surface must retain the established compact 620px width and 122px minimum height.');
 assert(xaml.includes('SizeToContent="Height"'), 'Main HelpSys surface must grow only when safety/clarification content actually needs height.');
@@ -36,7 +37,7 @@ assert(footer.includes('x:Name="CommanderButton"') && footer.includes('Ctrl+Alt+
 const state = xaml.match(/<TextBlock x:Name="StateText"[\s\S]*?\/>/)?.[0] ?? '';
 assert(state.includes('TextWrapping="Wrap"'), 'Long safety reasons must remain readable rather than clipped.');
 assert(state.includes('MaxHeight="48"'), 'Safety status growth must remain bounded so the assistant does not become visually dominant.');
-assert(!state.includes('TextTrimming='), 'Safety reasons must not be silently ellipsized.');
+assert(!state.includes('TextTrimming='), 'Privacy and safety status reasons must not be silently ellipsized.');
 
 assert(privacy.includes('画面を見て案内します。秘密情報の画面では送信を停止します。'),
   'Normal idle privacy disclosure must stay concise enough for the established compact surface.');
@@ -45,4 +46,34 @@ assert(privacy.includes('安全版：秘密情報は送信停止。音声のク�
 assert(!privacy.includes('画面情報を利用して案内します。秘密情報の画面では送信を止めます。画面解析はいつでも停止できます。'),
   'Verbose former startup copy must not reintroduce an unnecessary two-line normal idle state.');
 
-console.log('HelpSys compact UI/surface-regression contract passed.');
+// First paint must not wait for the global UI Automation focus hook. The privacy sentinel is a
+// separate boundary, so deferring this guidance watcher improves startup without weakening preflight.
+const loadedStart = stable.indexOf('private void MainWindow_StableLoaded');
+const loadedEnd = stable.indexOf('private void StartLiveWatcherAfterInitialRender', loadedStart);
+const loadedBody = loadedStart >= 0 && loadedEnd > loadedStart ? stable.slice(loadedStart, loadedEnd) : '';
+assert(loadedBody.includes('DispatcherPriority.ContextIdle'), 'Global live watcher startup must stay behind the initial WPF render.');
+assert(loadedBody.includes('StartLiveWatcherAfterInitialRender'), 'Loaded must schedule the deferred live watcher startup.');
+assert(!loadedBody.includes('_liveWatcher.Start();'), 'Loaded must not synchronously register the global UIA watcher before first paint.');
+assert(stable.includes('private void StartLiveWatcherAfterInitialRender()') && stable.includes('try { _liveWatcher.Start(); }'),
+  'Deferred watcher startup must still enable live guidance after the initial render.');
+
+// Performance changes must not buy speed by deleting the semantic/topology safeguards used for live
+// replanning. These are deliberately checked here because startup/UI optimizations are a common place
+// for accidental surface-quality regressions.
+for (const method of [
+  'ConfirmStableLiveChange',
+  'InvalidatePlannerForLiveContextChange',
+  'HasHardStableLiveChange',
+  'HasSemanticLiveStateChanged',
+  'SemanticLiveStateMap',
+  'HasStableLiveTopologyChanged',
+  'StableRelevantLiveKeys',
+  'StableLiveElementIdentity',
+  'SemanticLiveState',
+  'StableLiveSignature'
+]) assert(stable.includes(method), `Live guidance regression guard was lost during UI/performance work: ${method}`);
+assert(stable.includes('semantic_state_changed') && stable.includes('screen_changed'),
+  'Live guidance history must keep distinct semantic-state and screen-change recovery reasons.');
+assert(stable.includes('similarity < 0.72'), 'Stable topology-change threshold must not disappear during startup optimization.');
+
+console.log('HelpSys compact UI/surface/perceived-performance contract passed.');
