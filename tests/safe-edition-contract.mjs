@@ -22,9 +22,11 @@ assert(speech.includes('安全版では音声データをクラウドへ送信�
 assert(privacyUi.includes('VoiceButton.IsEnabled = false'), 'Safe UI must disable the cloud voice button.');
 assert(privacyUi.includes('CommanderButton.IsEnabled = false'), 'Safe UI must disable Commander cloud dictation.');
 assert(privacyUi.includes('_commander.SetEnabled(false)'), 'Safe UI must turn off Commander wake monitoring after initialization.');
-assert(privacyUi.includes('音声のクラウド送信も無効です'), 'Safe startup status must disclose that cloud voice is disabled.');
+assert(privacyUi.includes('クラウド音声は無効です'), 'Safe startup status must disclose that cloud voice is disabled.');
 assert(privacyUi.includes('!_cloudGuide.CloudEndpointConfigured'), 'Safe UI must remain paused when no reviewed cloud endpoint is configured.');
-assert(privacyUi.includes('画像を取得・送信しません'), 'Safe UI must disclose that an unconfigured endpoint prevents image acquisition and egress.');
+assert(privacyUi.includes('AI接続先未設定。画面送信とクラウド音声は無効です'), 'Safe unconfigured startup state must disclose that screen egress and cloud voice are disabled.');
+assert(privacyUi.includes('DispatcherTimer _privacyResumeTimer'), 'Automatic privacy resume must have an event-loss fallback.');
+assert(privacyUi.includes('Interval = TimeSpan.FromMilliseconds(900)'), 'Privacy resume fallback must remain low-frequency and active only while paused.');
 
 assert(adapter.includes('#if HELPSYS_SAFE_BUILD'), 'Cloud adapter must compile a distinct Safe endpoint policy.');
 assert(adapter.includes('HELPSYS_SAFE_API_BASE'), 'Safe build must require a dedicated reviewed endpoint variable.');
