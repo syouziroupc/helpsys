@@ -62,4 +62,9 @@ public sealed record SystemContextSnapshot(
     int ForegroundProcessId,
     bool TaskbarVisible,
     IReadOnlyList<string> RunningApps,
-    BrowserContextSnapshot? Browser);
+    BrowserContextSnapshot? Browser)
+{
+    // HWND is local-only evidence binding this snapshot to the exact verified work surface.
+    // Cloud compaction intentionally omits it.
+    public nint ForegroundWindowHandle { get; init; }
+}
