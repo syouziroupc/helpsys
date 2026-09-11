@@ -3,6 +3,9 @@
   "name": "helpsys",
   "main": "worker/reliability-v4-guard.js",
   "compatibility_date": "2026-09-08",
+  "cache": {
+    "enabled": false
+  },
   "assets": {
     "directory": "./site"
   },
