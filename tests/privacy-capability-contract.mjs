@@ -59,6 +59,7 @@ assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input te
 assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
 
 const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
+const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
 assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
 assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
 assert(capture.indexOf('var occluderRedactionsBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before the desktop pixels are copied.');
@@ -67,9 +68,15 @@ assert(capture.includes('.Concat(occluderRedactionsBefore)') && capture.includes
 assert(capture.includes('count > maxWindows || !visited.Add(hwnd)'), 'Z-order enumeration must fail closed on overflow or cycles.');
 assert(capture.includes('前面に重なった別画面を安全に除外できないため、画面画像は送信しません'), 'Occluder uncertainty must fail closed instead of sending the screenshot.');
 assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
-assert(capture.includes('Unknown ownership is never upgraded to a full-monitor capture'), 'Full-monitor capture must be restricted to positively identified shell surfaces.');
 assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
 assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
 assert(capture.includes('if (shellSurface)\n            return monitorArea;'), 'Only a positively identified shell surface may use full-monitor capture.');
 
-console.log('HelpSys prohibited-capability, persistence, input-injection, local-input-minimization and fail-closed screenshot contract passed.');
+assert(capture.includes('int expectedProcessId'), 'Screenshot capture must accept the expected foreground process identity.');
+assert(capture.includes('FindTopLevelWindowForProcess(expectedProcessId)'), 'Screenshot target selection must bind to the expected process instead of whichever window happens to be behind HelpSys.');
+assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject a selected window whose process does not match the expected process.');
+assert(capture.includes('EnumWindows('), 'Process-bound target selection must enumerate top-level windows explicitly.');
+assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
+assert(quality.includes('_screenCapture.CaptureAsync(passwordBounds, expectedProcessId, cancellationToken)'), 'Quality and recovery screenshots must pass the process-bound target identity into the capture service.');
+
+console.log('HelpSys prohibited-capability, persistence, input-injection, local-input-minimization and process-bound screenshot contract passed.');
