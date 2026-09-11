@@ -10,6 +10,8 @@ $mock = $null
 $target = $null
 $overlay = $null
 $helpSys = $null
+$overlayStdout = 'artifacts/occluder-overlay-stdout.txt'
+$overlayStderr = 'artifacts/occluder-overlay-stderr.txt'
 
 function Find-Element([System.Diagnostics.Process]$process, [string]$automationId) {
   if ($null -eq $process -or $process.HasExited) { return $null }
@@ -36,6 +38,14 @@ function Save-DesktopScreenshot([string]$name) {
     $graphics.Dispose()
     $bitmap.Dispose()
   }
+}
+
+function Get-OverlayFailureDetail {
+  if (Test-Path $overlayStderr) {
+    $detail = (Get-Content $overlayStderr -Raw -ErrorAction SilentlyContinue).Trim()
+    if (-not [string]::IsNullOrWhiteSpace($detail)) { return $detail }
+  }
+  return 'no stderr was captured'
 }
 
 function Assert-CenterIsRedacted([string]$path) {
@@ -72,6 +82,8 @@ try {
   Remove-Item 'artifacts/mock-last-request.json' -Force -ErrorAction SilentlyContinue
   Remove-Item 'artifacts/helpsys-occluder-egress-image.png' -Force -ErrorAction SilentlyContinue
   Remove-Item 'artifacts/occluder-overlay-bounds.json' -Force -ErrorAction SilentlyContinue
+  Remove-Item $overlayStdout -Force -ErrorAction SilentlyContinue
+  Remove-Item $overlayStderr -Force -ErrorAction SilentlyContinue
   $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
 
   $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
@@ -81,14 +93,27 @@ try {
   Start-Sleep -Seconds 3
   if ($target.HasExited) { throw 'Smoke target exited before occluder test.' }
 
-  $overlay = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' -PassThru
+  $overlay = Start-Process powershell.exe `
+    -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' `
+    -RedirectStandardOutput $overlayStdout `
+    -RedirectStandardError $overlayStderr `
+    -PassThru
   $overlayDeadline = [DateTime]::UtcNow.AddSeconds(8)
   while (-not (Test-Path 'artifacts/occluder-overlay-bounds.json') -and [DateTime]::UtcNow -lt $overlayDeadline) {
-    if ($overlay.HasExited) { throw 'No-activate overlay exited before becoming visible.' }
+    if ($overlay.HasExited) {
+      throw "No-activate overlay exited before becoming visible: $(Get-OverlayFailureDetail)"
+    }
     Start-Sleep -Milliseconds 150
   }
-  if (-not (Test-Path 'artifacts/occluder-overlay-bounds.json')) { throw 'No-activate overlay did not become visible.' }
+  if (-not (Test-Path 'artifacts/occluder-overlay-bounds.json')) {
+    throw "No-activate overlay did not become visible: $(Get-OverlayFailureDetail)"
+  }
   if ($overlay.Id -eq $target.Id) { throw 'Occluder smoke requires a distinct overlay process.' }
+
+  $overlayBounds = Get-Content 'artifacts/occluder-overlay-bounds.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($overlayBounds.showActivated -ne $false -or $overlayBounds.topmost -ne $true) {
+    throw 'Occluder helper did not preserve the required non-activating TopMost test condition.'
+  }
 
   Save-DesktopScreenshot 'helpsys-occluder-source.png'
 
