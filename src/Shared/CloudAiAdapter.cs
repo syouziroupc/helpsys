@@ -14,9 +14,9 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// <summary>
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
-/// External endpoints must use HTTPS. Plain HTTP loopback is accepted only in explicit test builds.
-/// Safe builds have no production cloud default and only accept the explicitly reviewed origin.
-/// Redirects and cookies are disabled so approved requests cannot be silently rerouted or persisted.
+/// Production traffic is pinned to the reviewed HelpSys Workers origin. Plain HTTP is accepted
+/// only for an explicitly configured loopback endpoint used by local/CI tests.
+/// Redirects, cookies and OS/user proxy inheritance are disabled.
 /// </summary>
 public sealed class CloudAiAdapter : IDisposable
 {
@@ -33,7 +33,7 @@ public sealed class CloudAiAdapter : IDisposable
     {
         Timeout = Timeout.InfiniteTimeSpan
     };
-    private readonly string? _apiBase;
+    private readonly string _apiBase;
     private readonly string? _apiKey;
     private readonly string _apiKeyHeader;
     private bool _disposed;
@@ -46,15 +46,9 @@ public sealed class CloudAiAdapter : IDisposable
         if (!AllowedApiKeyHeaders.Contains(apiKeyHeader))
             throw new ArgumentException("HelpSysで許可されていないAPIキーヘッダーです。", nameof(apiKeyHeader));
 
-#if HELPSYS_SAFE_BUILD
-        var resolvedBase = apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
-        _apiBase = string.IsNullOrWhiteSpace(resolvedBase) ? null : ValidateSafeApiBase(resolvedBase.TrimEnd('/'));
-        _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
-#else
         var resolvedBase = (apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_API_BASE") ?? DefaultApiBase).TrimEnd('/');
-        _apiBase = ValidateApiBase(resolvedBase);
+        _apiBase = ValidateUnifiedApiBase(resolvedBase);
         _apiKey = apiKey ?? Environment.GetEnvironmentVariable("HELPSYS_API_KEY");
-#endif
         _apiKeyHeader = apiKeyHeader;
     }
 
@@ -88,8 +82,6 @@ public sealed class CloudAiAdapter : IDisposable
         CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!IsConfigured)
-            throw new InvalidOperationException("安全版の承認済みAI API接続先が設定されていないため、外部送信を拒否しました。");
         ValidatePath(path);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -141,33 +133,34 @@ public sealed class CloudAiAdapter : IDisposable
 
     private static HttpClientHandler CreateHandler()
     {
-        var handler = new HttpClientHandler
+        return new HttpClientHandler
         {
             AllowAutoRedirect = false,
             UseCookies = false,
+            UseProxy = false,
             CheckCertificateRevocationList = true
         };
-#if HELPSYS_SAFE_BUILD
-        // Safe must not inherit an OS/user proxy that could become an unreviewed intermediary.
-        handler.UseProxy = false;
-#endif
-        return handler;
     }
 
-    private static string ValidateSafeApiBase(string value)
+    private static string ValidateUnifiedApiBase(string value)
     {
-        var validated = ValidateApiBase(value);
-        if (!Uri.TryCreate(validated, UriKind.Absolute, out var uri))
-            throw new InvalidOperationException("安全版AI APIの接続先が不正です。");
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("HelpSys AI APIの接続先が不正です。");
 
         if (uri.IsLoopback)
         {
-#if HELPSYS_SAFE_TEST_BUILD
-            return validated;
-#else
-            throw new InvalidOperationException("安全版本番ビルドではloopback AI接続先を許可しません。");
-#endif
+            if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("HelpSysのローカル試験接続先はHTTP/HTTPSのみ許可されています。");
+            if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+                throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
+            return value;
         }
+
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("外部AI APIへの接続はHTTPSのみ許可されています。");
+        if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
 
         var approved = new Uri(DefaultApiBase, UriKind.Absolute);
         var sameApprovedOrigin =
@@ -175,25 +168,8 @@ public sealed class CloudAiAdapter : IDisposable
             uri.Host.Equals(approved.Host, StringComparison.OrdinalIgnoreCase) &&
             uri.Port == approved.Port &&
             (uri.AbsolutePath.Length == 0 || uri.AbsolutePath == "/");
-
         if (!sameApprovedOrigin)
-            throw new InvalidOperationException("安全版はコードで承認されたAI API接続先以外へ送信できません。");
-
-        return validated;
-    }
-
-    private static string ValidateApiBase(string value)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
-            throw new InvalidOperationException("HelpSys AI APIの接続先が不正です。");
-
-        var secureExternal = uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-        var loopbackDevelopment = uri.IsLoopback && uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
-        if (!secureExternal && !loopbackDevelopment)
-            throw new InvalidOperationException("外部AI APIへの接続はHTTPSのみ許可されています。");
-
-        if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-            throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
+            throw new InvalidOperationException("HelpSysはコードで承認されたAI API接続先以外へ送信できません。");
 
         return value;
     }
