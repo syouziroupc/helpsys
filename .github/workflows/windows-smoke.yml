@@ -19,28 +19,24 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Check Worker syntax
+      - name: Check Worker and contract syntax
         run: |
           node --check worker/index.js
           node --check worker/entry.js
           node --check worker/visible-first.js
           node --check worker/start-state-guard.js
           node --check worker/deliberation-guard.js
-          node --check worker/deliberation-selftest.mjs
           node --check worker/reliability-v4-guard.js
-          node --check worker/reliability-v4-selftest.mjs
           node --check worker/quality-guide.js
-          node --check worker/quality-guide-selftest.mjs
           node --check worker/transcribe.js
-          node --check worker/transcribe-selftest.mjs
           node --check tests/site-release-contract.mjs
-          node --check tests/commander-stability-contract.mjs
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
+          node --check tests/privacy-resume-contract.mjs
           node --check tests/safe-edition-contract.mjs
           node --check tests/worker-data-handling-contract.mjs
 
-      - name: Test Worker contract
+      - name: Test Worker and privacy contracts
         run: |
           node worker/selftest.mjs
           node worker/policy-selftest.mjs
@@ -51,195 +47,46 @@ jobs:
           node worker/transcribe-selftest.mjs
           node tests/privacy-contract.mjs
           node tests/privacy-capability-contract.mjs
+          node tests/privacy-resume-contract.mjs
           node tests/safe-edition-contract.mjs
           node tests/worker-data-handling-contract.mjs
-
-      - name: Test site and release contract
-        run: node tests/site-release-contract.mjs
+          node tests/site-release-contract.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Build normal and Safe editions in isolated outputs
+      - name: Build unified edition
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
-          New-Item -ItemType Directory -Force -Path 'smoke-bin/safe' | Out-Null
           dotnet build HelpSys.sln -c Release --no-restore
           dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -o smoke-bin/normal
-          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:SafeBuild=true -o smoke-bin/safe
-          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Normal isolated smoke executable was not produced.' }
-          if (-not (Test-Path 'smoke-bin/safe/HelpSys.Safe.exe')) { throw 'Safe isolated smoke executable was not produced.' }
+          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Unified HelpSys smoke executable was not produced.' }
+          if (Test-Path 'smoke-bin/normal/HelpSys.Safe.exe') { throw 'Separate Safe executable must not be produced by the unified build.' }
 
-      - name: Launch and capture desktop
+      - name: Launch unified desktop
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-
-          $mock = Start-Process python -ArgumentList 'tests/mock_guide_server.py' -PassThru -WindowStyle Hidden
-          $env:HELPSYS_API_BASE = 'http://127.0.0.1:8765'
-          Remove-Item Env:HELPSYS_SAFE_API_BASE -ErrorAction SilentlyContinue
-          Remove-Item Env:HELPSYS_SAFE_API_KEY -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 1
-
-          $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
-          Start-Sleep -Seconds 3
-
           $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
-          $safeExe = Resolve-Path 'smoke-bin/safe/HelpSys.Safe.exe'
-          $overlayProcess = $null
-          $process = $null
-
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          Add-Type -AssemblyName UIAutomationClient
-
-          function Save-DesktopScreenshot([string] $path) {
-            $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-            try {
-              $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-              $bitmap.Save((Join-Path $PWD $path), [System.Drawing.Imaging.ImageFormat]::Png)
-            }
-            finally {
-              $graphics.Dispose()
-              $bitmap.Dispose()
-            }
-          }
-
-          function Find-HelpSysElement([string] $automationId) {
-            if ($null -eq $process -or $process.HasExited) { return $null }
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $processCondition = New-Object System.Windows.Automation.PropertyCondition(
-              [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
-              $process.Id)
-            $idCondition = New-Object System.Windows.Automation.PropertyCondition(
-              [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
-              $automationId)
-            $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $idCondition)
-            return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-          }
-
-          function Get-HelpSysNames {
-            if ($null -eq $process -or $process.HasExited) { return @() }
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $processCondition = New-Object System.Windows.Automation.PropertyCondition(
-              [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
-              $process.Id)
-            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $processCondition)
-            $names = @()
-            foreach ($node in $nodes) {
-              try {
-                $name = $node.Current.Name
-                if (-not [string]::IsNullOrWhiteSpace($name)) { $names += $name }
-              }
-              catch { }
-            }
-            return $names
-          }
-
+          $process = Start-Process $exe -PassThru
           try {
-            $env:HELPSYS_SMOKE_LISTENING_OVERLAY = '1'
-            $overlayProcess = Start-Process $exe -PassThru
-            Start-Sleep -Seconds 2
-            if ($overlayProcess.HasExited) { throw 'HelpSys exited before the listening overlay screenshot.' }
-            Save-DesktopScreenshot 'artifacts/helpsys-listening-overlay.png'
-            Stop-Process -Id $overlayProcess.Id -Force
-            $overlayProcess.WaitForExit()
-            $overlayProcess = $null
-            Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-
-            $process = Start-Process $exe -PassThru
             Start-Sleep -Seconds 5
-            if ($process.HasExited) { throw 'HelpSys exited before the idle smoke screenshot.' }
-            Save-DesktopScreenshot 'artifacts/helpsys-idle.png'
-
-            $requestBox = Find-HelpSysElement 'RequestBox'
-            $guideButton = Find-HelpSysElement 'GuideButton'
-            $commanderButton = Find-HelpSysElement 'CommanderButton'
-            if ($null -eq $requestBox -or $null -eq $guideButton -or $null -eq $commanderButton) {
-              throw 'HelpSys core or Commander UI Automation controls were not exposed.'
+            if ($process.HasExited) { throw 'Unified HelpSys exited during startup.' }
+            Add-Type -AssemblyName UIAutomationClient
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $processCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $process.Id)
+            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $processCondition)
+            $ids = @()
+            foreach ($node in $nodes) { try { if ($node.Current.AutomationId) { $ids += $node.Current.AutomationId } } catch { } }
+            foreach ($required in @('RequestBox','GuideButton','PrivacyButton','VoiceButton','CommanderButton')) {
+              if ($ids -notcontains $required) { throw "Unified HelpSys UI missing: $required" }
             }
-
-            $valuePattern = $requestBox.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-            $valuePattern.SetValue('open the test target')
-            $invokePattern = $guideButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-            $invokePattern.Invoke()
-            Start-Sleep -Seconds 10
-            if ($process.HasExited) { throw 'HelpSys exited while producing quality-first guidance.' }
-
-            if (-not (Test-Path 'artifacts/mock-last-request.json')) {
-              Save-DesktopScreenshot 'artifacts/helpsys-quality-request-failure.png'
-              throw 'Quality-first planner did not reach the mock API.'
-            }
-            $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($diagnostics.path -ne '/v1/quality-guide') { throw "Normal HelpSys used the wrong planning route: $($diagnostics.path)" }
-            if ($diagnostics.hasScreenshot -ne $true) { throw 'Normal HelpSys planning request did not include the current screenshot.' }
-            if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
-              Write-Host '--- mock quality-first diagnostics ---'
-              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
-              throw 'Quality-first scan did not use the dedicated smoke work surface.'
-            }
-
-            $names = @(Get-HelpSysNames)
-            $instruction = '青い枠の場所で、マウスの左ボタンを1回押してください。'
-            if (-not ($names | Where-Object { $_ -like '手順*' -or $_ -eq $instruction })) {
-              Save-DesktopScreenshot 'artifacts/helpsys-guidance-failure.png'
-              Write-Host '--- mock quality-first diagnostics ---'
-              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
-              throw "HelpSys did not expose an actionable quality-first guidance step. UIA names: $($names -join ' | ')"
-            }
-            Save-DesktopScreenshot 'artifacts/helpsys-guidance.png'
-
-            Stop-Process -Id $process.Id -Force
-            $process.WaitForExit()
-            $process = $null
-            Remove-Item 'artifacts/mock-last-request.json' -Force -ErrorAction SilentlyContinue
-
-            $process = Start-Process $safeExe -PassThru
-            Start-Sleep -Seconds 5
-            if ($process.HasExited) { throw 'HelpSys Safe exited before the Safe UI smoke screenshot.' }
-
-            $safeVoice = Find-HelpSysElement 'VoiceButton'
-            $safeCommander = Find-HelpSysElement 'CommanderButton'
-            $safePrivacy = Find-HelpSysElement 'PrivacyButton'
-            $safeState = Find-HelpSysElement 'StateText'
-            $safeRequest = Find-HelpSysElement 'RequestBox'
-            $safeGuide = Find-HelpSysElement 'GuideButton'
-            if ($null -eq $safeVoice -or $null -eq $safeCommander -or $null -eq $safePrivacy -or $null -eq $safeState -or $null -eq $safeRequest -or $null -eq $safeGuide) {
-              throw 'HelpSys Safe privacy controls were not exposed through UI Automation.'
-            }
-            if ($safeVoice.Current.IsEnabled) { throw 'HelpSys Safe cloud Voice button must be disabled.' }
-            if ($safeCommander.Current.IsEnabled) { throw 'HelpSys Safe Commander button must be disabled.' }
-            if (-not $safePrivacy.Current.IsEnabled) { throw 'HelpSys Safe screen-analysis pause control must remain available.' }
-            $safeStateText = $safeState.Current.Name
-            if ($safeStateText -notlike '*音声のクラウド送信も無効*') { throw "HelpSys Safe did not disclose its cloud-voice restriction. State: $safeStateText" }
-            Save-DesktopScreenshot 'artifacts/helpsys-safe-idle.png'
-
-            $safeValuePattern = $safeRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-            $safeValuePattern.SetValue('open the test target')
-            $safeInvokePattern = $safeGuide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-            $safeInvokePattern.Invoke()
-            Start-Sleep -Seconds 6
-            if ($process.HasExited) { throw 'HelpSys Safe exited while refusing an unconfigured cloud request.' }
-            if (Test-Path 'artifacts/mock-last-request.json') {
-              Get-Content 'artifacts/mock-last-request.json' -Encoding UTF8
-              throw 'HelpSys Safe contacted the cloud/mock API without an explicitly configured Safe endpoint.'
-            }
-            Save-DesktopScreenshot 'artifacts/helpsys-safe-unconfigured-egress-block.png'
           }
           finally {
-            Remove-Item Env:HELPSYS_SMOKE_LISTENING_OVERLAY -ErrorAction SilentlyContinue
-            Remove-Item Env:HELPSYS_SAFE_API_BASE -ErrorAction SilentlyContinue
-            Remove-Item Env:HELPSYS_SAFE_API_KEY -ErrorAction SilentlyContinue
-            if ($null -ne $overlayProcess -and -not $overlayProcess.HasExited) { Stop-Process -Id $overlayProcess.Id -Force }
-            if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-            if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force }
-            if (-not $mock.HasExited) { Stop-Process -Id $mock.Id -Force }
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
 
       - name: Password and OTP privacy GUI smoke
@@ -258,8 +105,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: helpsys-windows-smoke
-          path: |
-            artifacts/*.png
-            artifacts/*.json
+          name: helpsys-unified-windows-smoke
+          path: artifacts/*
           if-no-files-found: warn
