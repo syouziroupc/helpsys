@@ -14,8 +14,8 @@ public sealed record CloudAiResponse(int StatusCode, string Body)
 /// <summary>
 /// The only outbound HTTP transport used by HelpSys AI features.
 /// Screen data must be approved by PrivacyGate before it reaches this adapter.
-/// Production traffic is pinned to the reviewed HelpSys Workers origin. Plain HTTP is accepted
-/// only for an explicitly configured loopback endpoint used by local/CI tests.
+/// Production traffic is pinned to the reviewed HelpSys Workers origin.
+/// Loopback is compiled in only for CI/local test builds, never for distributed HelpSys.
 /// Redirects, cookies and OS/user proxy inheritance are disabled.
 /// </summary>
 public sealed class CloudAiAdapter : IDisposable
@@ -149,12 +149,16 @@ public sealed class CloudAiAdapter : IDisposable
 
         if (uri.IsLoopback)
         {
+#if HELPSYS_TEST_BUILD
             if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
                 !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("HelpSysのローカル試験接続先はHTTP/HTTPSのみ許可されています。");
             if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
                 throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
             return value;
+#else
+            throw new InvalidOperationException("配布版HelpSysではloopback AI接続先を許可しません。");
+#endif
         }
 
         if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
