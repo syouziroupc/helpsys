@@ -55,13 +55,13 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Build unified edition
+      - name: Build production and unified CI smoke editions
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
           dotnet build HelpSys.sln -c Release --no-restore
-          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -o smoke-bin/normal
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:TestBuild=true -o smoke-bin/normal
           if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Unified HelpSys smoke executable was not produced.' }
           if (Test-Path 'smoke-bin/normal/HelpSys.Safe.exe') { throw 'Separate Safe executable must not be produced by the unified build.' }
 
