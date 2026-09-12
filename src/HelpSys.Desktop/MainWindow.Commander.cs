@@ -18,7 +18,19 @@ public partial class MainWindow
         _commanderStarted = true;
         _commander.WakeDetected += Commander_WakeDetected;
         _commander.StatusChanged += Commander_StatusChanged;
-        _commander.Start();
+        UpdateCommanderUi();
+
+        // Microphone/recognizer initialization can be comparatively expensive on a cold Windows
+        // session. Do not make the first visible HelpSys frame wait for that device work.
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.ContextIdle,
+            new Action(StartCommanderAfterInitialRender));
+    }
+
+    private void StartCommanderAfterInitialRender()
+    {
+        if (!_commanderStarted || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        try { _commander.Start(); } catch { }
         UpdateCommanderUi();
     }
 
@@ -100,9 +112,6 @@ public partial class MainWindow
                 return;
             }
 
-            // Cloud transcription adds a bounded network phase after local recording.
-            // Keep the whole wake interaction bounded, but do not cut off a normal utterance
-            // merely because the old local recognizer completed faster.
             interactionCts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
             _commanderInteractionCts = interactionCts;
             var token = interactionCts.Token;
@@ -139,8 +148,6 @@ public partial class MainWindow
             RequestBox.CaretIndex = RequestBox.Text.Length;
             SetState($"「{RequestBox.Text}」を確認しました。画面を見て案内を作ります…", speak: false);
 
-            // Keep the recognized text readable for a short moment, then remove the listening
-            // overlay before screen capture so it cannot contaminate visual guidance.
             await Task.Delay(900, token);
             _speechInput.HideOverlay();
 
