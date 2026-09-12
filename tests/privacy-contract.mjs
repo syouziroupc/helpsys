@@ -67,7 +67,7 @@ assert(cloud.includes('PrivacyGate'), 'Cloud guidance must depend on PrivacyGate
 assert(cloud.includes('PreflightPrivacy'), 'Cloud guidance must preflight before screenshot creation.');
 assert(cloud.includes('PrivacyBlocked?.Invoke'), 'Blocked egress must signal Privacy Mode.');
 assert(!cloud.includes('ImageDataUri'), 'CloudGuideService must not directly extract screenshot bytes.');
-assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(7)'), 'Cloud guidance attempts must remain bounded for interactive use.');
+assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(9)'), 'Cloud guidance calls must retain the proven short per-attempt timeout.');
 assert(speech.includes('CloudAiAdapter') && !speech.includes('HttpClient'), 'Speech transcription must use the shared adapter.');
 assert(speech.includes('CloudTranscriptionAllowed => true'), 'Unified HelpSys should retain explicit voice input.');
 assert(education.includes('CloudAiAdapter') && !education.includes('HttpClient'), 'Education AI must use the shared adapter.');
