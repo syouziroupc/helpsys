@@ -7,7 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class CloudGuideService : IDisposable
 {
-    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(7);
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
@@ -116,8 +116,6 @@ public sealed class CloudGuideService : IDisposable
         return decision;
     }
 
-    // Compatibility overload for the old visual fallback. It is still gated; Quality First uses
-    // the overload that also supplies current UI candidates so password/OTP state can be blocked.
     public Task<VisionGuideDecision> PlanVisionAsync(
         string request,
         ScreenCaptureFrame frame,
@@ -175,9 +173,6 @@ public sealed class CloudGuideService : IDisposable
                 ShellProcesses.Contains(x.ProcessName))
             .ToArray();
 
-        // Keep the outbound cap unchanged, but reserve browser evidence slots for headings, result
-        // snippets and document text. Previously a link-heavy page could consume all 280 slots with
-        // interactable nodes and starve the model of the surrounding context needed to understand it.
         var contextBudget = systemContext.Browser is null ? 45 : 80;
         var interactiveBudget = 280 - contextBudget;
 
@@ -271,7 +266,7 @@ public sealed class CloudGuideService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が7秒を超えました。");
+                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が9秒を超えました。");
                 if (attempt > 0) throw timeoutError;
                 lastTransientError = timeoutError;
             }
