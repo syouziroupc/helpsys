@@ -187,6 +187,11 @@ public sealed class PrivacyGate
             if (ContainsAny(texts, CardAuthTerms) || ContainsCardNumber(texts))
                 return Remember(Block("card_authentication", "カード認証情報を扱う画面ではクラウド画面解析を停止します。"));
 
+            if (Profile == PrivacyPolicyProfile.Safe && ContainsDirectPersonalData(texts))
+                return Remember(Block(
+                    "personal_data_visible",
+                    "メールアドレス・電話番号・郵便番号などの個人情報が画面上で検出されたため、安全版ではクラウド画面解析を停止します。"));
+
             return Remember(new PrivacyAssessment(
                 PrivacyClassification.Safe,
                 "safe",
@@ -393,6 +398,17 @@ public sealed class PrivacyGate
         {
             if (string.IsNullOrWhiteSpace(text)) continue;
             if (BearerRegex.IsMatch(text) || JwtRegex.IsMatch(text) || KnownApiKeyRegex.IsMatch(text) || PrivateKeyRegex.IsMatch(text))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsDirectPersonalData(IEnumerable<string> texts)
+    {
+        foreach (var text in texts)
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            if (EmailRegex.IsMatch(text) || JapanesePhoneRegex.IsMatch(text) || PostalCodeRegex.IsMatch(text))
                 return true;
         }
         return false;
