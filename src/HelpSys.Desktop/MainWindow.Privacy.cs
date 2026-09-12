@@ -21,17 +21,6 @@ public partial class MainWindow
         _liveWatcher.Pulse += PrivacyWatcher_Pulse;
         _privacyResumeTimer.Tick += PrivacyResumeTimer_Tick;
         UpdatePrivacyButton();
-
-        if (!_speechInput.CloudTranscriptionAllowed)
-        {
-            try { _commander.SetEnabled(false); } catch { }
-            VoiceButton.IsEnabled = false;
-            VoiceButton.ToolTip = "安全版では音声データをクラウドへ送信しません。文字入力を使用してください。";
-            CommanderButton.IsEnabled = false;
-            CommanderButton.Content = "コマンダー OFF";
-            CommanderButton.ToolTip = "安全版ではクラウド音声認識を使用しないため無効です。";
-        }
-
         Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState));
     }
 
@@ -39,18 +28,14 @@ public partial class MainWindow
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
 
-        if (_cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe && !_cloudGuide.CloudEndpointConfigured)
+        if (!_cloudGuide.CloudEndpointConfigured)
         {
-            SetState(
-                "安全版：AI接続先未設定。画面送信停止。音声のクラウド送信も無効です。",
-                speak: false);
+            SetState("AI接続先を確認できないため、外部送信を停止しています。", speak: false);
             return;
         }
 
         SetState(
-            _cloudGuide.PrivacyGate.Profile == PrivacyPolicyProfile.Safe
-                ? "安全版：秘密情報は送信停止。音声のクラウド送信も無効です。"
-                : "画面を見て案内します。秘密情報の画面では送信を停止します。",
+            "HelpSys 統合版：Privacy Gateで秘密情報を遮断し、安全な画面だけを解析します。音声入力は利用者が開始したときだけ送信します。",
             speak: false);
     }
 
@@ -73,9 +58,6 @@ public partial class MainWindow
     {
         _privacyPaused = true;
 
-        // Cancel the old work before releasing its planner slot. This prevents a stale operation
-        // from overlapping with a future safe-screen restart while still allowing that restart to
-        // acquire the session controller immediately after the Privacy Gate approves the screen.
         try { _sessionCts?.Cancel(); } catch { }
         _sessionState.AbortCurrentOperation(GuidanceSessionState.Idle);
 
@@ -159,9 +141,7 @@ public partial class MainWindow
         if (!_cloudGuide.CloudEndpointConfigured)
         {
             _privacyResumeTimer.Stop();
-            SetState(
-                "画面解析を停止中。安全版の承認済みAI接続先が未設定です。",
-                speak: false);
+            SetState("画面解析を停止中。AI接続先を安全に確認できません。", speak: false);
             return;
         }
 
@@ -175,9 +155,6 @@ public partial class MainWindow
             return;
         }
 
-        // A fresh Guide/Answer action may have been intercepted before the normal handler was
-        // allowed to create its session. Restore only the local typed intent after the foreground
-        // has independently passed the context-only Privacy Gate; cloud/UIA work still waits below.
         PrivacySentinel_RestorePendingInputForResume();
 
         if (_activeRequest is null)
@@ -213,9 +190,6 @@ public partial class MainWindow
             return;
         }
 
-        // This is an explicit restart boundary after the old operation token was canceled by
-        // EnterPrivacyMode. Releasing any stale planner slot here is safe and prevents a canceled
-        // generation from blocking the replacement operation at TryBeginOperation().
         var oldCts = _sessionCts;
         try { oldCts?.Cancel(); } catch { }
         _sessionState.AbortCurrentOperation(GuidanceSessionState.Idle);
