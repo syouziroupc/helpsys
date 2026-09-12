@@ -12,6 +12,8 @@ const release = read('.github/workflows/release.yml');
 
 assert(project.includes('HELPSYS_SAFE_BUILD'), 'Unified build must compile the strict privacy profile.');
 assert(!project.includes("'$(SafeBuild)' == 'true'"), 'Separate Safe build switch must not return.');
+assert(project.includes("'$(TestBuild)' == 'true'"), 'Loopback capability must require an explicit CI-only TestBuild.');
+assert(project.includes('HELPSYS_TEST_BUILD'), 'CI-only test builds must have a distinct compile-time symbol.');
 assert(project.includes('<AssemblyName>HelpSys</AssemblyName>'), 'Unified executable must remain HelpSys.exe.');
 assert(project.includes('<TieredPGO>true</TieredPGO>'), 'Unified build should retain TieredPGO.');
 
@@ -25,6 +27,8 @@ assert(privacyUi.includes('PrivacySentinel_SuspendCloudAudio'), 'Privacy Mode mu
 assert(privacyUi.includes('DispatcherTimer _privacyResumeTimer'), 'Automatic privacy resume fallback is required.');
 
 assert(adapter.includes('ValidateUnifiedApiBase'), 'Unified transport must validate endpoints.');
+assert(adapter.includes('#if HELPSYS_TEST_BUILD'), 'Loopback transport must be compiled only into CI/local test builds.');
+assert(adapter.includes('配布版HelpSysではloopback AI接続先を許可しません'), 'Distributed build must explicitly reject loopback endpoints.');
 assert(adapter.includes('uri.Host.Equals(approved.Host'), 'External endpoint host must match the approved origin exactly.');
 assert(adapter.includes('uri.Port == approved.Port'), 'External endpoint port must match the approved origin.');
 assert(adapter.includes('AllowAutoRedirect = false'), 'Cloud transport must never follow redirects.');
@@ -39,5 +43,6 @@ assert(diagnostics.includes('RawScreenPersistenceAllowed = false'), 'Strict unif
 assert(release.includes('HelpSys-latest-win-x64.zip'), 'Unified release must keep a stable latest alias.');
 assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Unified release must keep a traceable per-commit asset.');
 assert(!release.includes('HelpSys-Safe-latest-win-x64.zip'), 'Separate Safe asset must not reappear.');
+assert(!release.includes('-p:TestBuild=true'), 'Public release must never publish the loopback-enabled CI test build.');
 
 console.log('HelpSys unified secure-edition contract passed.');
