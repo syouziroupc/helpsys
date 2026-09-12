@@ -1,0 +1,114 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+
+function walk(dir) {
+  const files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walk(full));
+    else if (entry.isFile() && entry.name.endsWith('.cs')) files.push(full.replaceAll('\\', '/'));
+  }
+  return files;
+}
+
+const prohibitedApis = [
+  { re: /Clipboard\.(?:GetText|GetData|GetDataObject|ContainsText)\s*\(/, label: 'clipboard read API' },
+  { re: /\bCred(?:Read|Enumerate|Write|Delete)[AW]?\s*\(/, label: 'Windows Credential Manager API' },
+  { re: /\bPasswordVault\b/, label: 'Windows PasswordVault' },
+  { re: /\bPasswordCredential\b/, label: 'Windows PasswordCredential' },
+  { re: /ProtectedData\.Unprotect\s*\(/, label: 'DPAPI credential decryption' },
+  { re: /Windows\.Security\.Credentials/, label: 'Windows credential namespace' },
+  { re: /File\.(?:WriteAllBytes|WriteAllText|WriteAllLines|AppendAllText|AppendAllLines)\s*\(/, label: 'automatic file persistence API' },
+  { re: /new\s+StreamWriter\s*\(/, label: 'automatic stream/file writer' },
+  { re: /File\.OpenWrite\s*\(/, label: 'automatic file write stream' },
+  { re: /new\s+FileStream\s*\([^\n]*(?:FileMode\.(?:Create|CreateNew|Append|OpenOrCreate)|FileAccess\.Write)/, label: 'automatic writable FileStream' },
+  { re: /\bSendInput\s*\(/, label: 'Windows input injection API' },
+  { re: /\bmouse_event\s*\(/, label: 'legacy mouse injection API' },
+  { re: /\bkeybd_event\s*\(/, label: 'legacy keyboard injection API' },
+  { re: /\bSetCursorPos\s*\(/, label: 'automatic cursor movement API' },
+  { re: /\bSendKeys\s*\.\s*Send(?:Wait)?\s*\(/, label: 'synthetic keyboard input API' },
+  { re: /\bInputSimulator\b|WindowsInput\.Native/, label: 'input simulation library' },
+  { re: /\bIUIAutomationInvokePattern\b|\bIUIAutomationValuePattern\b/, label: 'UI Automation action pattern interface' }
+];
+
+const browserSecretStoreTerms = [
+  'Login Data', 'Web Data', 'Network\\Cookies', 'Network/Cookies', 'Cookies',
+  'Local Storage', 'Session Storage', 'Local State'
+];
+
+for (const file of walk('src/HelpSys.Desktop')) {
+  const source = fs.readFileSync(file, 'utf8');
+  for (const { re, label } of prohibitedApis)
+    assert(!re.test(source), `${label} is prohibited in HelpSys Desktop: ${file}`);
+
+  for (const line of source.split(/\r?\n/)) {
+    const performsFileRead = /File\.(?:ReadAllBytes|ReadAllText|ReadAllLines|OpenRead|Open)\s*\(/.test(line) ||
+      /new\s+FileStream\s*\(/.test(line) || /SQLiteConnection|SqliteConnection/.test(line);
+    if (!performsFileRead) continue;
+    for (const term of browserSecretStoreTerms)
+      assert(!line.includes(term), `Browser secret-store access is prohibited (${term}): ${file}`);
+  }
+}
+
+const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
+assert(scanner.includes('isInput ? "[input field]"'), 'Edit/ComboBox accessibility names must be minimized before candidate storage.');
+assert(scanner.includes('string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present"'), 'UI input state must be reduced immediately to a fixed presence marker.');
+assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input text must never be assigned to a local variable.');
+assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
+
+const contextModel = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
+assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Url);'), 'Browser URL must be minimized at the snapshot storage boundary.');
+assert(contextModel.includes('Origin only. UserInfo, path, query and fragment are deliberately discarded.'), 'HTTP(S) browser snapshots must explicitly discard path/query/fragment data.');
+assert(contextModel.includes('return $"{scheme}://passwords";') && contextModel.includes('return $"{scheme}://localstorage";'), 'Sensitive internal browser routes must collapse to PrivacyGate-recognized danger categories.');
+assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain an UNKNOWN-triggering marker instead of becoming empty/safe.');
+assert(contextModel.includes('ForegroundWindowHandle'), 'System context must carry the locally verified foreground HWND without sending it to cloud evidence.');
+
+const systemContext = fs.readFileSync('src/HelpSys.Desktop/Services/SystemContextService.cs', 'utf8');
+assert(systemContext.includes('EventSystemForeground = 0x0003'), 'System context must observe Windows foreground-change events.');
+assert(systemContext.includes('SetWinEventHook('), 'System context must track a real external foreground HWND instead of inferring one from Z-order.');
+assert(systemContext.includes('WineventSkipownprocess'), 'Foreground tracking must skip HelpSys own-process events.');
+assert(systemContext.includes('_lastExternalForeground'), 'System context must retain the last verified external foreground window.');
+assert(systemContext.includes('return IsUsableExternalWindow(_lastExternalForeground) ? _lastExternalForeground : nint.Zero;'), 'When HelpSys owns foreground, context must use only a previously verified external foreground HWND or fail closed.');
+assert(systemContext.includes('ForegroundWindowHandle = hwnd'), 'Captured system context must preserve the verified HWND locally.');
+assert(!systemContext.includes('GwHwndNext'), 'System context must not walk behind HelpSys and guess the work surface from Z-order.');
+assert(!systemContext.includes('GetWindow(cursor'), 'System context must not select an unrelated notification merely because it sits behind HelpSys.');
+
+const sentinel = fs.readFileSync('src/HelpSys.Desktop/MainWindow.PrivacySentinel.cs', 'utf8');
+assert(sentinel.includes('PrivacySentinelEventSystemForeground = 0x0003'), 'Privacy Sentinel must observe every real foreground transition.');
+assert(sentinel.includes('PrivacySentinelSkipOwnProcess'), 'Privacy Sentinel must ignore HelpSys own foreground events.');
+assert(sentinel.includes('PrivacySentinel_AllowCloudAction'), 'Cloud-starting UI actions must have an immediate context-only privacy preflight.');
+assert(sentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must reuse the centralized Privacy Gate instead of duplicating policy.');
+assert(sentinel.includes('e.Handled = true;'), 'Unsafe Guide/answer/voice/Commander starts must be intercepted before original handlers run.');
+assert(sentinel.includes('foreground_transition_unverified'), 'Foreground-hook disagreement must fail closed as UNKNOWN.');
+assert(sentinel.includes('_voiceCts?.Cancel()') && sentinel.includes('_commanderInteractionCts?.Cancel()'), 'Dangerous foreground transitions must cancel active cloud speech interactions.');
+assert(sentinel.includes('_commander.SetEnabled(false)'), 'Commander wake monitoring must stop while Privacy Mode protects a dangerous screen.');
+
+const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
+const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
+const recovery = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs', 'utf8');
+assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
+assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
+assert(capture.indexOf('var occluderRedactionsBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before the desktop pixels are copied.');
+assert(capture.indexOf('var occluderRedactionsAfter') > capture.indexOf('BitBlt('), 'Occluders must be rechecked after capture to close the race window.');
+assert(capture.includes('.Concat(occluderRedactionsBefore)') && capture.includes('.Concat(occluderRedactionsAfter)'), 'Both occluder scans must be part of the final redaction set.');
+assert(capture.includes('count > maxWindows || !visited.Add(hwnd)'), 'Z-order enumeration must fail closed on overflow or cycles.');
+assert(capture.includes('前面に重なった別画面を安全に除外できないため、画面画像は送信しません'), 'Occluder uncertainty must fail closed instead of sending the screenshot.');
+assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
+assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
+assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
+assert(/if\s*\(shellSurface\)\s*return monitorArea;/s.test(capture), 'Only a positively identified shell surface may use full-monitor capture.');
+assert(capture.includes('int expectedProcessId') && capture.includes('nint expectedWindowHandle'), 'Screenshot capture must require both process identity and exact HWND.');
+assert(capture.includes('var hwnd = (IntPtr)expectedWindowHandle;'), 'Screenshot target selection must use the supplied exact HWND, not enumerate another same-process window.');
+assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
+assert(!capture.includes('FindTopLevelWindowForProcess'), 'Screenshot capture must not select an arbitrary same-process top-level window.');
+assert(!capture.includes('EnumWindows('), 'Exact-HWND capture must not enumerate top-level windows to guess the target.');
+assert(capture.includes('検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません'), 'Legacy capture overloads must fail closed without an exact HWND.');
+assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
+assert(quality.includes('HasSameCaptureIdentity'), 'Quality planning must bind pre-capture, post-capture and pre-present checks to the same HWND.');
+assert(quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality capture must pass the verified foreground HWND into the capture service.');
+assert(quality.includes('_screenCapture.CaptureAsync(') && quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality screenshot creation must use process + exact HWND.');
+assert(recovery.includes('CaptureQualityFrameAsync(candidates, context, cancellationToken)'), 'Recovery screenshots must reuse the same exact-HWND capture boundary.');
+
+console.log('HelpSys prohibited-capability, persistence, browser-context minimization, verified-foreground, Privacy Sentinel and exact-HWND screenshot contract passed.');

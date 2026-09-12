@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,26 @@ def eligible_elements(payload):
         and float(field(item, "height", 0) or 0) >= 8
         and field(item, "id")
     ]
+
+
+def preserve_smoke_image(payload):
+    request = str(field(payload, "request", "") or "")
+    image = str(field(payload, "image", "") or "")
+    if not image.startswith("data:image/png;base64,"):
+        return
+
+    filename = None
+    if "PII redaction smoke" in request:
+        filename = "helpsys-pii-egress-image.png"
+    elif "OCCLUDER redaction smoke" in request:
+        filename = "helpsys-occluder-egress-image.png"
+    if filename is None:
+        return
+
+    encoded = image.split(",", 1)[1]
+    data = base64.b64decode(encoded, validate=True)
+    Path("artifacts").mkdir(exist_ok=True)
+    Path("artifacts", filename).write_bytes(data)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,6 +130,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/v1/quality-guide" and not has_image:
                 self._json({"error": "missing_screenshot"}, 400)
                 return
+
+            if has_image:
+                try:
+                    preserve_smoke_image(payload)
+                except Exception:
+                    self._json({"error": "smoke_image_decode_failed"}, 500)
+                    return
 
             target = next(
                 (

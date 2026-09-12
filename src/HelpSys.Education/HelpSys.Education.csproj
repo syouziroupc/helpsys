@@ -8,4 +8,7 @@
     <AssemblyName>HelpSys.Education</AssemblyName>
     <RootNamespace>HelpSys.Education</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
+  </ItemGroup>
 </Project>

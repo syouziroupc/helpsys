@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private int _stepNumber;
     private int _doubleClickCount;
     private int _consecutiveFailures;
+    private int _technicalClarificationRetries;
     private DateTime _lastGuidedClickUtc = DateTime.MinValue;
     private bool _forceVisionNext;
 
@@ -177,6 +178,7 @@ public partial class MainWindow : Window
         _originalRequest = text;
         _activeRequest = text;
         _stepNumber = 0;
+        _technicalClarificationRetries = 0;
         _history.Clear();
         _sessionCts = new CancellationTokenSource();
 
@@ -344,6 +346,7 @@ public partial class MainWindow : Window
     private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
+        _technicalClarificationRetries = 0;
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
@@ -362,6 +365,7 @@ public partial class MainWindow : Window
     private void ShowKeyboardGuide(GuideDecision decision, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
+        _technicalClarificationRetries = 0;
         _currentDecision = decision;
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -462,6 +466,7 @@ public partial class MainWindow : Window
             ? "青い枠で囲まれた場所を、マウスの左ボタンで1回押してください。"
             : decision.Instruction;
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return false;
+        _technicalClarificationRetries = 0;
         _currentDecision = new GuideDecision("target", "vision-target", "left_click", instruction, null, null, decision.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -497,6 +502,48 @@ public partial class MainWindow : Window
 
     private void WaitForClarification(string question, long? generation = null)
     {
+        if (!IsGenuineDecisionClarification(question))
+        {
+            if (generation.HasValue && !_sessionState.IsCurrent(generation.Value)) return;
+
+            _history.Add(new GuideHistoryItem(
+                _stepNumber,
+                "technical_clarification_suppressed",
+                "現在の画面",
+                "画面認識不足を利用者への質問へ転嫁せず、端末側の情報を再取得して自動復帰する。"));
+            if (_history.Count > 12) _history.RemoveAt(0);
+
+            _technicalClarificationRetries++;
+            if (_technicalClarificationRetries > 2)
+            {
+                StopWithMessage("現在の画面を安全に自動判定できなかったため、推測や追加質問をせず案内を停止しました。");
+                return;
+            }
+
+            _overlay.Hide();
+            _keyHint.Hide();
+            _currentDecision = null;
+            _currentTarget = null;
+            _guidedBounds = null;
+            _clarificationQuestion = null;
+            HideClarificationUiIfNeeded(force: true);
+            _sessionState.Invalidate(GuidanceSessionState.Idle);
+            SetState("現在の画面情報を取り直して案内を続けています…", speak: false);
+
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
+                try
+                {
+                    await Task.Delay(320, _sessionCts.Token);
+                    if (_activeRequest is not null && !_sessionCts.IsCancellationRequested) await AdvanceGuideAsync();
+                }
+                catch (OperationCanceledException) { }
+            }));
+            return;
+        }
+
+        _technicalClarificationRetries = 0;
         if (generation.HasValue)
         {
             if (!_sessionState.TryTransition(generation.Value, GuidanceSessionState.Clarifying)) return;
@@ -519,6 +566,31 @@ public partial class MainWindow : Window
         _lastInstruction = question;
         SetState($"確認：{question}", speak: false);
         _speechOutput.Speak(question);
+    }
+
+    private static bool IsGenuineDecisionClarification(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question)) return false;
+        var text = question.Trim();
+        return text.Contains("アカウント", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("プロフィール", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("プロファイル", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("使う人", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("どの名前", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("上書き", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("置き換え", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("削除", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("保存先", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("購入", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("支払い", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("注文", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("許可", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("既定", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("デフォルト", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("どのファイル", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("どのフォルダー", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("どのプリンター", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("部数", StringComparison.OrdinalIgnoreCase);
     }
 
     private void SetState(string message, bool speak)
@@ -579,6 +651,7 @@ public partial class MainWindow : Window
         _guidedBounds = null;
         _doubleClickCount = 0;
         _consecutiveFailures = 0;
+        _technicalClarificationRetries = 0;
         _forceVisionNext = false;
         _clarificationQuestion = null;
         _actionObserver.Stop();

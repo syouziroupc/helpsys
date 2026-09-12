@@ -3,15 +3,14 @@ name: Publish Windows preview
 on:
   push:
     branches: [main]
-    paths:
-      - "src/HelpSys.Desktop/**"
-      - "HelpSys.sln"
-      - "README.md"
-      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: helpsys-preview-latest
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -26,50 +25,64 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Publish self-contained Windows build
+      - name: Verify release and privacy contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tests/site-release-contract.mjs
+          node tests/privacy-contract.mjs
+          node tests/privacy-capability-contract.mjs
+          node tests/worker-data-handling-contract.mjs
+
+      - name: Publish unified Windows build
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\win-x64'
-          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $stableAssetName = 'HelpSys-latest-win-x64.zip'
+          $shortSha = $env:GITHUB_SHA.Substring(0, 8)
+          $versionedName = "HelpSys-Unified-$shortSha-win-x64.zip"
+          $stableName = 'HelpSys-latest-win-x64.zip'
+
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:PublishReadyToRun=false `
+            -p:PublishReadyToRun=true `
             -o $out
-          Copy-Item README.md (Join-Path $out 'README.md')
-          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $assetName) -Force
-          Copy-Item (Join-Path $PWD $assetName) (Join-Path $PWD $stableAssetName) -Force
 
-      - name: Update preview release
+          if (-not (Test-Path (Join-Path $out 'HelpSys.exe'))) { throw 'Unified HelpSys executable was not produced.' }
+          Copy-Item README.md (Join-Path $out 'README.md')
+          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $versionedName) -Force
+          Copy-Item (Join-Path $PWD $versionedName) (Join-Path $PWD $stableName) -Force
+          "HELPSYS_VERSIONED_ASSET=$versionedName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_STABLE_ASSET=$stableName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Update preview-latest release atomically
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $assetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $stableAssetName = 'HelpSys-latest-win-x64.zip'
-          $asset = Join-Path $PWD $assetName
-          $stableAsset = Join-Path $PWD $stableAssetName
-          $allowedAssets = @($assetName, $stableAssetName)
-          $notes = @"
-          HelpSys Windows Preview — Reliability v9
+          $versioned = Join-Path $PWD $env:HELPSYS_VERSIONED_ASSET
+          $stable = Join-Path $PWD $env:HELPSYS_STABLE_ASSET
+          $allowedAssets = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET)
 
-          - Windows 10 / 11 (64-bit)
-          - Self-contained build
-          - Versioned package: $assetName
-          - Stable site download alias: $stableAssetName
-          - Commander: 起動語の軽量ローカル待機は維持し、用件の文字起こしをWorkers AI Whisper large-v3-turboへ変更
-          - Commander: 16 kHz mono録音、無音区間で自動終了、日本語指定・VAD付きASR
-          - Commander UI: 聞き取り中・文字起こし中・確定文字列を画面上端中央のオーバーレイへ表示
-          - 画面確認: 画像取得または視覚確認が弱い場合、同じ前面プロセスのUI Automationを再走査して具体的な操作対象だけ継続可能に変更
-          - 安全性: 完了判定、画像だけの座標、秘密情報ガード、stale response破棄は従来どおり厳格に維持
-          - GLM: Quality FirstはGLM-5.3 Flash、通常テキスト経路はGLM-4.7 Flashを維持
+          $notes = @"
+          HelpSys Windows Preview — Unified secure build
+
+          - Windows 10 / 11 (64-bit), self-contained
+          - Stable download alias: $($env:HELPSYS_STABLE_ASSET)
+          - Traceable build: $($env:HELPSYS_VERSIONED_ASSET)
+          - Normal/Safe editions are unified into one binary
+          - Safe Privacy Gate policy is the standard profile
+          - Password / OTP / token / API key / Cookie/Storage / financial-auth states fail closed
+          - Cloud transport rejects redirects/cookies/proxy inheritance and pins external traffic to the reviewed HelpSys origin
+          - Voice/Commander is available only after an explicit user action or local wake phrase
+          - HelpSys remains guidance-only and does not click, type, pay, or enter credentials
+          - This release is rebuilt automatically on every main-branch update
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
@@ -81,12 +94,13 @@ jobs:
                 if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
               }
             }
-            gh release upload $tag $asset $stableAsset --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
-            gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+            gh release upload $tag $versioned $stable --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload unified preview assets.' }
+            gh release edit $tag --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $asset $stableAsset --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $versioned $stable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create unified preview release.' }
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')

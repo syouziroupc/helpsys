@@ -21,15 +21,25 @@ jobs:
           node --check worker/deep-audit-selftest.mjs
           node --check tests/deep-audit-contract.mjs
           node --check tests/privacy-contract.mjs
+          node --check tests/privacy-capability-contract.mjs
+          node --check tests/privacy-resume-contract.mjs
+          node --check tests/safe-edition-contract.mjs
+          node --check tests/worker-data-handling-contract.mjs
 
       - name: Run deep-audit regressions
         run: |
           node worker/deep-audit-selftest.mjs
           node tests/deep-audit-contract.mjs
           node tests/privacy-contract.mjs
+          node tests/privacy-capability-contract.mjs
+          node tests/privacy-resume-contract.mjs
+          node tests/safe-edition-contract.mjs
+          node tests/worker-data-handling-contract.mjs
 
-      - name: Restore
-        run: dotnet restore HelpSys.sln
+      - name: Restore and build unified edition
+        run: |
+          dotnet restore HelpSys.sln
+          dotnet build HelpSys.sln -c Release --no-restore
 
-      - name: Build
-        run: dotnet build HelpSys.sln -c Release --no-restore
+      - name: Run Privacy Gate unified secure probe
+        run: dotnet run --project tests/HelpSys.PrivacyProbe/HelpSys.PrivacyProbe.csproj -c Release -- --expect-safe-profile

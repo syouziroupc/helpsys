@@ -1,5 +1,14 @@
 const DEFAULT_MODEL = '@cf/zai-org/glm-4.7-flash';
 const MAX_TEXT = 1200;
+const EMAIL = /(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])/g;
+const JP_PHONE = /(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)/g;
+const JP_POSTAL = /(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)/g;
+const LABELED_SECRET = /\b(password|passwd|passcode|otp|totp|2fa|mfa|api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|backup[ _-]?code|recovery[ _-]?code)\b\s*[:=]\s*([^\s,;]{3,})/gi;
+const BEARER = /\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+const API_KEY = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/gi;
+const CARD = /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g;
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
 
 const assistTool = {
   name: 'return_education_assist',
@@ -56,7 +65,6 @@ export default {
     const stage = String(body?.stage || '').toLowerCase();
     if (!['education', 'practice', 'test'].includes(stage)) return json({ error: 'invalid_stage' }, 400);
 
-    // Tests are deliberately non-generative. No prompt change or model output can leak an answer.
     if (stage === 'test') {
       return json({
         status: 'blocked',
@@ -66,9 +74,9 @@ export default {
     }
 
     const lessonId = text(body?.lessonId, 80);
-    const lessonTitle = text(body?.lessonTitle, 160);
-    const objective = text(body?.objective, 700);
-    const learnerMessage = text(body?.message, MAX_TEXT);
+    const lessonTitle = sanitizeEducationText(body?.lessonTitle, 160);
+    const objective = sanitizeEducationText(body?.objective, 700);
+    const learnerMessage = sanitizeEducationText(body?.message, MAX_TEXT);
     if (!lessonId || !lessonTitle || (!objective && !learnerMessage)) return json({ error: 'invalid_request' }, 400);
 
     const hintLevel = Math.max(1, Math.min(3, Number(body?.hintLevel) || 1));
@@ -93,17 +101,38 @@ export default {
         tools: [assistTool],
         tool_choice: 'required',
         parallel_tool_calls: false,
-        chat_template_kwargs: { enable_thinking: false }
+        chat_template_kwargs: { enable_thinking: false },
+        store: false
       });
       const raw = extractToolArguments(result, 'return_education_assist');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
       return json(guardAssist(raw, stage, hintLevel));
-    } catch (error) {
-      console.error('education inference failed', error);
+    } catch {
+      console.error('education_inference_failed');
       return json({ error: 'inference_failed' }, 502);
     }
   }
 };
+
+export function sanitizeEducationText(value, max = MAX_TEXT) {
+  if (typeof value !== 'string') return '';
+  let safe = value.replace(/[\r\n]+/g, ' ').trim();
+  safe = safe.replace(URL_PATTERN, raw => {
+    try { return new URL(raw).origin; } catch { return '<url>'; }
+  });
+  safe = safe.replace(EMAIL, '<email>');
+  safe = safe.replace(JP_PHONE, '<phone>');
+  safe = safe.replace(JP_POSTAL, '<postal-code>');
+  safe = safe.replace(LABELED_SECRET, '$1=<redacted-secret>');
+  safe = safe.replace(BEARER, 'Bearer <redacted-secret>');
+  safe = safe.replace(JWT, '<redacted-jwt>');
+  safe = safe.replace(API_KEY, '<redacted-api-key>');
+  safe = safe.replace(CARD, raw => {
+    const digits = raw.replace(/\D/g, '');
+    return digits.length >= 13 && digits.length <= 19 && passesLuhn(digits) ? '<redacted-card>' : raw;
+  });
+  return safe.length <= max ? safe : safe.slice(0, max);
+}
 
 export function guardAssist(value, stage, hintLevel = 1) {
   if (stage === 'test') {
@@ -131,6 +160,21 @@ export function guardAssist(value, stage, hintLevel = 1) {
     };
   }
   return { status: 'answer', message, nextHintLevel: null };
+}
+
+function passesLuhn(digits) {
+  let sum = 0;
+  let alternate = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = digits.charCodeAt(i) - 48;
+    if (alternate) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alternate = !alternate;
+  }
+  return sum % 10 === 0;
 }
 
 function selectEducationModel(value) {

@@ -7,6 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class UiAutomationScanner
 {
+    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
     private readonly int _selfProcessId = Environment.ProcessId;
 
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(int maxCandidates = 360, CancellationToken cancellationToken = default)
@@ -188,7 +189,7 @@ public sealed class UiAutomationScanner
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
         var queue = new Queue<(AutomationElement Element, int Depth)>();
-        if (rootProcessId is > 0) EnqueueProcessRoots(rootProcessId.Value, queue);
+        if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildren(walker, root, 0, queue);
 
         var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
@@ -213,9 +214,14 @@ public sealed class UiAutomationScanner
                     var rect = current.BoundingRectangle;
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                     var isPassword = current.IsPassword;
-                    var name = isPassword ? "[password field]" : current.Name ?? string.Empty;
+                    var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
+                    var rawName = current.Name ?? string.Empty;
+                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : rawName;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
+                    var processName = GetProcessName(current.ProcessId, processNames);
+                    if (isInput && !isPassword)
+                        automationId = AnnotateInputSemanticRole(automationId, rawName, className, processName);
                     var isInteractive = IsInteractiveType(typeName);
                     var isContext = !isInteractive && IsContextType(typeName, name, rect);
 
@@ -224,7 +230,7 @@ public sealed class UiAutomationScanner
                         var actionState = ReadActionState(element, typeName, isPassword);
                         interactive.Add(new UiElementCandidate(
                             $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
-                            Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
+                            Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId,
                             actionState.Value, actionState.ToggleState, actionState.Selected, actionState.ExpandCollapseState));
@@ -233,7 +239,7 @@ public sealed class UiAutomationScanner
                     {
                         context.Add(new UiElementCandidate(
                             $"c{context.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
-                            Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
+                            Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             false, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
                     }
@@ -271,8 +277,9 @@ public sealed class UiAutomationScanner
             if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
                 element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
             {
-                var raw = valueValue.Current.Value ?? string.Empty;
-                value = Trim(raw, 320);
+                // Keep only whether a value exists. The user-entered string itself is intentionally discarded
+                // immediately and never stored in UiElementCandidate, history, telemetry or cloud payloads.
+                value = string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present";
             }
         }
         catch (ElementNotAvailableException) { }
@@ -304,6 +311,52 @@ public sealed class UiAutomationScanner
         catch (InvalidOperationException) { }
 
         return new ActionState(value, toggleState, selected, expandCollapseState);
+    }
+
+    private static string AnnotateInputSemanticRole(string automationId, string rawName, string className, string processName)
+    {
+        var role = ClassifyInputSemanticRole(automationId, rawName, className, processName);
+        if (string.IsNullOrEmpty(role)) return automationId;
+        var baseId = Trim(automationId, 88);
+        return string.IsNullOrWhiteSpace(baseId) ? $"role:{role}" : $"{baseId}|role:{role}";
+    }
+
+    private static string? ClassifyInputSemanticRole(string automationId, string rawName, string className, string processName)
+    {
+        var process = processName ?? string.Empty;
+        var hint = $"{rawName} {automationId} {className}";
+
+        if ((process.Contains("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+             process.Contains("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+             process.Equals("explorer", StringComparison.OrdinalIgnoreCase)) &&
+            (hint.Contains("search", StringComparison.OrdinalIgnoreCase) || hint.Contains("検索", StringComparison.OrdinalIgnoreCase)))
+            return "windows_search";
+
+        var browser = process.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("firefox", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("brave", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("opera", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("vivaldi", StringComparison.OrdinalIgnoreCase);
+        if (!browser) return null;
+
+        if (hint.Contains("address", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("location", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("url bar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("web address", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("location bar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("アドレス", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("URL", StringComparison.OrdinalIgnoreCase))
+            return "browser_address";
+
+        if (hint.Contains("search", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("検索", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("query", StringComparison.OrdinalIgnoreCase))
+            return "web_search";
+
+        return null;
     }
 
     private static double CandidatePriority(UiElementCandidate item)
@@ -353,6 +406,35 @@ public sealed class UiAutomationScanner
         try { cached = Process.GetProcessById(processId).ProcessName; } catch { cached = string.Empty; }
         cache[processId] = cached;
         return cached;
+    }
+
+    private static void EnqueueProcessSurfaceRoots(int processId, Queue<(AutomationElement Element, int Depth)> queue)
+    {
+        EnqueueProcessRoots(processId, queue);
+
+        string rootProcessName;
+        try { rootProcessName = Process.GetProcessById(processId).ProcessName; }
+        catch { return; }
+        if (!ShellSurfaceProcesses.Contains(rootProcessName, StringComparer.OrdinalIgnoreCase)) return;
+
+        foreach (var name in ShellSurfaceProcesses)
+        {
+            Process[] related;
+            try { related = Process.GetProcessesByName(name); }
+            catch { continue; }
+
+            foreach (var process in related)
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.Id != processId) EnqueueProcessRoots(process.Id, queue);
+                    }
+                    catch { }
+                }
+            }
+        }
     }
 
     private static string Trim(string value, int max) => value.Length <= max ? value : value[..max];

@@ -28,6 +28,7 @@ const CORE_KNOWLEDGE = `Windows操作の基本知識:
 - 画面に目的の物が無いことは異常ではない。関係のない物を代わりに選ばない。
 - アプリが見えない場合は、画面下のボタンを探し回るより、キーボードの Windows キーを使って検索画面を開く方法を優先する。
 - 失敗した操作のあとに別の無関係な経路へ飛ばない。現在状態を再確認し、同じ標準経路から復帰する。
+- 現在画面の認識不足は利用者への質問で埋めない。UI Automation・前面ウィンドウ・画面画像を再取得して自動復帰し、なお安全に確定できなければ推測せず停止する。
 - 「クリック」「ダブルクリック」「アイコン」「タスクバー」「デスクトップ」「アドレスバー」「URL」「プロファイル」などの用語を初心者向け説明で裸のまま使わない。
 - マウス操作は「左ボタンを1回押す」「左ボタンを、間をあけずに2回押す」のように実際の手の動きを書く。
 - キーボード操作はキーに印字された文字を示し、複数キーなら「Ctrlを押したままTを1回押す」のように説明する。
@@ -37,7 +38,8 @@ const KNOWLEDGE_SECTIONS = [
   {
     test: /youtube|ユーチューブ|ホームページ|ウェブ|web|サイト|インターネット|検索したい|楽天|yahoo|amazon|アマゾン/i,
     text: `ブラウザー操作:
-- 目的のサイトへ行くときは、原則「新しいタブを開く → サイト名を検索する → 公式サイトの検索結果を確認して開く」。ドメイン文字列の直入力を初心者へ要求しない。
+- 目的のサイトへ行くときは、原則「新しいタブを開く → 画面内に見えている検索欄へサイト名を入力する → 公式サイトの検索結果を確認して開く」。ドメイン文字列の直入力を初心者へ要求しない。
+- Webページ内の検索欄とブラウザー上部のアドレス兼検索欄が両方ある場合、Webページ内の見えている検索欄を必ず優先する。上部の欄は画面内検索欄を確認できない場合だけ使う。
 - 既に目的サイトが開いていれば同じ作業を繰り返さない。
 - 検索結果の「広告」「スポンサー」は原則選ばない。
 - 既知サービスは公式ドメインと一致する結果だけを案内する。似た綴りのドメインを選ばない。
@@ -164,22 +166,38 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
 
   const browserForeground = browser && BROWSER_PROCESSES.includes(String(systemContext?.foregroundProcess || '').toLowerCase());
   if (browserForeground) {
+    const webSearchField = findWebSearchField(elements, systemContext);
+    if (webSearchField?.focused) {
+      return task('site', knowledge, {
+        status: 'target', targetId: webSearchField.id, action: 'type_text',
+        instruction: `画面の中の検索欄に、キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
+        question: null, key: 'Enter', confidence: 0.99
+      }, false, new Set([webSearchField.id]), null, true, site);
+    }
+    if (webSearchField) {
+      return task('site', knowledge, {
+        status: 'target', targetId: webSearchField.id, action: 'left_click',
+        instruction: '青い枠の、ページの中にある検索欄で、マウスの左ボタンを1回押してください。',
+        question: null, key: null, confidence: 0.99
+      }, false, new Set([webSearchField.id]), null, true, site);
+    }
+
     if (looksLikeNewTab(browser)) {
       const addressField = findBrowserAddressField(elements, systemContext);
       if (addressField?.focused || browser.addressFieldFocused) {
         const target = addressField || findFocusedEdit(elements, systemContext);
         if (target) {
-          return task('site', knowledge, {
+          return task('site', `${knowledge}\n\nページ内の検索欄を構造情報で確認できなかったため、ブラウザー上部の検索兼用欄を代替として使う。`, {
             status: 'target', targetId: target.id, action: 'type_text',
             instruction: `キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-            question: null, key: 'Enter', confidence: 0.98
+            question: null, key: 'Enter', confidence: 0.92
           }, false, new Set([target.id]), null, true, site);
         }
       }
-      return task('site', knowledge, {
+      return task('site', `${knowledge}\n\nページ内の検索欄を確認できない場合だけ、上部の検索兼用欄を代替として使う。`, {
         status: 'target', targetId: null, action: 'press_key',
         instruction: 'キーボードの「Ctrl」と書かれたキーを押したまま、「L」と書かれたキーを1回押してください。',
-        question: null, key: 'Ctrl+L', confidence: 0.99
+        question: null, key: 'Ctrl+L', confidence: 0.90
       }, false, new Set(), null, true, site);
     }
 
@@ -194,10 +212,10 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
     const addressField = findBrowserAddressField(elements, systemContext);
     if (addressField?.focused || browser?.addressFieldFocused) {
       const target = addressField || findFocusedEdit(elements, systemContext);
-      if (target) return task('site', knowledge, {
+      if (target) return task('site', `${knowledge}\n\nページ内の検索欄を確認できなかった場合の代替経路。`, {
         status: 'target', targetId: target.id, action: 'type_text',
         instruction: `キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-        question: null, key: 'Enter', confidence: 0.98
+        question: null, key: 'Enter', confidence: 0.90
       }, false, new Set([target.id]), null, true, site);
     }
 
@@ -245,7 +263,9 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
 }
 
 export function guardDecisionForTask(taskInfo, decision) {
-  if (!taskInfo || !decision || decision.status !== 'target') return decision;
+  if (!taskInfo || !decision) return decision;
+  if (decision.status === 'clarify' && taskInfo.kind !== 'choice') return notFound(decision.confidence);
+  if (decision.status !== 'target') return decision;
   if (decision.action === 'press_key' && !decision.targetId) return decision;
   if (taskInfo.allowedTargetIds && taskInfo.allowedTargetIds.size > 0 && !taskInfo.allowedTargetIds.has(decision.targetId)) return notFound(decision.confidence);
   if (taskInfo.kind === 'site' && /https?:\/\/|www\.|\.com|\.jp/i.test(decision.instruction || '')) return notFound(decision.confidence);
@@ -253,7 +273,9 @@ export function guardDecisionForTask(taskInfo, decision) {
 }
 
 export function guardVisionDecisionForTask(taskInfo, decision) {
-  if (!taskInfo || !decision || decision.status !== 'target') return decision;
+  if (!taskInfo || !decision) return decision;
+  if (decision.status === 'clarify' && taskInfo.kind !== 'choice') return visionNotFound(decision.confidence);
+  if (decision.status !== 'target') return decision;
   if (taskInfo.kind !== 'site' || !taskInfo.site) return decision;
   if (decision.sponsored === true) return visionNotFound(decision.confidence);
   const observed = normalizeHost(decision.observedDomain);
@@ -371,15 +393,31 @@ function targetScore(element, app, foreground) {
   return score;
 }
 
+function elementRole(element) {
+  const match = String(element?.automationId || '').match(/(?:^|\|)role:([a-z_]+)/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
 function findWindowsSearchField(elements) {
   return elements.find(element => element.interactable && element.enabled !== false && element.controlType === 'Edit' &&
-    /(検索|search)/i.test(`${element.name || ''} ${element.automationId || ''}`) && /searchhost|startmenuexperiencehost|explorer/i.test(element.processName || '')) || null;
+    elementRole(element) === 'windows_search') ||
+    elements.find(element => element.interactable && element.enabled !== false && element.controlType === 'Edit' &&
+      /(検索|search)/i.test(`${element.name || ''} ${element.automationId || ''}`) && /searchhost|startmenuexperiencehost|explorer/i.test(element.processName || '')) || null;
 }
 
 function findBrowserAddressField(elements, systemContext) {
   const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
   return elements.find(element => element.interactable && element.enabled !== false && element.controlType === 'Edit' &&
-    String(element.processName || '').toLowerCase() === foreground && /(アドレス|検索|address|search|location|omnibox)/i.test(`${element.name || ''} ${element.automationId || ''} ${element.className || ''}`)) || null;
+    String(element.processName || '').toLowerCase() === foreground && elementRole(element) === 'browser_address') ||
+    elements.find(element => element.interactable && element.enabled !== false && element.controlType === 'Edit' &&
+      String(element.processName || '').toLowerCase() === foreground &&
+      /(アドレス|address|location|omnibox|urlbar|url bar|web address)/i.test(`${element.name || ''} ${element.automationId || ''} ${element.className || ''}`)) || null;
+}
+
+function findWebSearchField(elements, systemContext) {
+  const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
+  return elements.find(element => element.interactable && element.enabled !== false && element.controlType === 'Edit' &&
+    String(element.processName || '').toLowerCase() === foreground && elementRole(element) === 'web_search') || null;
 }
 
 function findFocusedEdit(elements, systemContext) {

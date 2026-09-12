@@ -1,0 +1,58 @@
+name: UI surface regressions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/HelpSys.Desktop/**"
+      - "src/Shared/**"
+      - "tests/ui-surface-contract.mjs"
+      - "tests/ui_surface_smoke.ps1"
+      - "tests/mock_guide_server.py"
+      - "tests/smoke_target.ps1"
+      - ".github/workflows/ui-surface-smoke.yml"
+  pull_request:
+
+jobs:
+  ui-surface:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Check UI regression contract
+        run: |
+          node --check tests/ui-surface-contract.mjs
+          node tests/ui-surface-contract.mjs
+
+      - name: Restore
+        run: dotnet restore src/HelpSys.Desktop/HelpSys.Desktop.csproj
+
+      - name: Build unified CI test edition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:TestBuild=true -o smoke-bin/normal
+          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Unified UI smoke executable was not produced.' }
+
+      - name: UI and perceived-performance smoke
+        shell: pwsh
+        run: ./tests/ui_surface_smoke.ps1
+
+      - name: Upload UI regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: helpsys-ui-surface-smoke
+          path: |
+            artifacts/helpsys-ui-*.png
+            artifacts/helpsys-ui-*.json
+          if-no-files-found: warn

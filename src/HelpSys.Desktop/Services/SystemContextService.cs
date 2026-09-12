@@ -8,11 +8,16 @@ namespace HelpSys.Services;
 
 public sealed class SystemContextService
 {
-    private const uint GwHwndNext = 2;
+    private const uint EventSystemForeground = 0x0003;
+    private const uint WineventOutofcontext = 0x0000;
+    private const uint WineventSkipownprocess = 0x0002;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private readonly int _selfProcessId = Environment.ProcessId;
     private readonly object _cacheGate = new();
+    private readonly object _foregroundGate = new();
+    private readonly WinEventDelegate _foregroundDelegate;
+    private readonly nint _foregroundHook;
 
     private IReadOnlyList<string> _runningCache = [];
     private DateTime _runningCacheUtc = DateTime.MinValue;
@@ -21,6 +26,7 @@ public sealed class SystemContextService
     private string _browserCacheProcess = string.Empty;
     private string _browserCacheTitle = string.Empty;
     private DateTime _browserCacheUtc = DateTime.MinValue;
+    private nint _lastExternalForeground;
     private int _runningRefreshInFlight;
     private int _browserRefreshInFlight;
 
@@ -28,6 +34,26 @@ public sealed class SystemContextService
     {
         "chrome", "msedge", "firefox", "brave", "opera", "vivaldi"
     };
+
+    public SystemContextService()
+    {
+        _foregroundDelegate = OnForegroundChanged;
+        _foregroundHook = SetWinEventHook(
+            EventSystemForeground,
+            EventSystemForeground,
+            nint.Zero,
+            _foregroundDelegate,
+            0,
+            0,
+            WineventOutofcontext | WineventSkipownprocess);
+
+        RememberExternalForeground(GetForegroundWindow());
+    }
+
+    ~SystemContextService()
+    {
+        if (_foregroundHook != nint.Zero) UnhookWinEvent(_foregroundHook);
+    }
 
     public SystemContextSnapshot Capture()
     {
@@ -48,16 +74,16 @@ public sealed class SystemContextService
             }
         }
 
-        // Process enumeration and browser UI Automation can each become slow while windows are
-        // being created/destroyed. Never run those scans on the WPF caller thread. Capture returns
-        // the last bounded snapshot immediately and refreshes supplemental context in the pool.
         var running = GetCachedRunningProcesses(processName);
         var taskbarVisible = IsTaskbarActuallyVisible();
         var browser = BrowserProcesses.Contains(processName)
             ? GetCachedBrowser(hwnd, processName, title)
             : null;
 
-        return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser);
+        return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser)
+        {
+            ForegroundWindowHandle = hwnd
+        };
     }
 
     private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
@@ -126,8 +152,6 @@ public sealed class SystemContextService
         if (!sameWindow || DateTime.UtcNow - capturedUtc >= BrowserCacheTtl)
             QueueBrowserRefresh(hwnd, processName, title);
 
-        // Never reuse URL/domain information from another window or an earlier title. Returning
-        // an empty browser detail for one short refresh interval is safer than returning stale data.
         return sameWindow
             ? cached!
             : new BrowserContextSnapshot(processName, title, null, null, null, false);
@@ -161,24 +185,45 @@ public sealed class SystemContextService
     private nint ResolveEffectiveForegroundWindow()
     {
         var foreground = GetForegroundWindow();
-        if (foreground == nint.Zero) return nint.Zero;
-        if (!BelongsToSelf(foreground)) return foreground;
-
-        // HelpSys is topmost. When its input/button is clicked, GetForegroundWindow returns
-        // HelpSys itself even though the user still needs guidance for the application below it.
-        var cursor = foreground;
-        for (var i = 0; i < 96; i++)
+        if (IsUsableExternalWindow(foreground))
         {
-            cursor = GetWindow(cursor, GwHwndNext);
-            if (cursor == nint.Zero) break;
-            if (!IsWindowVisible(cursor) || IsIconic(cursor)) continue;
-            if (BelongsToSelf(cursor)) continue;
-            if (!GetWindowRect(cursor, out var rect)) continue;
-            if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) continue;
-            return cursor;
+            RememberExternalForeground(foreground);
+            return foreground;
         }
 
-        return nint.Zero;
+        if (!BelongsToSelf(foreground)) return nint.Zero;
+
+        // Do not infer the work surface from Z-order after HelpSys takes focus. A notification or
+        // unrelated topmost window can sit directly behind HelpSys. Use only the last HWND that
+        // Windows actually reported through EVENT_SYSTEM_FOREGROUND while it belonged to another
+        // process. If no such window is still valid, fail closed and let guidance recover locally.
+        lock (_foregroundGate)
+            return IsUsableExternalWindow(_lastExternalForeground) ? _lastExternalForeground : nint.Zero;
+    }
+
+    private void OnForegroundChanged(
+        nint hook,
+        uint eventType,
+        nint hwnd,
+        int idObject,
+        int idChild,
+        uint eventThread,
+        uint eventTime)
+    {
+        if (eventType == EventSystemForeground) RememberExternalForeground(hwnd);
+    }
+
+    private void RememberExternalForeground(nint hwnd)
+    {
+        if (!IsUsableExternalWindow(hwnd)) return;
+        lock (_foregroundGate) _lastExternalForeground = hwnd;
+    }
+
+    private bool IsUsableExternalWindow(nint hwnd)
+    {
+        if (hwnd == nint.Zero || BelongsToSelf(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return false;
+        if (!GetWindowRect(hwnd, out var rect)) return false;
+        return rect.Right - rect.Left >= 80 && rect.Bottom - rect.Top >= 60;
     }
 
     private bool BelongsToSelf(nint hwnd)
@@ -226,8 +271,6 @@ public sealed class SystemContextService
             var visited = 0;
             var stopwatch = Stopwatch.StartNew();
 
-            // This runs only in the thread pool, but it is still bounded so rapid screen changes
-            // cannot accumulate long-lived UIA work behind the live watcher.
             while (queue.Count > 0 && visited < 1200 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(700))
             {
                 var (element, depth) = queue.Dequeue();
@@ -354,6 +397,15 @@ public sealed class SystemContextService
         catch (ElementNotAvailableException) { }
     }
 
+    private delegate void WinEventDelegate(
+        nint hook,
+        uint eventType,
+        nint hwnd,
+        int idObject,
+        int idChild,
+        uint eventThread,
+        uint eventTime);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RectNative
     {
@@ -364,10 +416,21 @@ public sealed class SystemContextService
     }
 
     [DllImport("user32.dll")]
-    private static extern nint GetForegroundWindow();
+    private static extern nint SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        nint eventHookAssembly,
+        WinEventDelegate callback,
+        uint processId,
+        uint threadId,
+        uint flags);
 
     [DllImport("user32.dll")]
-    private static extern nint GetWindow(nint hWnd, uint uCmd);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWinEvent(nint hook);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);

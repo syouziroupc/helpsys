@@ -74,6 +74,20 @@ public sealed class GuidanceSessionController
         }
     }
 
+    // Explicit cancellation boundary. Use only after the caller has canceled the operation token.
+    // Unlike Invalidate(), this releases the planner slot so a replacement operation can start.
+    public long AbortCurrentOperation(GuidanceSessionState nextState)
+    {
+        lock (_gate)
+        {
+            _generation++;
+            _plannerInFlight = false;
+            _plannerOperationGeneration = 0;
+            _state = nextState;
+            return _generation;
+        }
+    }
+
     public bool IsCurrent(long generation)
     {
         lock (_gate) return generation == _generation;

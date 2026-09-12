@@ -35,6 +35,8 @@ public static class GuidanceEvidenceService
         if (context.RunningApps.Count > 0 || context.TaskbarVisible) sources.Add("desktop-context");
         if (history.Count > 0) sources.Add("operation-history");
 
+        // Full URLs can contain session IDs, invite tokens, OAuth codes and signed query strings.
+        // They are useful locally for transition detection, but must not be part of cloud evidence.
         return new GuidanceEvidenceSnapshot(
             screenshotAvailable,
             elements.Count,
@@ -46,7 +48,7 @@ public static class GuidanceEvidenceService
             context.TaskbarVisible,
             context.RunningApps.Count,
             context.Browser?.Domain,
-            context.Browser?.Url,
+            null,
             context.Browser?.AddressFieldFocused == true,
             history.Count,
             recentTargets,

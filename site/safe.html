@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="HelpSys Safeは統合版HelpSysへ統合されました。安全版のPrivacy Gateは現在の標準HelpSysに含まれます。">
+  <meta name="theme-color" content="#0b1020">
+  <title>HelpSys — 安全版は統合版へ移行しました</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="HelpSys トップ"><span class="brand-mark" aria-hidden="true">H</span><span>HelpSys</span></a>
+    <a class="github-link" href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">GitHub</a>
+  </header>
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">UNIFIED EDITION</p>
+        <h1>安全版は、<br><span>標準HelpSysへ統合。</span></h1>
+        <p class="lead">従来の通常版とSafe Previewは1つのHelpSysへ統合されました。安全版で導入したPrivacy Gate、fail-closed、秘密情報遮断、送信経路制限は現在の標準版に含まれています。</p>
+        <div class="actions">
+          <a class="download-button" href="/download">統合版の最新版ZIPをダウンロード</a>
+          <a class="download-button ghost" href="/">トップへ戻る</a>
+        </div>
+        <span class="download-note">旧 /download/safe も同じ最新版ZIPへ転送されます。</span>
+      </div>
+    </section>
+    <section class="section">
+      <div class="section-title"><p class="eyebrow">SECURITY</p><h2>安全機能は削除していません。</h2></div>
+      <div class="feature-list">
+        <div><strong>Privacy Gate標準搭載</strong><span>Password、OTP、Token、API Key、Cookie/Storage、金融認証等を端末内で遮断します。</span></div>
+        <div><strong>通信経路を固定</strong><span>外部通信はHelpSysの承認済みHTTPS originに限定し、リダイレクト・Cookie・OSプロキシ継承を無効化します。</span></div>
+        <div><strong>危険時は自動停止</strong><span>UNKNOWNを含む安全判定失敗時はクラウド解析を停止し、依頼内容は保持したまま安全画面への復帰を待ちます。</span></div>
+        <div><strong>音声は明示開始時だけ</strong><span>音声ボタン、またはローカル起動語で利用者が開始した場合だけクラウド文字起こしへ進みます。</span></div>
+      </div>
+    </section>
+  </main>
+  <footer><span>HelpSys Unified Preview</span><a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">Source on GitHub</a></footer>
+</body>
+</html>

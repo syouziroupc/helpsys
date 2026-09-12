@@ -21,6 +21,8 @@ await runContextTargetRejectionCase();
 await runDoubleClickNormalizationCase();
 await runHiddenTaskbarExcelCase();
 await runBrowserNewTabCase();
+await runVisibleWebSearchPriorityCase();
+await runTechnicalClarifyRejectionCase();
 await runProfileChoiceCase();
 await runVisionCase();
 await runSponsoredVisionRejectionCase();
@@ -81,6 +83,34 @@ async function runBrowserNewTabCase() {
   const json = await response.json();
   assert(json.action === 'press_key' && json.key === 'Ctrl+T', 'website navigation from another page must open a new tab first');
   assert(!/youtube\.com/i.test(json.instruction), 'website guidance must not ask beginners to type a domain directly');
+}
+
+async function runVisibleWebSearchPriorityCase() {
+  const body = {
+    request: 'YouTubeが見たい', history: [],
+    systemContext: {
+      ForegroundProcess: 'chrome', ForegroundTitle: 'Google - Google Chrome', ForegroundProcessId: 2, TaskbarVisible: true, RunningApps: ['chrome'],
+      Browser: { ProcessName: 'chrome', WindowTitle: 'Google - Google Chrome', Url: 'https://www.google.com/', Domain: 'www.google.com', Https: true, AddressFieldFocused: false }
+    },
+    elements: [
+      { id: 'page-search', name: '[input field]', automationId: 'role:web_search', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 260, y: 260, width: 520, height: 48 },
+      { id: 'omnibox', name: '[input field]', automationId: 'role:browser_address', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 100, y: 50, width: 800, height: 36 }
+    ]
+  };
+  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: expected }] });
+  const json = await response.json();
+  assert(json.status === 'target' && json.targetId === 'page-search' && json.action === 'left_click', 'visible webpage search field must outrank the browser address field');
+  assert(json.key === null, 'visible webpage search field must not be replaced by Ctrl+L');
+}
+
+async function runTechnicalClarifyRejectionCase() {
+  const modelClarify = {
+    status: 'clarify', targetId: null, action: 'none', instruction: '',
+    question: '今の画面に何が表示されていますか？', key: null, confidence: 0.98
+  };
+  const response = await invoke('/v1/guide', requestBody, { tool_calls: [{ name: 'return_guidance', arguments: modelClarify }] });
+  const json = await response.json();
+  assert(json.status === 'not_found', 'screen-recognition uncertainty must not be converted into a user question');
 }
 
 async function runProfileChoiceCase() {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSysは、GLMでWindows画面を確認し、次に操作する場所を案内するPC操作支援ツールです。通常版は『ねえコマンダー』で音声起動できます。">
+  <meta name="description" content="HelpSysは、Windows画面を確認し、次に操作する場所を案内するPC操作支援ツールです。通常版と安全版を統合し、Privacy Gateを標準搭載しています。">
   <meta name="theme-color" content="#0b1020">
   <link rel="canonical" href="https://helpsys.syouziroupc.workers.dev/">
   <title>HelpSys — Windows操作を、画面上で案内。</title>
@@ -22,26 +22,23 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">WINDOWS 10 / 11 ・ RELIABILITY V8 PREVIEW</p>
+        <p class="eyebrow">WINDOWS 10 / 11 ・ UNIFIED PRIVACY GATE PREVIEW</p>
         <h1>次の操作を、<br><span>画面上で教える。</span></h1>
-        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。GLMが現在の画面とWindowsの構造情報を照合し、あなたが次にクリック・入力する場所を1手ずつ案内します。通常版は「ねえコマンダー」と呼びかけて音声で開始できます。</p>
+        <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。現在の画面とWindowsの構造情報を照合し、あなたが次に操作する場所を1手ずつ案内します。従来の通常版と安全版は1つに統合し、安全版のPrivacy Gateを標準機能にしました。</p>
         <div class="actions" aria-label="ダウンロード">
-          <a class="download-button" href="/download">通常版をダウンロード</a>
+          <a class="download-button" href="/download">HelpSys 最新版をダウンロード</a>
           <a class="download-button ghost" href="/download/education">Education版</a>
-          <span class="download-note">Windows 10 / 11 ・ 64-bit ・ 開発版</span>
+          <span class="download-note">Windows 10 / 11 ・ 64-bit ・ 開発版 ・ /download は常に最新ビルド</span>
         </div>
       </div>
 
       <div class="demo" aria-label="HelpSysの画面案内イメージ">
         <div class="desktop">
           <div class="desktop-label">Desktop</div>
-          <div class="browser-icon">
-            <div class="browser-dot"></div>
-            <span>Edge</span>
-          </div>
+          <div class="browser-icon"><div class="browser-dot"></div><span>Edge</span></div>
           <div class="guide-box"></div>
           <div class="guide-arrow">↓</div>
-          <div class="guide-message">Microsoft Edgeを<br>クリックしてください。</div>
+          <div class="guide-message">Microsoft Edgeを<br>押してください。</div>
           <div class="taskbar"><span></span><span class="taskbar-active"></span><span></span><span></span></div>
         </div>
       </div>
@@ -49,20 +46,20 @@
 
     <section class="section">
       <div class="section-title">
-        <p class="eyebrow">TWO EDITIONS</p>
-        <h2>用途に合わせて選ぶ。</h2>
+        <p class="eyebrow">ONE HELPSYS</p>
+        <h2>通常版と安全版を統合。</h2>
       </div>
       <div class="download-options">
         <article class="download-card">
-          <p class="eyebrow">HELPSYS</p>
-          <h3>通常版</h3>
-          <p>現在の画面から次の1手を案内します。Reliability v8ではGLMへ移行し、Commanderのマイク競合・フリーズ対策と、デスクトップショートカット等の物理操作判定を強化しました。</p>
+          <p class="eyebrow">HELPSYS UNIFIED</p>
+          <h3>統合版</h3>
+          <p>従来の通常版の認識・音声機能と、安全版のPrivacy Gate・fail-closed・通信経路制限を1つのアプリに統合しました。危険な画面ではクラウド解析だけを止め、依頼自体は保持します。</p>
           <a class="download-button" href="/download">最新版ZIPをダウンロード</a>
         </article>
         <article class="download-card">
           <p class="eyebrow">HELPSYS EDUCATION</p>
           <h3>Education版</h3>
-          <p>PC未経験から、教育 → 練習 → テストを順番に進めます。通常版の安定化を優先しているため、Educationの追加開発は現在優先していません。</p>
+          <p>PC未経験から、教育 → 練習 → テストを順番に進める学習用アプリです。</p>
           <a class="download-button ghost" href="/download/education">Education最新版ZIP</a>
         </article>
       </div>
@@ -71,63 +68,63 @@
     <section class="section">
       <div class="section-title">
         <p class="eyebrow">HOW IT WORKS</p>
-        <h2>必要なときに案内を開始する。</h2>
+        <h2>認識性能を上げても、安全境界は崩さない。</h2>
       </div>
       <div class="steps">
         <article class="card">
           <span class="number">01</span>
-          <h3>HelpSysを呼ぶ</h3>
-          <p>「ねえコマンダー」と呼びかけるか、画面右下のボタン、<kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> で呼び出します。v8では他の音声入力が動く前にCommanderのマイク待機を完全に解放します。</p>
+          <h3>ローカルで状態を把握</h3>
+          <p>UI Automation、前面アプリ、ブラウザー状態、画面遷移を組み合わせ、検索欄・Windows検索・Startメニューなどの役割を端末内で判断します。</p>
         </article>
         <article class="card">
           <span class="number">02</span>
-          <h3>やりたいことを伝える</h3>
-          <p>「YouTubeを見たい」など目的を文字または音声で伝えます。GLM-5.3 Flashが現在のスクリーンショットとUI構造を同時に確認して次の操作を判断します。</p>
+          <h3>Privacy Gateで送信可否を判断</h3>
+          <p>Password、OTP、Token、API Key、Cookie/Storage、金融認証などをローカルで遮断します。安全判定に失敗した場合も送信しません。</p>
         </article>
         <article class="card">
           <span class="number">03</span>
-          <h3>自分で操作する</h3>
-          <p>対象の場所に枠と案内が表示されます。クリックやキー入力はあなた自身が行い、HelpSysは操作後の画面変化を確認してから次へ進みます。</p>
+          <h3>利用者自身が操作</h3>
+          <p>HelpSysは操作場所を示しますが、クリック・入力・支払い・認証は自動実行しません。操作後の状態を再取得してから次の案内へ進みます。</p>
         </article>
       </div>
     </section>
 
     <section class="section split-section">
       <div>
-        <p class="eyebrow">RELIABILITY V8</p>
-        <h2>正しさと応答速度を両立する。</h2>
+        <p class="eyebrow">SECURITY BY DEFAULT</p>
+        <h2>安全版の防御を標準化。</h2>
       </div>
       <div class="feature-list">
-        <div><strong>GLMで画面を確認</strong><span>画面判断はGLM-5.3 Flash、通常テキスト処理はGLM-4.7 Flashを使用します。</span></div>
-        <div><strong>物理操作を再検証</strong><span>デスクトップショートカットはダブルクリック、タスクバーは1クリックなど、AI出力をそのまま表示せずWindows側の操作形態と照合します。</span></div>
-        <div><strong>Commanderを固めない</strong><span>音声recognizerの停止・破棄を状態lockから分離し、マイク解放完了後だけ次の認識へ進みます。</span></div>
-        <div><strong>待ちすぎない</strong><span>音声入力とモデル呼び出しに短い上限時間を設け、固まって見える長時間待機を避けます。</span></div>
+        <div><strong>単一の送信経路</strong><span>画面由来のクラウド要求はPrivacy Gateを通り、HTTP通信はCloud AI Adapterへ集約します。</span></div>
+        <div><strong>通信先を固定</strong><span>外部通信はHelpSysの承認済みHTTPS originへ限定し、リダイレクト・Cookie・OSプロキシ継承を無効化します。</span></div>
+        <div><strong>生の入力値を送らない</strong><span>入力欄の内容は保持せず、必要な場合も入力有無や検索欄の役割など最小限の状態だけを利用します。</span></div>
+        <div><strong>音声は明示開始時のみ</strong><span>音声認識は音声ボタン、またはローカルの起動語で利用者が開始した場合だけクラウド文字起こしへ進みます。</span></div>
       </div>
     </section>
 
     <section class="privacy">
       <div>
-        <p class="eyebrow">PRIVACY</p>
-        <h2>送信前に画面を確認する。</h2>
+        <p class="eyebrow">LATEST DOWNLOAD</p>
+        <h2>/download は常に最新版。</h2>
       </div>
-      <p>Quality Firstでは案内判断に現在のスクリーンショットを使用します。ただし、安全にキャプチャできない場合はUI構造だけで推測して続行しません。パスワード、PIN、OTP、認証コード等をHelpSysへ入力するよう求める案内は拒否します。</p>
+      <p>mainブランチが更新されるたびWindows版を自動再ビルドし、GitHub Releaseの <strong>HelpSys-latest-win-x64.zip</strong> を差し替えます。過去の安全版URL <code>/download/safe</code> も互換性のため同じ統合版へ転送します。</p>
     </section>
 
     <section class="download-panel">
       <div>
         <p class="eyebrow">DOWNLOAD</p>
         <h2>HelpSys for Windows</h2>
-        <p>Windows 10 / 11、64-bit環境向けの開発版です。通常版の最新版はReliability v8です。</p>
+        <p>Windows 10 / 11、64-bit環境向けの開発版です。</p>
       </div>
       <div class="download-panel-actions">
-        <a class="download-button secondary" href="/download">通常版</a>
+        <a class="download-button secondary" href="/download">HelpSys 最新版</a>
         <a class="download-button secondary ghost" href="/download/education">Education版</a>
       </div>
     </section>
   </main>
 
   <footer>
-    <span>HelpSys Preview</span>
+    <span>HelpSys Unified Preview</span>
     <a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
   </footer>
 </body>

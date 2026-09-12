@@ -18,7 +18,22 @@ public partial class MainWindow
         if (_liveWatcherStarted) return;
         _liveWatcherStarted = true;
         _liveWatcher.Pulse += StableLiveWatcher_Pulse;
-        _liveWatcher.Start();
+
+        // The global UI Automation focus hook is useful once guidance is active, but registering it
+        // synchronously inside WPF Loaded can delay the first visible frame on slower machines.
+        // Queue only watcher startup behind the initial render. Privacy Sentinel remains active
+        // independently, and SetForegroundProcessAsync can still establish a task-specific scope if
+        // the user starts guidance before this low-priority callback runs.
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.ContextIdle,
+            new Action(StartLiveWatcherAfterInitialRender));
+    }
+
+    private void StartLiveWatcherAfterInitialRender()
+    {
+        if (!_liveWatcherStarted || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        try { _liveWatcher.Start(); }
+        catch { }
     }
 
     private void MainWindow_StableClosing(object? sender, CancelEventArgs e)

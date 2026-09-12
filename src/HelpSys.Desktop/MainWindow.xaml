@@ -11,8 +11,9 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        Loaded="MainWindow_CombinedLoaded"
-        Closing="MainWindow_CombinedClosing">
+        Loaded="MainWindow_PrivacyLoaded"
+        Closing="MainWindow_CombinedClosing"
+        Closed="MainWindow_PrivacyClosed">
   <Border Margin="6" CornerRadius="16" Background="#F7FFFFFF" BorderBrush="#26000000" BorderThickness="1" Padding="10">
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.24" />
@@ -22,7 +23,7 @@
         <RowDefinition Height="25" />
         <RowDefinition Height="46" />
         <RowDefinition Height="Auto" />
-        <RowDefinition Height="28" />
+        <RowDefinition Height="Auto" MinHeight="28" />
       </Grid.RowDefinitions>
 
       <Grid x:Name="DragHandle" Grid.Row="0" Background="Transparent" MouseLeftButtonDown="DragHandle_MouseLeftButtonDown">
@@ -30,10 +31,15 @@
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock Text="HelpSys" FontWeight="Bold" FontSize="15" VerticalAlignment="Center" Foreground="#FF172033" />
         <TextBlock Grid.Column="1" Margin="10,0,0,0" Text="PC操作を画面上で案内" FontSize="11" Foreground="#FF788397" VerticalAlignment="Center" />
-        <Button Grid.Column="2" x:Name="ExitButton" Content="×" Width="26" Height="22" Padding="0" FontSize="14" ToolTip="HelpSysを終了" Click="ExitButton_Click" />
+        <Button Grid.Column="2" x:Name="PrivacyButton" Content="解析停止"
+                MinWidth="72" Height="22" Padding="8,0" Margin="6,0,6,0"
+                FontSize="10.5" VerticalAlignment="Center" Click="PrivacyButton_Click"
+                ToolTip="画面解析を停止します" />
+        <Button Grid.Column="3" x:Name="ExitButton" Content="×" Width="26" Height="22" Padding="0" FontSize="14" ToolTip="HelpSysを終了" Click="ExitButton_Click" />
       </Grid>
 
       <Grid Grid.Row="1" Margin="0,4,0,2">
@@ -89,18 +95,20 @@
         </Grid>
       </Border>
 
-      <DockPanel Grid.Row="3" LastChildFill="True">
+      <DockPanel Grid.Row="3" LastChildFill="True" MinHeight="28">
         <Button DockPanel.Dock="Right" x:Name="CommanderButton" Content="コマンダー"
                 MinWidth="94" Height="23" Padding="8,0" Margin="8,0,0,0"
-                FontSize="10.5" Click="CommanderButton_Click"
+                FontSize="10.5" VerticalAlignment="Center" Click="CommanderButton_Click"
                 ToolTip="『ねえコマンダー』で呼び出す" />
         <TextBlock DockPanel.Dock="Right" Text="Ctrl+Alt+H" FontSize="10" Foreground="#FF9AA3B2" VerticalAlignment="Center" Margin="10,0,0,0" />
         <TextBlock x:Name="StateText"
                    Text="やりたいことを入力してください。"
                    FontSize="11"
+                   LineHeight="16"
                    Foreground="#FF596579"
                    VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis" />
+                   TextWrapping="Wrap"
+                   MaxHeight="48" />
       </DockPanel>
     </Grid>
   </Border>

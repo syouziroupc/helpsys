@@ -1,4 +1,4 @@
 # Stable download routes used by the public site.
-# Keep the versioned ZIPs for traceability, but never couple site HTML to a version number.
 /download https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-latest-win-x64.zip 302
+/download/safe https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-latest-win-x64.zip 302
 /download/education https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/HelpSys-Education-latest-win-x64.zip 302
