@@ -67,6 +67,7 @@ $window.Add_ContentRendered({
     $hwnd = $helper.Handle
     $exStyle = [HelpSysNoActivateNative]::GetWindowLongPtr($hwnd, [HelpSysNoActivateNative]::GWL_EXSTYLE).ToInt64()
     [pscustomobject]@{
+        hwnd = $hwnd.ToInt64()
         left = [math]::Round($window.Left)
         top = [math]::Round($window.Top)
         width = [math]::Round($window.ActualWidth)
