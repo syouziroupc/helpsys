@@ -58,6 +58,17 @@ function visibleFirstOverride(body, decision) {
   // screen. Keyboard shortcuts and Start are fallbacks, not the default route.
   if (BROWSER_GOAL.test(goal)) {
     if (isBrowserProcess(foreground)) {
+      const pageSearch = findWebSearchField(elements, foreground);
+      const proposedTarget = elements.find(x => String(x.id) === String(decision.targetId || ''));
+      const proposedUsesAddress = proposedTarget && elementRole(proposedTarget) === 'browser_address';
+      if (pageSearch && ((decision.action === 'press_key' && /^(ctrl\+l)$/i.test(String(decision.key || ''))) || proposedUsesAddress)) {
+        return target(pageSearch, pageSearch.focused ? 'type_text' : 'left_click',
+          pageSearch.focused
+            ? '画面の中の検索欄に検索したい名前を入力し、最後に「Enter」と書かれたキーを1回押してください。'
+            : 'ページの中にある検索欄で、マウスの左ボタンを1回押してください。',
+          0.995, pageSearch.focused ? 'Enter' : null);
+      }
+
       if (decision.action === 'press_key' && /^(ctrl\+l)$/i.test(String(decision.key || ''))) {
         const address = findBrowserAddressField(elements, foreground);
         if (address) return target(address, 'left_click', '画面上部の、検索や文字を入力できる欄で、マウスの左ボタンを1回押してください。', 0.99);
@@ -182,8 +193,6 @@ function launcherReachable(element, foreground, startOpen) {
   const type = String(element.controlType || '');
   if (START_PROCESS.test(process)) return startOpen;
   if (process === 'explorer') {
-    // Explorer Button/MenuItem is normally taskbar/shell and remains reachable in front of
-    // other apps. Desktop ListItems are considered only when Explorer itself is the scene.
     if (/^(button|menuitem)$/i.test(type)) return true;
     return !foreground || foreground === 'explorer';
   }
@@ -219,16 +228,29 @@ function browserInstruction(element) {
     : `青い枠の「${label}」で、マウスの左ボタンを1回押してください。`;
 }
 
+function elementRole(element) {
+  const match = String(element?.automationId || '').match(/(?:^|\|)role:([a-z_]+)/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
 function findWindowsSearchField(elements) {
-  return elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' &&
-    /(検索|search)/i.test(`${x.name || ''} ${x.automationId || ''}`) &&
-    /searchhost|startmenuexperiencehost|explorer/i.test(String(x.processName || ''))) || null;
+  return elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'windows_search') ||
+    elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' &&
+      /(検索|search)/i.test(`${x.name || ''} ${x.automationId || ''}`) &&
+      /searchhost|startmenuexperiencehost|explorer/i.test(String(x.processName || ''))) || null;
+}
+
+function findWebSearchField(elements, foreground) {
+  return elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
+    String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'web_search') || null;
 }
 
 function findBrowserAddressField(elements, foreground) {
   return elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
-    String(x.controlType || '').toLowerCase() === 'edit' &&
-    /(アドレス|検索|address|search|location|omnibox)/i.test(`${x.name || ''} ${x.automationId || ''} ${x.className || ''}`)) || null;
+    String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'browser_address') ||
+    elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
+      String(x.controlType || '').toLowerCase() === 'edit' &&
+      /(アドレス|address|location|omnibox|urlbar|url bar|web address)/i.test(`${x.name || ''} ${x.automationId || ''} ${x.className || ''}`)) || null;
 }
 
 function findNewTabButton(elements, foreground) {
