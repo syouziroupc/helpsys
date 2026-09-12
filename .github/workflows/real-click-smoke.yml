@@ -31,6 +31,9 @@ jobs:
       - name: Real physical Guide click smoke
         shell: pwsh
         run: ./tests/real_click_guidance_smoke.ps1
+      - name: Reject non-client candidate noise
+        shell: pwsh
+        run: ./tests/real_click_candidate_noise_check.ps1
       - name: Upload real-click smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
