@@ -7,6 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class UiAutomationScanner
 {
+    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
     private readonly int _selfProcessId = Environment.ProcessId;
 
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(int maxCandidates = 360, CancellationToken cancellationToken = default)
@@ -188,7 +189,7 @@ public sealed class UiAutomationScanner
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
         var queue = new Queue<(AutomationElement Element, int Depth)>();
-        if (rootProcessId is > 0) EnqueueProcessRoots(rootProcessId.Value, queue);
+        if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildren(walker, root, 0, queue);
 
         var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
@@ -405,6 +406,35 @@ public sealed class UiAutomationScanner
         try { cached = Process.GetProcessById(processId).ProcessName; } catch { cached = string.Empty; }
         cache[processId] = cached;
         return cached;
+    }
+
+    private static void EnqueueProcessSurfaceRoots(int processId, Queue<(AutomationElement Element, int Depth)> queue)
+    {
+        EnqueueProcessRoots(processId, queue);
+
+        string rootProcessName;
+        try { rootProcessName = Process.GetProcessById(processId).ProcessName; }
+        catch { return; }
+        if (!ShellSurfaceProcesses.Contains(rootProcessName, StringComparer.OrdinalIgnoreCase)) return;
+
+        foreach (var name in ShellSurfaceProcesses)
+        {
+            Process[] related;
+            try { related = Process.GetProcessesByName(name); }
+            catch { continue; }
+
+            foreach (var process in related)
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (process.Id != processId) EnqueueProcessRoots(process.Id, queue);
+                    }
+                    catch { }
+                }
+            }
+        }
     }
 
     private static string Trim(string value, int max) => value.Length <= max ? value : value[..max];
