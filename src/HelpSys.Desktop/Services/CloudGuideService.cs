@@ -7,7 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class CloudGuideService : IDisposable
 {
-    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(7);
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
@@ -271,7 +271,7 @@ public sealed class CloudGuideService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が9秒を超えました。");
+                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が7秒を超えました。");
                 if (attempt > 0) throw timeoutError;
                 lastTransientError = timeoutError;
             }
