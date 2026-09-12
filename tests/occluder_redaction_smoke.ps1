@@ -8,6 +8,13 @@ using System;
 using System.Runtime.InteropServices;
 public static class HelpSysOccluderNative
 {
+    public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    public const uint GW_HWNDPREV = 3;
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_SHOWWINDOW = 0x0040;
+
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -16,6 +23,19 @@ public static class HelpSysOccluderNative
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int X,
+        int Y,
+        int cx,
+        int cy,
+        uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 }
 '@
 
@@ -76,6 +96,39 @@ function Activate-SmokeTarget([System.Diagnostics.Process]$process) {
     throw "Occluder harness could not make the real smoke target foreground. expected=$hwnd actual=$foreground"
   }
   return $hwnd
+}
+
+function Put-OverlayAboveTargetWithoutActivation([IntPtr]$targetHwnd, [IntPtr]$overlayHwnd) {
+  if ($overlayHwnd -eq [IntPtr]::Zero) { throw 'Occluder helper did not expose a native HWND.' }
+
+  $flags = [HelpSysOccluderNative]::SWP_NOMOVE `
+    -bor [HelpSysOccluderNative]::SWP_NOSIZE `
+    -bor [HelpSysOccluderNative]::SWP_NOACTIVATE `
+    -bor [HelpSysOccluderNative]::SWP_SHOWWINDOW
+  if (-not [HelpSysOccluderNative]::SetWindowPos(
+      $overlayHwnd,
+      [HelpSysOccluderNative]::HWND_TOPMOST,
+      0,
+      0,
+      0,
+      0,
+      $flags)) {
+    throw "Could not place the no-activate overlay above the target. Win32Error=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+  }
+
+  Start-Sleep -Milliseconds 250
+  $foreground = [HelpSysOccluderNative]::GetForegroundWindow()
+  if ($foreground -ne $targetHwnd) {
+    throw "No-activate overlay stole foreground while being placed above target. expected=$targetHwnd actual=$foreground"
+  }
+
+  $cursor = [HelpSysOccluderNative]::GetWindow($targetHwnd, [HelpSysOccluderNative]::GW_HWNDPREV)
+  for ($i = 0; $i -lt 64 -and $cursor -ne [IntPtr]::Zero; $i++) {
+    if ($cursor -eq $overlayHwnd) { return }
+    $cursor = [HelpSysOccluderNative]::GetWindow($cursor, [HelpSysOccluderNative]::GW_HWNDPREV)
+  }
+
+  throw 'Occluder helper is not actually above the target in Win32 Z-order; the smoke would not exercise redaction.'
 }
 
 function Save-DesktopScreenshot([string]$name) {
@@ -145,11 +198,11 @@ try {
   Start-Sleep -Seconds 2
   if ($target.HasExited) { throw 'Smoke target exited before occluder test.' }
 
-  # Start the unrelated TopMost overlay first. Launching a separate PowerShell process can
-  # transiently take foreground on GitHub-hosted Windows runners, which is a harness effect rather
-  # than the overlay behavior under test. Once the overlay is visible and WS_EX_NOACTIVATE is
-  # confirmed, explicitly make the real target foreground and assert that the visible TopMost
-  # overlay does not take focus back while it remains above the target.
+  # Start the unrelated TopMost overlay first. Starting a new PowerShell process can transiently
+  # take foreground on hosted runners, so establish the real target as foreground first. Then move
+  # the WS_EX_NOACTIVATE overlay back above it in Z-order with SWP_NOACTIVATE. This creates the
+  # production condition we actually care about: unrelated pixels visibly cover the target while
+  # the target remains the verified foreground work surface.
   $overlay = Start-Process powershell.exe `
     -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' `
     -RedirectStandardOutput $overlayStdout `
@@ -173,11 +226,8 @@ try {
   }
 
   $targetHwnd = Activate-SmokeTarget $target
-  Start-Sleep -Milliseconds 350
-  $foregroundAfterOverlay = [HelpSysOccluderNative]::GetForegroundWindow()
-  if ($foregroundAfterOverlay -ne $targetHwnd) {
-    throw "No-activate overlay stole foreground after target activation. expected=$targetHwnd actual=$foregroundAfterOverlay"
-  }
+  $overlayHwnd = [IntPtr]([Int64]$overlayBounds.hwnd)
+  Put-OverlayAboveTargetWithoutActivation $targetHwnd $overlayHwnd
 
   Save-DesktopScreenshot 'helpsys-occluder-source.png'
 
