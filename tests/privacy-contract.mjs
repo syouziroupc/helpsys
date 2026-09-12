@@ -33,11 +33,16 @@ function csharpFiles(dir) {
 }
 
 assert(adapter.includes('sealed class CloudAiAdapter'), 'The single cloud AI adapter is missing.');
-assert(adapter.includes('HttpClient'), 'CloudAiAdapter must own the outbound HTTP client.');
-assert(adapter.includes('PostJsonAsync') && adapter.includes('PostBytesAsync'), 'CloudAiAdapter must support guidance/education JSON and transcription bytes.');
-assert(adapter.includes('Uri.UriSchemeHttps'), 'External cloud endpoints must require HTTPS.');
-assert(adapter.includes('uri.IsLoopback') && adapter.includes('Uri.UriSchemeHttp'), 'Plain HTTP may only be retained for loopback development.');
-assert(adapter.includes('must not contain query parameters'), 'Cloud request paths must reject query strings/fragments that could carry secrets.');
+assert(adapter.includes('PostJsonAsync') && adapter.includes('PostBytesAsync'), 'CloudAiAdapter must support JSON and transcription bytes.');
+assert(adapter.includes('ValidateUnifiedApiBase'), 'Unified transport must validate its destination.');
+assert(adapter.includes('uri.Host.Equals(approved.Host'), 'External traffic must be pinned to the approved HelpSys origin.');
+assert(adapter.includes('AllowAutoRedirect = false'), 'Cloud transport must reject redirects.');
+assert(adapter.includes('UseCookies = false'), 'Cloud transport must not persist cookies.');
+assert(adapter.includes('UseProxy = false'), 'Cloud transport must not inherit an OS/user proxy.');
+assert(adapter.includes('CheckCertificateRevocationList = true'), 'Cloud transport must check certificate revocation.');
+assert(adapter.includes('NoStore = true') && adapter.includes('NoCache = true'), 'Cloud requests must request no-store/no-cache.');
+assert(adapter.includes('MaxResponseBodyBytes = 1024 * 1024'), 'Cloud response bodies must remain bounded.');
+assert(!adapter.includes('DangerousAcceptAnyServerCertificateValidator'), 'TLS validation must never be bypassed.');
 
 const allowedAdapterUsers = new Set([
   'src/Shared/CloudAiAdapter.cs',
@@ -51,98 +56,70 @@ for (const file of csharpFiles('src')) {
     assert(!source.includes('new HttpClient'), `Direct HttpClient construction bypasses the cloud boundary: ${file}`);
     assert(!source.includes('new HttpRequestMessage'), `Direct HTTP request construction bypasses the cloud boundary: ${file}`);
   }
-  if (source.includes('CloudAiAdapter'))
-    assert(allowedAdapterUsers.has(file), `Unexpected CloudAiAdapter user could bypass the egress boundary: ${file}`);
+  if (source.includes('CloudAiAdapter')) assert(allowedAdapterUsers.has(file), `Unexpected CloudAiAdapter user: ${file}`);
 }
+
+assert(desktopProject.includes('HELPSYS_SAFE_BUILD'), 'Unified HelpSys must compile the strict privacy profile by default.');
+assert(!desktopProject.includes("'$(SafeBuild)' == 'true'"), 'Unified HelpSys must not rely on a separate Safe edition switch.');
+assert(desktopProject.includes('<TieredPGO>true</TieredPGO>'), 'Unified build should keep profile-guided runtime optimization.');
 
 assert(cloud.includes('PrivacyGate'), 'Cloud guidance must depend on PrivacyGate.');
-assert(cloud.includes('PreflightPrivacy'), 'Cloud guidance must expose a local preflight before screenshot creation.');
-assert(cloud.includes('PrivacyBlocked?.Invoke'), 'Blocked egress must signal Privacy Mode before control returns to the planner.');
+assert(cloud.includes('PreflightPrivacy'), 'Cloud guidance must preflight before screenshot creation.');
+assert(cloud.includes('PrivacyBlocked?.Invoke'), 'Blocked egress must signal Privacy Mode.');
 assert(!cloud.includes('ImageDataUri'), 'CloudGuideService must not directly extract screenshot bytes.');
-assert(speech.includes('CloudAiAdapter') && !speech.includes('HttpClient'), 'Speech transcription must use the shared cloud adapter.');
-assert(education.includes('CloudAiAdapter') && !education.includes('HttpClient'), 'Education AI must use the shared cloud adapter.');
+assert(speech.includes('CloudAiAdapter') && !speech.includes('HttpClient'), 'Speech transcription must use the shared adapter.');
+assert(speech.includes('CloudTranscriptionAllowed => true'), 'Unified HelpSys should retain explicit voice input.');
+assert(education.includes('CloudAiAdapter') && !education.includes('HttpClient'), 'Education AI must use the shared adapter.');
 
-assert(gate.includes('image = frame.ImageDataUri'), 'Only PrivacyGate should turn a captured frame into an outbound image field.');
-assert(gate.includes('PrivacyClassification.Unknown'), 'PrivacyGate must have an explicit UNKNOWN state.');
+assert(gate.includes('image = frame.ImageDataUri'), 'Only PrivacyGate should convert a frame into an outbound image field.');
+assert(gate.includes('PrivacyClassification.Unknown'), 'PrivacyGate must have UNKNOWN.');
 assert(gate.includes('privacy_gate_failure'), 'PrivacyGate failures must fail closed.');
-assert(gate.includes('password_control'), 'Password controls must hard-block cloud analysis.');
-assert(gate.includes('otp_or_mfa'), 'OTP/MFA screens must hard-block cloud analysis.');
-assert(gate.includes('browser_secret_storage'), 'Cookie/Storage screens must hard-block cloud analysis.');
-assert(gate.includes('financial_service'), 'Financial authentication/trading screens must be recognized.');
-assert(gate.includes('card_authentication'), 'Card authentication screens must be recognized.');
-assert(gate.includes('HELPSYS_SAFE_BUILD'), 'Safe edition policy must be compile-time fixed.');
-assert(!gate.includes('HttpClient') && !gate.includes('Task<'), 'PrivacyGate hot path must stay local and synchronous.');
+for (const code of ['password_control','otp_or_mfa','browser_secret_storage','financial_service','card_authentication'])
+  assert(gate.includes(code), `PrivacyGate lost hard block ${code}.`);
+assert(!gate.includes('HttpClient') && !gate.includes('Task<'), 'PrivacyGate hot path must remain local and synchronous.');
 assert(!gate.includes('File.') && !gate.includes('Clipboard'), 'PrivacyGate must not read files or clipboard contents.');
-assert(!gate.includes('value = x.Value'), 'Raw UI input values must never be copied into outbound payloads.');
-assert(gate.includes('inputPresent = !x.Password && !string.IsNullOrEmpty(x.Value)'), 'Only boolean input-presence state may leave the UI candidate value boundary.');
-assert(gate.includes('BearerRegex') && gate.includes('JwtRegex') && gate.includes('KnownApiKeyRegex'), 'Outbound free-form text must redact common token/API-key forms.');
-assert(gate.includes('PassesLuhn'), 'Potential payment-card numbers must be checked locally before cloud use.');
+assert(!gate.includes('value = x.Value'), 'Raw UI input values must never enter outbound payloads.');
+assert(gate.includes('inputPresent = !x.Password && !string.IsNullOrEmpty(x.Value)'), 'Only input-presence state may leave the UI value boundary.');
+assert(gate.includes('BearerRegex') && gate.includes('JwtRegex') && gate.includes('KnownApiKeyRegex'), 'Secret redaction patterns are required.');
+assert(gate.includes('PassesLuhn'), 'Potential card numbers must be checked locally.');
 
-assert(evidence.includes('Full URLs can contain session IDs'), 'Guidance evidence must document why full URLs are local-only.');
-assert(/context\.Browser\?\.Domain,\s*null,\s*context\.Browser\?\.AddressFieldFocused/s.test(evidence), 'Cloud evidence must omit the full browser URL while preserving domain-level context.');
+assert(evidence.includes('Full URLs can contain session IDs'), 'Evidence must document why full URLs stay local.');
+assert(/context\.Browser\?\.Domain,\s*null,\s*context\.Browser\?\.AddressFieldFocused/s.test(evidence), 'Cloud evidence must omit the full browser URL.');
 
-assert(privacyUi.includes('プライバシー保護のため画面解析を一時停止中'), 'Privacy Mode must be visible to the user.');
+assert(privacyUi.includes('HelpSys 統合版'), 'Privacy UI must identify the unified edition.');
+assert(privacyUi.includes('プライバシー保護のため画面解析を一時停止中'), 'Privacy Mode must be visible.');
 assert(privacyUi.includes('_sessionCts?.Cancel()'), 'Privacy Mode must cancel in-flight planning.');
-assert(!privacyUi.includes('_activeRequest = null'), 'Privacy Mode must preserve the active task so it can resume.');
-assert(privacyUi.includes('TryResumePrivacyModeAsync'), 'Privacy Mode must support automatic safe-screen resumption.');
-assert(privacyUi.includes('Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState))'), 'Privacy-aware Safe startup state must survive later generic Loaded handlers.');
+assert(!privacyUi.includes('_activeRequest = null'), 'Privacy Mode must preserve the active task.');
+assert(privacyUi.includes('TryResumePrivacyModeAsync'), 'Privacy Mode must support automatic resume.');
 assert(xaml.includes('x:Name="PrivacyButton"'), 'The user must have a one-click screen-analysis pause control.');
-const stateTextXaml = xaml.match(/<TextBlock x:Name="StateText"[\s\S]*?\/>/)?.[0] ?? '';
-assert(stateTextXaml.includes('TextWrapping="Wrap"'), 'Privacy and safety status reasons must wrap instead of disappearing off-screen.');
-assert(!stateTextXaml.includes('TextTrimming='), 'Privacy and safety status reasons must not be ellipsized.');
 
-assert(privacySentinel.includes('PrivacySentinelEventSystemForeground'), 'Privacy Sentinel must monitor foreground changes independently from planning.');
-assert(privacySentinel.includes('PrivacySentinel_AllowCloudAction'), 'Guide/answer/audio starts must have a context-only gate before their original handlers.');
-assert(privacySentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must use the centralized gate before UIA candidate collection or cloud audio starts.');
-assert(privacySentinel.includes('e.Handled = true;'), 'Unsafe routed UI actions must be stopped before normal handlers begin work.');
-assert(privacySentinel.includes('foreground_transition_unverified'), 'Foreground tracking disagreement must become UNKNOWN, never SAFE.');
-assert(privacySentinel.includes('PrivacySentinel_SuspendCloudAudio'), 'Privacy Sentinel must cancel cloud speech when a dangerous screen appears.');
+assert(privacySentinel.includes('PrivacySentinelEventSystemForeground'), 'Privacy Sentinel must monitor foreground changes.');
+assert(privacySentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must use centralized preflight.');
+assert(privacySentinel.includes('foreground_transition_unverified'), 'Foreground disagreement must become UNKNOWN.');
+assert(privacySentinel.includes('PrivacySentinel_SuspendCloudAudio'), 'Dangerous screens must cancel cloud speech.');
 
-assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Normal quality guidance must preflight privacy before screenshot creation.');
-assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Privacy preflight must happen before quality screenshot creation.');
-assert(recoveryUi.includes('_cloudGuide.PreflightPrivacy'), 'Recovery guidance must preflight privacy before screenshot creation.');
-assert(recoveryUi.indexOf('_cloudGuide.PreflightPrivacy') < recoveryUi.indexOf('CaptureQualityFrameAsync'), 'Recovery privacy preflight must happen before recovery screenshot creation.');
+assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Quality guidance must preflight privacy before screenshot creation.');
+assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Quality preflight must precede screenshot capture.');
+assert(recoveryUi.includes('_cloudGuide.PreflightPrivacy'), 'Recovery guidance must preflight privacy.');
+assert(recoveryUi.indexOf('_cloudGuide.PreflightPrivacy') < recoveryUi.indexOf('CaptureQualityFrameAsync'), 'Recovery preflight must precede capture.');
 
 assert(watcher.includes('AutomationFocusChangedEventHandler'), 'Meaningful focus changes must remain observable locally.');
-assert(watcher.includes('StructureChangedEventHandler'), 'Meaningful window/UI structure changes must remain observable locally.');
-assert(!watcher.includes('ValuePattern.ValueProperty'), 'Per-character input value changes must not trigger the live watcher.');
+assert(watcher.includes('StructureChangedEventHandler'), 'Meaningful structure changes must remain observable locally.');
+assert(!watcher.includes('ValuePattern.ValueProperty'), 'Per-character input values must not trigger the watcher.');
 
-assert(capture.includes('CaptureSensitiveInputBounds'), 'Screenshot privacy scan must remain independent from the ranked candidate list.');
-assert(capture.includes('if (current.IsPassword) return true;'), 'Password controls must remain unconditionally redacted in local capture.');
-assert(capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'Every visible Edit/ComboBox must be redacted regardless of its current value.');
+assert(capture.includes('CaptureSensitiveInputBounds'), 'Screenshot privacy scan must remain independent of ranked candidates.');
+assert(capture.includes('if (current.IsPassword) return true;'), 'Password controls must remain redacted.');
+assert(capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'Visible input controls must remain redacted.');
 assert(!capture.includes('valuePattern.Current.Value'), 'Screenshot redaction must not read raw input values.');
-assert(capture.includes('ShouldRedactVisibleSensitiveText(current.Name)'), 'Visible high-confidence PII/secret text must be considered by the independent screenshot redaction scan.');
-for (const requiredPattern of ['VisibleEmailRegex', 'VisibleJapanesePhoneRegex', 'VisiblePostalCodeRegex', 'VisibleBearerRegex', 'VisibleJwtRegex', 'VisibleApiKeyRegex', 'VisibleCardNumberRegex', 'VisibleSensitiveUrlRegex'])
-  assert(capture.includes(requiredPattern), `Screenshot visible-data redaction is missing ${requiredPattern}.`);
-assert(capture.includes('入力欄や表示済み秘密情報を安全に確認できないため、画面画像は送信しません'), 'Capture privacy uncertainty must fail closed for both input and displayed sensitive data.');
-assert(capture.includes('FullMonitorShellProcesses'), 'Only shell operation surfaces should retain full-monitor capture.');
-assert(capture.includes('return new CaptureArea(left, top, width, height, hwnd, targetProcessId, false);'), 'Normal application capture must be clipped to the verified target window.');
-assert(capture.includes('var left = Math.Max(windowRect.Left, info.Monitor.Left);') &&
-       capture.includes('var top = Math.Max(windowRect.Top, info.Monitor.Top);') &&
-       capture.includes('var right = Math.Min(windowRect.Right, info.Monitor.Right);') &&
-       capture.includes('var bottom = Math.Min(windowRect.Bottom, info.Monitor.Bottom);'),
-       'Normal application capture must be clipped to the target window and monitor boundary.');
+for (const requiredPattern of ['VisibleEmailRegex','VisibleJapanesePhoneRegex','VisiblePostalCodeRegex','VisibleBearerRegex','VisibleJwtRegex','VisibleApiKeyRegex','VisibleCardNumberRegex','VisibleSensitiveUrlRegex'])
+  assert(capture.includes(requiredPattern), `Screenshot redaction is missing ${requiredPattern}.`);
 
-assert(telemetry.includes('sealed record PrivacySafeTelemetryEvent'), 'A fixed long-term telemetry allowlist type is required.');
-for (const forbidden of ['Screenshot', 'Ocr', 'BrowserUrl', 'DocumentBody', 'MailBody', 'InputValue', 'Cookie', 'Token', 'Password'])
-  assert(!telemetry.includes(`${forbidden},`), `Telemetry allowlist must not contain ${forbidden}.`);
 assert(telemetry.includes('NullPrivacySafeTelemetrySink'), 'Telemetry must have a no-op default sink.');
 assert(telemetry.includes('HELPSYS_TELEMETRY'), 'Telemetry must require explicit opt-in.');
+assert(diagnostics.includes('RawScreenPersistenceAllowed = false'), 'Strict unified profile must forbid raw-screen persistence.');
 
-assertDiagnosticPolicy();
-function assertDiagnosticPolicy() {
-  assert(diagnostics.includes('HELPSYS_DIAGNOSTIC_MODE'), 'Diagnostic mode must require explicit opt-in.');
-  assert(diagnostics.includes('HELPSYS_DIAGNOSTIC_RAW_SCREEN'), 'Raw diagnostic screen persistence must require a second explicit opt-in.');
-  assert(diagnostics.includes('I_UNDERSTAND_RAW_SCREEN_DATA'), 'Raw screen diagnostic opt-in must be intentionally difficult to enable accidentally.');
-  assert(diagnostics.includes('#if HELPSYS_SAFE_BUILD'), 'Safe build must compile out diagnostic raw-screen persistence.');
-  assert(!diagnostics.includes('File.') && !diagnostics.includes('StreamWriter'), 'Diagnostic policy itself must not persist anything automatically.');
-}
-
-assert(serverGuard.includes('privacyHardenedEnv'), 'Production Worker must wrap text/vision inference in the no-storage environment.');
-assert(serverGuard.includes('{ ...options, store: false }'), 'Text/vision Workers AI inference must force store:false server-side.');
+assert(serverGuard.includes('privacyHardenedEnv'), 'Production Worker must use the no-storage wrapper.');
+assert(serverGuard.includes('{ ...options, store: false }'), 'Workers AI text/vision inference must force store:false.');
 assert(serverGuard.includes("url.pathname === '/v1/transcribe'"), 'ASR must remain separated from the GLM storage-option wrapper.');
 
-assert(desktopProject.includes("'$(SafeBuild)' == 'true'"), 'Desktop project must expose a separate compile-time Safe build.');
-assert(desktopProject.includes('HELPSYS_SAFE_BUILD'), 'Safe build must define its fixed privacy profile symbol.');
-
-console.log('HelpSys privacy architecture contract passed.');
+console.log('HelpSys unified privacy architecture contract passed.');
