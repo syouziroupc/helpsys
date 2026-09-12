@@ -12,7 +12,7 @@ public sealed class SpeechInputService : IDisposable
 {
     private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
-    private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan MinimumSpeechTime = TimeSpan.FromMilliseconds(240);
     private static readonly TimeSpan TranscriptionTimeout = TimeSpan.FromSeconds(18);
     private const double InitialNoiseFloor = 0.0025;
