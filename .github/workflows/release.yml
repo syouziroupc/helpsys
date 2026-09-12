@@ -3,19 +3,14 @@ name: Publish Windows preview
 on:
   push:
     branches: [main]
-    paths:
-      - "src/HelpSys.Desktop/**"
-      - "src/Shared/**"
-      - "docs/AI_PROVIDER_PRIVACY_REVIEW.md"
-      - "site/**"
-      - "tests/site-release-contract.mjs"
-      - "HelpSys.sln"
-      - "README.md"
-      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: helpsys-preview-latest
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -30,25 +25,23 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
-      - name: Verify Safe preview release contract
+      - name: Verify release and privacy contracts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           node tests/site-release-contract.mjs
-          $adapter = Get-Content 'src/Shared/CloudAiAdapter.cs' -Raw
-          if ($adapter -notmatch 'HELPSYS_SAFE_API_BASE') { throw 'Safe build lost explicit-only endpoint configuration.' }
-          if ($adapter -notmatch '_apiBase = string\.IsNullOrWhiteSpace\(resolvedBase\) \? null') { throw 'Safe build no longer fails closed when its endpoint is absent.' }
+          node tests/privacy-contract.mjs
+          node tests/privacy-capability-contract.mjs
+          node tests/worker-data-handling-contract.mjs
 
-      - name: Publish normal and Safe Windows builds
+      - name: Publish unified Windows build
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $normalOut = Join-Path $PWD 'publish\normal-win-x64'
-          $safeOut = Join-Path $PWD 'publish\safe-win-x64'
-          $normalAssetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $normalStableName = 'HelpSys-latest-win-x64.zip'
-          $safeAssetName = 'HelpSys-Safe-v1-win-x64.zip'
-          $safeStableName = 'HelpSys-Safe-latest-win-x64.zip'
+          $out = Join-Path $PWD 'publish\win-x64'
+          $shortSha = $env:GITHUB_SHA.Substring(0, 8)
+          $versionedName = "HelpSys-Unified-$shortSha-win-x64.zip"
+          $stableName = 'HelpSys-latest-win-x64.zip'
 
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
@@ -56,69 +49,40 @@ jobs:
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:PublishReadyToRun=false `
-            -o $normalOut
+            -p:PublishReadyToRun=true `
+            -o $out
 
-          dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
-            -c Release `
-            -r win-x64 `
-            --self-contained true `
-            -p:SafeBuild=true `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:PublishReadyToRun=false `
-            -o $safeOut
+          if (-not (Test-Path (Join-Path $out 'HelpSys.exe'))) { throw 'Unified HelpSys executable was not produced.' }
+          Copy-Item README.md (Join-Path $out 'README.md')
+          Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $versionedName) -Force
+          Copy-Item (Join-Path $PWD $versionedName) (Join-Path $PWD $stableName) -Force
+          "HELPSYS_VERSIONED_ASSET=$versionedName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_STABLE_ASSET=$stableName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-          if (-not (Test-Path (Join-Path $safeOut 'HelpSys.Safe.exe'))) { throw 'Safe executable was not produced.' }
-          Copy-Item README.md (Join-Path $normalOut 'README.md')
-          Copy-Item README.md (Join-Path $safeOut 'README.md')
-          Compress-Archive -Path "$normalOut\*" -DestinationPath (Join-Path $PWD $normalAssetName) -Force
-          Compress-Archive -Path "$safeOut\*" -DestinationPath (Join-Path $PWD $safeAssetName) -Force
-          Copy-Item (Join-Path $PWD $normalAssetName) (Join-Path $PWD $normalStableName) -Force
-          Copy-Item (Join-Path $PWD $safeAssetName) (Join-Path $PWD $safeStableName) -Force
-
-      - name: Update preview release
+      - name: Update preview-latest release atomically
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
-          $normalAssetName = 'HelpSys-Reliability-v9-win-x64.zip'
-          $normalStableName = 'HelpSys-latest-win-x64.zip'
-          $safeAssetName = 'HelpSys-Safe-v1-win-x64.zip'
-          $safeStableName = 'HelpSys-Safe-latest-win-x64.zip'
-          $normalAsset = Join-Path $PWD $normalAssetName
-          $normalStable = Join-Path $PWD $normalStableName
-          $safeAsset = Join-Path $PWD $safeAssetName
-          $safeStable = Join-Path $PWD $safeStableName
-          $providerApproved = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_RELEASE_STATUS: APPROVED$' -Quiet
-          $binaryPreviewAllowed = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_BINARY_PREVIEW_STATUS: ALLOWED_WITH_DEFAULT_EGRESS_OFF$' -Quiet
-          if (-not $binaryPreviewAllowed) { throw 'Safe binary preview release is not authorized by the privacy review.' }
-
-          $allowedAssets = @($normalAssetName, $normalStableName, $safeAssetName, $safeStableName)
-          $safeNote = if ($providerApproved) {
-            '- Safe Preview: provider-connected operation approved by the current privacy review.'
-          } else {
-            '- Safe Preview: public binary has no default Safe cloud endpoint; provider-connected Safe operation remains under privacy review.'
-          }
+          $versioned = Join-Path $PWD $env:HELPSYS_VERSIONED_ASSET
+          $stable = Join-Path $PWD $env:HELPSYS_STABLE_ASSET
+          $allowedAssets = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET)
 
           $notes = @"
-          HelpSys Windows Preview — Privacy Gate architecture
+          HelpSys Windows Preview — Unified secure build
 
           - Windows 10 / 11 (64-bit), self-contained
-          - Normal package: $normalAssetName
-          - Existing stable download alias: $normalStableName
-          - Safe Preview package: $safeAssetName
-          - Safe stable download alias: $safeStableName
-          $safeNote
-          - Safe cloud voice / Commander transcription is disabled
-          - Screen acquisition, cloud egress and persistence are separated
-          - All screen-derived cloud requests pass through the local Privacy Gate
-          - Password / OTP / token / API-key / browser storage / financial-auth states fail closed
-          - BLOCKED or UNKNOWN enters Privacy Mode without ending HelpSys; safe-screen return resumes guidance
-          - Cloud HTTP transport is centralized in the replaceable CloudAiAdapter
-          - HelpSys remains guidance-only: it does not click, type, modify files/settings, pay or enter credentials
+          - Stable download alias: $($env:HELPSYS_STABLE_ASSET)
+          - Traceable build: $($env:HELPSYS_VERSIONED_ASSET)
+          - Normal/Safe editions are unified into one binary
+          - Safe Privacy Gate policy is the standard profile
+          - Password / OTP / token / API key / Cookie/Storage / financial-auth states fail closed
+          - Cloud transport rejects redirects/cookies/proxy inheritance and pins external traffic to the reviewed HelpSys origin
+          - Voice/Commander is available only after an explicit user action or local wake phrase
+          - HelpSys remains guidance-only and does not click, type, pay, or enter credentials
+          - This release is rebuilt automatically on every main-branch update
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
@@ -130,14 +94,13 @@ jobs:
                 if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
               }
             }
-
-            gh release upload $tag $normalAsset $normalStable $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
-            gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
+            gh release upload $tag $versioned $stable --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload unified preview assets.' }
+            gh release edit $tag --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to create preview release.' }
+            gh release create $tag $versioned $stable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create unified preview release.' }
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
