@@ -44,9 +44,9 @@ function Find-TopLevelWindow([System.Diagnostics.Process]$process) {
 
 function Get-ForegroundPid {
   $hwnd = [HelpSysRealClickUser32]::GetForegroundWindow()
-  [uint32]$pid = 0
-  [void][HelpSysRealClickUser32]::GetWindowThreadProcessId($hwnd, [ref]$pid)
-  return [int]$pid
+  [uint32]$foregroundPidValue = 0
+  [void][HelpSysRealClickUser32]::GetWindowThreadProcessId($hwnd, [ref]$foregroundPidValue)
+  return [int]$foregroundPidValue
 }
 
 function Focus-Process([System.Diagnostics.Process]$process, [string]$label) {
