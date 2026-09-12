@@ -235,7 +235,7 @@ finally
     Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", oldRawDiagnostic);
 }
 
-var telemetryProperties = typeof(PrivacySafeTelemetryEvent).GetProperties().Select(x => x.Name).OrderBy(x => x.Name).ToArray();
+var telemetryProperties = typeof(PrivacySafeTelemetryEvent).GetProperties().Select(x => x.Name).OrderBy(x => x).ToArray();
 var allowedTelemetryProperties = new[]
 {
     "AppKind", "ErrorCode", "HelpSysVersion", "ResponseTimeMs", "SessionId", "Success", "SupportStage", "TaskKind"
