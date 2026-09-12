@@ -7,6 +7,8 @@ on:
       - "src/HelpSys.Desktop/**"
       - "src/Shared/**"
       - "docs/AI_PROVIDER_PRIVACY_REVIEW.md"
+      - "site/**"
+      - "tests/site-release-contract.mjs"
       - "HelpSys.sln"
       - "README.md"
       - ".github/workflows/release.yml"
@@ -28,6 +30,15 @@ jobs:
       - name: Restore
         run: dotnet restore HelpSys.sln
 
+      - name: Verify Safe preview release contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tests/site-release-contract.mjs
+          $adapter = Get-Content 'src/Shared/CloudAiAdapter.cs' -Raw
+          if ($adapter -notmatch 'HELPSYS_SAFE_API_BASE') { throw 'Safe build lost explicit-only endpoint configuration.' }
+          if ($adapter -notmatch '_apiBase = string\.IsNullOrWhiteSpace\(resolvedBase\) \? null') { throw 'Safe build no longer fails closed when its endpoint is absent.' }
+
       - name: Publish normal and Safe Windows builds
         shell: pwsh
         run: |
@@ -48,8 +59,6 @@ jobs:
             -p:PublishReadyToRun=false `
             -o $normalOut
 
-          # Safe is still built on every release run so compile/package regressions are caught.
-          # Public upload is controlled separately by the provider privacy approval gate.
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
             -c Release `
             -r win-x64 `
@@ -60,6 +69,7 @@ jobs:
             -p:PublishReadyToRun=false `
             -o $safeOut
 
+          if (-not (Test-Path (Join-Path $safeOut 'HelpSys.Safe.exe'))) { throw 'Safe executable was not produced.' }
           Copy-Item README.md (Join-Path $normalOut 'README.md')
           Copy-Item README.md (Join-Path $safeOut 'README.md')
           Compress-Archive -Path "$normalOut\*" -DestinationPath (Join-Path $PWD $normalAssetName) -Force
@@ -82,17 +92,15 @@ jobs:
           $normalStable = Join-Path $PWD $normalStableName
           $safeAsset = Join-Path $PWD $safeAssetName
           $safeStable = Join-Path $PWD $safeStableName
-          $safeApproved = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_RELEASE_STATUS: APPROVED$' -Quiet
+          $providerApproved = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_RELEASE_STATUS: APPROVED$' -Quiet
+          $binaryPreviewAllowed = Select-String -Path 'docs/AI_PROVIDER_PRIVACY_REVIEW.md' -Pattern '^SAFE_BINARY_PREVIEW_STATUS: ALLOWED_WITH_DEFAULT_EGRESS_OFF$' -Quiet
+          if (-not $binaryPreviewAllowed) { throw 'Safe binary preview release is not authorized by the privacy review.' }
 
-          $allowedAssets = @($normalAssetName, $normalStableName)
-          if ($safeApproved) {
-            $allowedAssets += @($safeAssetName, $safeStableName)
-          }
-
-          $safeNote = if ($safeApproved) {
-            "- Safe package: $safeAssetName`n- Safe stable alias: $safeStableName"
+          $allowedAssets = @($normalAssetName, $normalStableName, $safeAssetName, $safeStableName)
+          $safeNote = if ($providerApproved) {
+            '- Safe Preview: provider-connected operation approved by the current privacy review.'
           } else {
-            '- Safe package: NOT PUBLISHED — provider privacy review is not fully approved.'
+            '- Safe Preview: public binary has no default Safe cloud endpoint; provider-connected Safe operation remains under privacy review.'
           }
 
           $notes = @"
@@ -100,8 +108,11 @@ jobs:
 
           - Windows 10 / 11 (64-bit), self-contained
           - Normal package: $normalAssetName
-          - Existing stable download alias preserved: $normalStableName
+          - Existing stable download alias: $normalStableName
+          - Safe Preview package: $safeAssetName
+          - Safe stable download alias: $safeStableName
           $safeNote
+          - Safe cloud voice / Commander transcription is disabled
           - Screen acquisition, cloud egress and persistence are separated
           - All screen-derived cloud requests pass through the local Privacy Gate
           - Password / OTP / token / API-key / browser storage / financial-auth states fail closed
@@ -120,27 +131,16 @@ jobs:
               }
             }
 
-            gh release upload $tag $normalAsset $normalStable --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload normal preview assets.' }
-            if ($safeApproved) {
-              gh release upload $tag $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
-              if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Safe preview assets.' }
-            }
+            gh release upload $tag $normalAsset $normalStable $safeAsset $safeStable --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload preview assets.' }
             gh release edit $tag --title "HelpSys Windows Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
           }
           else {
-            if ($safeApproved) {
-              gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
-            }
-            else {
-              gh release create $tag $normalAsset $normalStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
-            }
+            gh release create $tag $normalAsset $normalStable $safeAsset $safeStable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create preview release.' }
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
           foreach ($expected in $allowedAssets) {
             if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
-          }
-          if (-not $safeApproved -and ($published -contains $safeAssetName -or $published -contains $safeStableName)) {
-            throw 'Safe release gate failed: a Safe ZIP is public while provider approval is blocked.'
           }
