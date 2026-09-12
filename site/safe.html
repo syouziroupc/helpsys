@@ -3,71 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSys Safe Preview。Privacy Gateを強化し、クラウドAI接続は既定で無効にしたWindows向け安全版です。">
+  <meta name="description" content="HelpSys Safeは統合版HelpSysへ統合されました。安全版のPrivacy Gateは現在の標準HelpSysに含まれます。">
   <meta name="theme-color" content="#0b1020">
-  <title>HelpSys Safe Preview — 安全版ダウンロード</title>
+  <title>HelpSys — 安全版は統合版へ移行しました</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="./" aria-label="HelpSys トップ">
-      <span class="brand-mark" aria-hidden="true">H</span>
-      <span>HelpSys Safe</span>
-    </a>
-    <a class="github-link" href="https://github.com/syouziroupc/helpsys/pull/21" target="_blank" rel="noopener noreferrer">開発状況</a>
+    <a class="brand" href="./" aria-label="HelpSys トップ"><span class="brand-mark" aria-hidden="true">H</span><span>HelpSys</span></a>
+    <a class="github-link" href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">GitHub</a>
   </header>
-
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">SAFE PREVIEW ・ WINDOWS 10 / 11</p>
-        <h1>安全側に倒す、<br><span>HelpSys。</span></h1>
-        <p class="lead">HelpSys Safe Previewは、Privacy Gateを厳格化した開発版です。既定ではクラウドAI接続なしで起動し、承認済み接続先が明示設定されていない限り画面データを外部AIへ送りません。クラウド音声認識とCommanderも無効です。</p>
+        <p class="eyebrow">UNIFIED EDITION</p>
+        <h1>安全版は、<br><span>標準HelpSysへ統合。</span></h1>
+        <p class="lead">従来の通常版とSafe Previewは1つのHelpSysへ統合されました。安全版で導入したPrivacy Gate、fail-closed、秘密情報遮断、送信経路制限は現在の標準版に含まれています。</p>
         <div class="actions">
-          <a class="download-button" href="/download/safe">Safe Preview ZIPをダウンロード</a>
-          <a class="download-button ghost" href="/">通常版・Education版を見る</a>
+          <a class="download-button" href="/download">統合版の最新版ZIPをダウンロード</a>
+          <a class="download-button ghost" href="/">トップへ戻る</a>
         </div>
-        <span class="download-note">64-bit ・ 開発版 ・ AI事業者側のプライバシー監査は継続中</span>
+        <span class="download-note">旧 /download/safe も同じ最新版ZIPへ転送されます。</span>
       </div>
     </section>
-
     <section class="section">
-      <div class="section-title">
-        <p class="eyebrow">SAFE DEFAULTS</p>
-        <h2>送らない状態を初期値にする。</h2>
-      </div>
+      <div class="section-title"><p class="eyebrow">SECURITY</p><h2>安全機能は削除していません。</h2></div>
       <div class="feature-list">
-        <div><strong>既定ではクラウドAI接続なし</strong><span>Safe版には通常版のAI API接続先を引き継ぐ既定値がありません。接続先未設定なら、クラウド利用前にfail-closedで停止します。</span></div>
-        <div><strong>秘密情報をローカル遮断</strong><span>Password、OTP、Token、API Key、Cookie/Storage、金融認証などはAIに判定させる前にPrivacy Gateで遮断します。</span></div>
-        <div><strong>UNKNOWNも送らない</strong><span>安全判定に失敗した場合や画面状態を十分に確認できない場合は、クラウド送信せずPrivacy Modeへ移行します。</span></div>
-        <div><strong>クラウド音声を無効化</strong><span>Safe版では音声データをクラウドへ送らず、Commanderのクラウド文字起こしも使用しません。文字入力で依頼します。</span></div>
-      </div>
-    </section>
-
-    <section class="privacy">
-      <div>
-        <p class="eyebrow">CURRENT LIMITATION</p>
-        <h2>「Safe Preview」と「AI事業者承認済み」は別です。</h2>
-      </div>
-      <p>配布しているSafe Previewは、クラウド送信を既定で無効にしたバイナリです。Cloudflare Workers AIについては、プロンプトキャッシュ、推論処理地域、各モデルの利用条件に未確認事項が残るため、AI接続を含むSafe運用を「プライバシー監査完了」とは扱っていません。将来、接続運用を正式化する場合は別途監査を完了させます。</p>
-    </section>
-
-    <section class="download-panel">
-      <div>
-        <p class="eyebrow">DOWNLOAD</p>
-        <h2>HelpSys Safe Preview</h2>
-        <p>Windows 10 / 11、64-bit向け。通常版・Education版とは別のSafeプロファイルでビルドされています。</p>
-      </div>
-      <div class="download-panel-actions">
-        <a class="download-button secondary" href="/download/safe">安全版をダウンロード</a>
+        <div><strong>Privacy Gate標準搭載</strong><span>Password、OTP、Token、API Key、Cookie/Storage、金融認証等を端末内で遮断します。</span></div>
+        <div><strong>通信経路を固定</strong><span>外部通信はHelpSysの承認済みHTTPS originに限定し、リダイレクト・Cookie・OSプロキシ継承を無効化します。</span></div>
+        <div><strong>危険時は自動停止</strong><span>UNKNOWNを含む安全判定失敗時はクラウド解析を停止し、依頼内容は保持したまま安全画面への復帰を待ちます。</span></div>
+        <div><strong>音声は明示開始時だけ</strong><span>音声ボタン、またはローカル起動語で利用者が開始した場合だけクラウド文字起こしへ進みます。</span></div>
       </div>
     </section>
   </main>
-
-  <footer>
-    <span>HelpSys Safe Preview</span>
-    <a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
-  </footer>
+  <footer><span>HelpSys Unified Preview</span><a href="https://github.com/syouziroupc/helpsys" target="_blank" rel="noopener noreferrer">Source on GitHub</a></footer>
 </body>
 </html>
