@@ -4,6 +4,7 @@ await desktopChromeBeatsWindows();
 await startChromeBeatsSearch();
 await openStartNeverPressesWindowsAgain();
 await visibleAddressFieldBeatsCtrlL();
+await webpageSearchBeatsAddressField();
 console.log('HelpSys visible-first self-test passed.');
 
 async function desktopChromeBeatsWindows() {
@@ -54,11 +55,28 @@ async function visibleAddressFieldBeatsCtrlL() {
       Browser: { ProcessName: 'chrome', WindowTitle: '新しいタブ - Google Chrome', Url: 'chrome://newtab/', Domain: null, Https: null, AddressFieldFocused: false }
     },
     elements: [
-      { id: 'address', name: 'Google で検索するか URL を入力する', automationId: 'address', className: 'Omnibox', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 200, y: 50, width: 900, height: 40 }
+      { id: 'address', name: '[input field]', automationId: 'address|role:browser_address', className: 'Omnibox', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 200, y: 50, width: 900, height: 40 }
     ]
   };
   const json = await invoke(body);
-  assert(json.status === 'target' && json.targetId === 'address' && json.action === 'left_click', 'visible address/search field must beat Ctrl+L');
+  assert(json.status === 'target' && json.targetId === 'address' && json.action === 'left_click', 'visible address/search field must beat Ctrl+L when no webpage search field exists');
+}
+
+async function webpageSearchBeatsAddressField() {
+  const body = {
+    request: 'YouTubeが見たい', history: [],
+    systemContext: {
+      ForegroundProcess: 'chrome', ForegroundTitle: 'Google - Google Chrome', ForegroundProcessId: 2, TaskbarVisible: true, RunningApps: ['chrome'],
+      Browser: { ProcessName: 'chrome', WindowTitle: 'Google - Google Chrome', Url: 'https://www.google.com/', Domain: 'www.google.com', Https: true, AddressFieldFocused: false }
+    },
+    elements: [
+      { id: 'page-search', name: '[input field]', automationId: 'role:web_search', className: '', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 300, y: 300, width: 600, height: 46 },
+      { id: 'address', name: '[input field]', automationId: 'address|role:browser_address', className: 'Omnibox', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 200, y: 50, width: 900, height: 40 }
+    ]
+  };
+  const json = await invoke(body);
+  assert(json.status === 'target' && json.targetId === 'page-search', 'visible webpage search field must outrank the browser address field through the full guard chain');
+  assert(json.action === 'left_click', 'unfocused webpage search field should be selected before typing');
 }
 
 async function invoke(body) {
