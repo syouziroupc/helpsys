@@ -85,7 +85,7 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken)
     {
         EnsureCloudConfigured();
-        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var relevantElements = SelectRelevantElements(elements, systemContext, request);
         var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
         EnsureApproved(approval);
 
@@ -103,7 +103,7 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureCloudConfigured();
-        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var relevantElements = SelectRelevantElements(elements, systemContext, request);
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
 
@@ -133,7 +133,7 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureCloudConfigured();
-        var relevantElements = SelectRelevantElements(elements, systemContext);
+        var relevantElements = SelectRelevantElements(elements, systemContext, request);
         var approval = _privacyGate.ApproveVision(request, frame, relevantElements, history, systemContext);
         EnsureApproved(approval);
 
@@ -160,7 +160,8 @@ public sealed class CloudGuideService : IDisposable
 
     private static IReadOnlyList<UiElementCandidate> SelectRelevantElements(
         IReadOnlyList<UiElementCandidate> elements,
-        SystemContextSnapshot systemContext)
+        SystemContextSnapshot systemContext,
+        string? request = null)
     {
         var foregroundName = systemContext.ForegroundProcess ?? string.Empty;
         var foregroundId = systemContext.ForegroundProcessId;
@@ -172,6 +173,8 @@ public sealed class CloudGuideService : IDisposable
                 (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
                 ShellProcesses.Contains(x.ProcessName))
             .ToArray();
+
+        relevant = FilterWindowChromeForTask(relevant, request);
 
         var contextBudget = systemContext.Browser is null ? 45 : 80;
         var interactiveBudget = 280 - contextBudget;
@@ -198,6 +201,63 @@ public sealed class CloudGuideService : IDisposable
         }
 
         return selected.Take(280).ToArray();
+    }
+
+    private static UiElementCandidate[] FilterWindowChromeForTask(
+        UiElementCandidate[] elements,
+        string? request)
+    {
+        if (elements.Length == 0 || IsWindowManagementRequest(request)) return elements;
+
+        var topByProcess = elements
+            .Where(x => x.ProcessId > 0 && !x.Bounds.IsEmpty)
+            .GroupBy(x => x.ProcessId)
+            .ToDictionary(group => group.Key, group => group.Min(x => x.Y));
+
+        return elements
+            .Where(x => !IsWindowChromeControl(x, topByProcess))
+            .ToArray();
+    }
+
+    private static bool IsWindowChromeControl(
+        UiElementCandidate item,
+        IReadOnlyDictionary<int, double> topByProcess)
+    {
+        if (!item.Interactable || item.ProcessId <= 0 || item.Bounds.IsEmpty) return false;
+        if (!topByProcess.TryGetValue(item.ProcessId, out var top)) return false;
+
+        // Standard non-client controls live in the title band. Requiring both a canonical
+        // automation identity and the top band avoids suppressing an application's own
+        // content-level Close/Restore buttons.
+        if (item.Y > top + 72) return false;
+
+        var automationId = item.AutomationId?.Trim() ?? string.Empty;
+        var name = item.Name?.Trim() ?? string.Empty;
+
+        if (item.ControlType.Equals("Button", StringComparison.OrdinalIgnoreCase) &&
+            (automationId.Equals("Minimize", StringComparison.OrdinalIgnoreCase) ||
+             automationId.Equals("Maximize", StringComparison.OrdinalIgnoreCase) ||
+             automationId.Equals("Restore", StringComparison.OrdinalIgnoreCase) ||
+             automationId.Equals("Close", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return item.ControlType.Equals("MenuItem", StringComparison.OrdinalIgnoreCase) &&
+               automationId.StartsWith("Item ", StringComparison.OrdinalIgnoreCase) &&
+               (name.Equals("System", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("システム", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("システム メニュー", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsWindowManagementRequest(string? request)
+    {
+        if (string.IsNullOrWhiteSpace(request)) return false;
+        var text = request.Trim();
+        string[] terms =
+        [
+            "最小化", "最大化", "元のサイズ", "ウィンドウサイズ", "ウィンドウを閉", "画面を閉", "閉じる", "閉じて",
+            "minimize", "maximise", "maximize", "restore window", "close window", "window size"
+        ];
+        return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private static int ContextPriority(UiElementCandidate item)
