@@ -55,9 +55,20 @@ function enforceVisibleFirst(body, decision) {
         return target(direct, launcherAction(direct), launcherInstruction(direct), 0.995);
       }
     } else {
+      const pageSearch = findWebSearch(elements, foreground);
+      const proposedTarget = elements.find(x => String(x.id) === String(decision.targetId || ''));
+      const proposedUsesAddress = proposedTarget && elementRole(proposedTarget) === 'browser_address';
+      if (pageSearch && ((decision.action === 'press_key' && /^ctrl\+l$/i.test(String(decision.key || ''))) || proposedUsesAddress)) {
+        return target(pageSearch, pageSearch.focused ? 'type_text' : 'left_click',
+          pageSearch.focused
+            ? '画面の中の検索欄に検索したい名前を入力し、最後に「Enter」と書かれたキーを1回押してください。'
+            : 'ページの中にある検索欄で、マウスの左ボタンを1回押してください。',
+          0.995, pageSearch.focused ? 'Enter' : null);
+      }
+
       if (decision.action === 'press_key' && /^ctrl\+l$/i.test(String(decision.key || ''))) {
         const address = findAddressField(elements, foreground);
-        if (address) return target(address, 'left_click', '画面上部の、検索や文字を入力できる欄で、マウスの左ボタンを1回押してください。', 0.995);
+        if (address) return target(address, 'left_click', '画面上部の、検索や文字を入力できる欄で、マウスの左ボタンを1回押してください。', 0.99);
       }
       if (decision.action === 'press_key' && /^ctrl\+t$/i.test(String(decision.key || ''))) {
         const newTab = findNewTab(elements, foreground);
@@ -108,8 +119,6 @@ function reachableLauncher(x, foreground, startOpen) {
   if (START_PROCESS.test(process)) return startOpen;
   if (process !== 'explorer') return false;
   if (/^(button|menuitem)$/i.test(type)) return true;
-  // Desktop shortcuts can be behind another maximized window. Treat ListItems as reachable
-  // only when the Explorer/desktop scene itself is active.
   return /^(listitem)$/i.test(type) && (!foreground || foreground === 'explorer');
 }
 
@@ -146,16 +155,29 @@ function appInstruction(x) {
     : `青い枠の「${name}」で、マウスの左ボタンを1回押してください。`;
 }
 
+function elementRole(element) {
+  const match = String(element?.automationId || '').match(/(?:^|\|)role:([a-z_]+)/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
 function findWindowsSearch(elements) {
-  return elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' &&
-    /(検索|search)/i.test(`${x.name || ''} ${x.automationId || ''}`) &&
-    /searchhost|startmenuexperiencehost|explorer/i.test(String(x.processName || ''))) || null;
+  return elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'windows_search') ||
+    elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' &&
+      /(検索|search)/i.test(`${x.name || ''} ${x.automationId || ''}`) &&
+      /searchhost|startmenuexperiencehost|explorer/i.test(String(x.processName || ''))) || null;
+}
+
+function findWebSearch(elements, foreground) {
+  return elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
+    String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'web_search') || null;
 }
 
 function findAddressField(elements, foreground) {
   return elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
-    String(x.controlType || '').toLowerCase() === 'edit' &&
-    /(アドレス|検索|address|search|location|omnibox)/i.test(`${x.name || ''} ${x.automationId || ''} ${x.className || ''}`)) || null;
+    String(x.controlType || '').toLowerCase() === 'edit' && elementRole(x) === 'browser_address') ||
+    elements.find(x => String(x.processName || '').toLowerCase() === foreground &&
+      String(x.controlType || '').toLowerCase() === 'edit' &&
+      /(アドレス|address|location|omnibox|urlbar|url bar|web address)/i.test(`${x.name || ''} ${x.automationId || ''} ${x.className || ''}`)) || null;
 }
 
 function findNewTab(elements, foreground) {
