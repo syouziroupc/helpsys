@@ -8,14 +8,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>HelpSys</AssemblyName>
     <RootNamespace>HelpSys</RootNamespace>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(SafeBuild)' == 'true'">
     <DefineConstants>$(DefineConstants);HELPSYS_SAFE_BUILD</DefineConstants>
-    <AssemblyName>HelpSys.Safe</AssemblyName>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(SafeBuild)' == 'true' and '$(SafeTestBuild)' == 'true'">
-    <DefineConstants>$(DefineConstants);HELPSYS_SAFE_TEST_BUILD</DefineConstants>
-    <AssemblyName>HelpSys.Safe.Test</AssemblyName>
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+    <OptimizationPreference>Speed</OptimizationPreference>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
