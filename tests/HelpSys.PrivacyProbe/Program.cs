@@ -180,42 +180,28 @@ Assert(!outboundJson.Contains("REQUEST_SECRET", StringComparison.Ordinal) && !ou
 AssertThrows<InvalidOperationException>(
     () => { using var _ = new CloudAiAdapter("http://example.com"); },
     "External plaintext HTTP must be rejected.");
-
-if (expectSafeProfile)
+AssertThrows<InvalidOperationException>(
+    () => { using var _ = new CloudAiAdapter("http://127.0.0.1:8787"); },
+    "Distributed unified HelpSys must reject loopback endpoints; loopback is CI-test-build only.");
+AssertThrows<InvalidOperationException>(
+    () => { using var _ = new CloudAiAdapter("https://example.com"); },
+    "Distributed unified HelpSys must reject HTTPS origins outside the code-reviewed allowlist.");
+using (var approvedAdapter = new CloudAiAdapter())
 {
-    AssertThrows<InvalidOperationException>(
-        () => { using var _ = new CloudAiAdapter("http://127.0.0.1:8787"); },
-        "Production Safe build must reject loopback endpoints; loopback is test-build only.");
-    AssertThrows<InvalidOperationException>(
-        () => { using var _ = new CloudAiAdapter("https://example.com"); },
-        "Production Safe build must reject HTTPS origins outside the code-reviewed allowlist.");
-}
-else
-{
-    using var loopback = new CloudAiAdapter("http://127.0.0.1:8787");
+    Assert(approvedAdapter.IsConfigured, "Unified HelpSys must default to the approved production HelpSys origin.");
 }
 
-var oldNormalApiBase = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
-var oldSafeApiBase = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");
-var oldSafeApiKey = Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_KEY");
+var oldApiBase = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
 try
 {
     Environment.SetEnvironmentVariable("HELPSYS_API_BASE", "http://127.0.0.1:8787");
-    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_BASE", null);
-    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_KEY", null);
-    using var defaultAdapter = new CloudAiAdapter();
-    if (expectSafeProfile)
-        Assert(!defaultAdapter.IsConfigured,
-            "Safe build must fail closed when HELPSYS_SAFE_API_BASE is absent, even if HELPSYS_API_BASE is set.");
-    else
-        Assert(defaultAdapter.IsConfigured,
-            "Normal build should retain its configured/default cloud endpoint behavior.");
+    AssertThrows<InvalidOperationException>(
+        () => { using var _ = new CloudAiAdapter(); },
+        "A production environment variable must not unlock loopback egress.");
 }
 finally
 {
-    Environment.SetEnvironmentVariable("HELPSYS_API_BASE", oldNormalApiBase);
-    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_BASE", oldSafeApiBase);
-    Environment.SetEnvironmentVariable("HELPSYS_SAFE_API_KEY", oldSafeApiKey);
+    Environment.SetEnvironmentVariable("HELPSYS_API_BASE", oldApiBase);
 }
 
 var oldDiagnostic = Environment.GetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE");
@@ -231,16 +217,8 @@ try
     Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_MODE", "1");
     Environment.SetEnvironmentVariable("HELPSYS_DIAGNOSTIC_RAW_SCREEN", "I_UNDERSTAND_RAW_SCREEN_DATA");
     var diagnosticsRequested = new DiagnosticModePolicy();
-    if (expectSafeProfile)
-    {
-        Assert(!diagnosticsRequested.Enabled && !diagnosticsRequested.RawScreenPersistenceAllowed,
-            "Safe build must permanently disable raw diagnostic screen persistence.");
-    }
-    else
-    {
-        Assert(diagnosticsRequested.Enabled && diagnosticsRequested.RawScreenPersistenceAllowed,
-            "Normal build requires both explicit diagnostic opt-ins before raw screen persistence may be considered.");
-    }
+    Assert(diagnosticsRequested.Enabled && !diagnosticsRequested.RawScreenPersistenceAllowed,
+        "Unified diagnostics may expose metadata, but raw screen persistence must remain permanently disabled.");
 }
 finally
 {
@@ -268,9 +246,9 @@ finally
 }
 
 if (expectSafeProfile)
-    Assert(gate.Profile == PrivacyPolicyProfile.Safe, "Safe build did not compile with the Safe privacy profile.");
+    Assert(gate.Profile == PrivacyPolicyProfile.Safe, "Unified build did not compile with the strict Safe privacy profile.");
 else
-    Assert(gate.Profile == PrivacyPolicyProfile.Normal, "Normal build unexpectedly compiled with the Safe privacy profile.");
+    Assert(gate.Profile == PrivacyPolicyProfile.Safe, "Unified build must use the strict Safe privacy profile by default.");
 
 for (var i = 0; i < 1000; i++) gate.EvaluateState(safeContext, []);
 var stopwatch = Stopwatch.StartNew();
