@@ -35,13 +35,13 @@ jobs:
       - name: Restore
         run: dotnet restore src/HelpSys.Desktop/HelpSys.Desktop.csproj
 
-      - name: Build normal edition
+      - name: Build unified CI test edition
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
-          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -o smoke-bin/normal
-          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Normal UI smoke executable was not produced.' }
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:TestBuild=true -o smoke-bin/normal
+          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Unified UI smoke executable was not produced.' }
 
       - name: UI and perceived-performance smoke
         shell: pwsh
