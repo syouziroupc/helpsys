@@ -145,11 +145,11 @@ try {
   Start-Sleep -Seconds 2
   if ($target.HasExited) { throw 'Smoke target exited before occluder test.' }
 
-  # GitHub-hosted Windows runners can keep Windows Terminal foreground even though the dedicated
-  # WinForms target is visible. Force the exact target HWND foreground BEFORE creating the
-  # non-activating overlay. The later overlay must stay visually above it without changing focus.
-  $targetHwnd = Activate-SmokeTarget $target
-
+  # Start the unrelated TopMost overlay first. Launching a separate PowerShell process can
+  # transiently take foreground on GitHub-hosted Windows runners, which is a harness effect rather
+  # than the overlay behavior under test. Once the overlay is visible and WS_EX_NOACTIVATE is
+  # confirmed, explicitly make the real target foreground and assert that the visible TopMost
+  # overlay does not take focus back while it remains above the target.
   $overlay = Start-Process powershell.exe `
     -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' `
     -RedirectStandardOutput $overlayStdout `
@@ -168,14 +168,15 @@ try {
   if ($overlay.Id -eq $target.Id) { throw 'Occluder smoke requires a distinct overlay process.' }
 
   $overlayBounds = Get-Content 'artifacts/occluder-overlay-bounds.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($overlayBounds.showActivated -ne $false -or $overlayBounds.topmost -ne $true) {
-    throw 'Occluder helper did not preserve the required non-activating TopMost test condition.'
+  if ($overlayBounds.showActivated -ne $false -or $overlayBounds.topmost -ne $true -or $overlayBounds.noActivateStyle -ne $true) {
+    throw 'Occluder helper did not preserve the required WS_EX_NOACTIVATE TopMost test condition.'
   }
 
-  Start-Sleep -Milliseconds 250
+  $targetHwnd = Activate-SmokeTarget $target
+  Start-Sleep -Milliseconds 350
   $foregroundAfterOverlay = [HelpSysOccluderNative]::GetForegroundWindow()
   if ($foregroundAfterOverlay -ne $targetHwnd) {
-    throw "No-activate overlay unexpectedly stole foreground from the real target. expected=$targetHwnd actual=$foregroundAfterOverlay"
+    throw "No-activate overlay stole foreground after target activation. expected=$targetHwnd actual=$foregroundAfterOverlay"
   }
 
   Save-DesktopScreenshot 'helpsys-occluder-source.png'
