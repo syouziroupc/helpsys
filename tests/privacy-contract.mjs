@@ -67,6 +67,7 @@ assert(cloud.includes('PrivacyGate'), 'Cloud guidance must depend on PrivacyGate
 assert(cloud.includes('PreflightPrivacy'), 'Cloud guidance must preflight before screenshot creation.');
 assert(cloud.includes('PrivacyBlocked?.Invoke'), 'Blocked egress must signal Privacy Mode.');
 assert(!cloud.includes('ImageDataUri'), 'CloudGuideService must not directly extract screenshot bytes.');
+assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(7)'), 'Cloud guidance attempts must remain bounded for interactive use.');
 assert(speech.includes('CloudAiAdapter') && !speech.includes('HttpClient'), 'Speech transcription must use the shared adapter.');
 assert(speech.includes('CloudTranscriptionAllowed => true'), 'Unified HelpSys should retain explicit voice input.');
 assert(education.includes('CloudAiAdapter') && !education.includes('HttpClient'), 'Education AI must use the shared adapter.');
@@ -76,6 +77,11 @@ assert(gate.includes('PrivacyClassification.Unknown'), 'PrivacyGate must have UN
 assert(gate.includes('privacy_gate_failure'), 'PrivacyGate failures must fail closed.');
 for (const code of ['password_control','otp_or_mfa','browser_secret_storage','financial_service','card_authentication'])
   assert(gate.includes(code), `PrivacyGate lost hard block ${code}.`);
+assert(!gate.includes('personal_data_visible'), 'Ordinary contact PII must be locally redacted instead of globally blocking guidance.');
+assert(gate.includes('EmailRegex.Replace(value, "<email>")') &&
+       gate.includes('JapanesePhoneRegex.Replace(value, "<phone>")') &&
+       gate.includes('PostalCodeRegex.Replace(value, "<postal-code>")'),
+  'Structured contact PII redaction must remain active when global PII blocking is removed.');
 assert(!gate.includes('HttpClient') && !gate.includes('Task<'), 'PrivacyGate hot path must remain local and synchronous.');
 assert(!gate.includes('File.') && !gate.includes('Clipboard'), 'PrivacyGate must not read files or clipboard contents.');
 assert(!gate.includes('value = x.Value'), 'Raw UI input values must never enter outbound payloads.');
@@ -95,11 +101,16 @@ assert(xaml.includes('x:Name="PrivacyButton"'), 'The user must have a one-click 
 
 assert(privacySentinel.includes('PrivacySentinelEventSystemForeground'), 'Privacy Sentinel must monitor foreground changes.');
 assert(privacySentinel.includes('_cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>())'), 'Privacy Sentinel must use centralized preflight.');
-assert(privacySentinel.includes('foreground_transition_unverified'), 'Foreground disagreement must become UNKNOWN.');
+assert(privacySentinel.includes('foreground_transition_unverified'), 'Persistently unverified foreground disagreement must become UNKNOWN.');
 assert(privacySentinel.includes('PrivacySentinel_SuspendCloudAudio'), 'Dangerous screens must cancel cloud speech.');
+assert(privacySentinel.includes('if (button.Name is "GuideButton" or "AnswerButton")'), 'Guide/Answer must be recognized as local session startup.');
+assert(privacySentinel.includes('await Task.Delay(140)') && privacySentinel.includes('await Task.Delay(180)'),
+  'Foreground mismatch must be debounced before pausing the whole guidance session.');
 
 assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Quality guidance must preflight privacy before screenshot creation.');
 assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Quality preflight must precede screenshot capture.');
+assert(qualityUi.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(38))'), 'Interactive guidance must not retain the old 70-second stall window.');
+assert(!qualityUi.includes('Opacity = 0'), 'Screen capture must not visibly hide the HelpSys window and flicker the UI.');
 assert(recoveryUi.includes('_cloudGuide.PreflightPrivacy'), 'Recovery guidance must preflight privacy.');
 assert(recoveryUi.indexOf('_cloudGuide.PreflightPrivacy') < recoveryUi.indexOf('CaptureQualityFrameAsync'), 'Recovery preflight must precede capture.');
 
@@ -108,6 +119,9 @@ assert(watcher.includes('StructureChangedEventHandler'), 'Meaningful structure c
 assert(!watcher.includes('ValuePattern.ValueProperty'), 'Per-character input values must not trigger the watcher.');
 
 assert(capture.includes('CaptureSensitiveInputBounds'), 'Screenshot privacy scan must remain independent of ranked candidates.');
+assert(capture.includes('current.ProcessId == captureArea.TargetProcessId'), 'Sensitive UIA scanning must be scoped to the verified work surface.');
+assert(capture.includes('captureArea.ShellSurface && IsRelatedShellProcess(current.ProcessId)'), 'Windows shell capture must still include related shell UI trees.');
+assert(capture.includes('CaptureOccluderBounds'), 'Unrelated windows above the target must remain whole-window redacted.');
 assert(capture.includes('if (current.IsPassword) return true;'), 'Password controls must remain redacted.');
 assert(capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'Visible input controls must remain redacted.');
 assert(!capture.includes('valuePattern.Current.Value'), 'Screenshot redaction must not read raw input values.');
