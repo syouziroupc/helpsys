@@ -214,9 +214,13 @@ public sealed class UiAutomationScanner
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                     var isPassword = current.IsPassword;
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
-                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : current.Name ?? string.Empty;
+                    var rawName = current.Name ?? string.Empty;
+                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : rawName;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
+                    var processName = GetProcessName(current.ProcessId, processNames);
+                    if (isInput && !isPassword)
+                        automationId = AnnotateInputSemanticRole(automationId, rawName, className, processName);
                     var isInteractive = IsInteractiveType(typeName);
                     var isContext = !isInteractive && IsContextType(typeName, name, rect);
 
@@ -225,7 +229,7 @@ public sealed class UiAutomationScanner
                         var actionState = ReadActionState(element, typeName, isPassword);
                         interactive.Add(new UiElementCandidate(
                             $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
-                            Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
+                            Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId,
                             actionState.Value, actionState.ToggleState, actionState.Selected, actionState.ExpandCollapseState));
@@ -234,7 +238,7 @@ public sealed class UiAutomationScanner
                     {
                         context.Add(new UiElementCandidate(
                             $"c{context.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
-                            Trim(typeName.Replace("ControlType.", string.Empty), 80), GetProcessName(current.ProcessId, processNames),
+                            Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             false, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
                     }
@@ -306,6 +310,52 @@ public sealed class UiAutomationScanner
         catch (InvalidOperationException) { }
 
         return new ActionState(value, toggleState, selected, expandCollapseState);
+    }
+
+    private static string AnnotateInputSemanticRole(string automationId, string rawName, string className, string processName)
+    {
+        var role = ClassifyInputSemanticRole(automationId, rawName, className, processName);
+        if (string.IsNullOrEmpty(role)) return automationId;
+        var baseId = Trim(automationId, 88);
+        return string.IsNullOrWhiteSpace(baseId) ? $"role:{role}" : $"{baseId}|role:{role}";
+    }
+
+    private static string? ClassifyInputSemanticRole(string automationId, string rawName, string className, string processName)
+    {
+        var process = processName ?? string.Empty;
+        var hint = $"{rawName} {automationId} {className}";
+
+        if ((process.Contains("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+             process.Contains("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+             process.Equals("explorer", StringComparison.OrdinalIgnoreCase)) &&
+            (hint.Contains("search", StringComparison.OrdinalIgnoreCase) || hint.Contains("検索", StringComparison.OrdinalIgnoreCase)))
+            return "windows_search";
+
+        var browser = process.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("firefox", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("brave", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("opera", StringComparison.OrdinalIgnoreCase) ||
+                      process.Equals("vivaldi", StringComparison.OrdinalIgnoreCase);
+        if (!browser) return null;
+
+        if (hint.Contains("address", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("location", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("url bar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("web address", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("location bar", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("アドレス", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("URL", StringComparison.OrdinalIgnoreCase))
+            return "browser_address";
+
+        if (hint.Contains("search", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("検索", StringComparison.OrdinalIgnoreCase) ||
+            hint.Contains("query", StringComparison.OrdinalIgnoreCase))
+            return "web_search";
+
+        return null;
     }
 
     private static double CandidatePriority(UiElementCandidate item)
