@@ -3,10 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HelpSys安全版の公開前プライバシー監査状況。">
+  <meta name="description" content="HelpSys Safe Preview。Privacy Gateを強化し、クラウドAI接続は既定で無効にしたWindows向け安全版です。">
   <meta name="theme-color" content="#0b1020">
-  <meta name="robots" content="noindex">
-  <title>HelpSys Safe — 公開前プライバシー監査中</title>
+  <title>HelpSys Safe Preview — 安全版ダウンロード</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -22,26 +21,46 @@
   <main>
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">SAFE EDITION ・ PRE-RELEASE REVIEW</p>
-        <h1>安全版は、<br><span>公開前監査中です。</span></h1>
-        <p class="lead">安全版のバイナリは継続して自動ビルド・検査していますが、クラウドAI事業者の処理地域とモデル利用条件の確認が完了するまで一般公開しません。通常版とEducation版の既存ダウンロードは継続します。</p>
+        <p class="eyebrow">SAFE PREVIEW ・ WINDOWS 10 / 11</p>
+        <h1>安全側に倒す、<br><span>HelpSys。</span></h1>
+        <p class="lead">HelpSys Safe Previewは、Privacy Gateを厳格化した開発版です。既定ではクラウドAI接続なしで起動し、承認済み接続先が明示設定されていない限り画面データを外部AIへ送りません。クラウド音声認識とCommanderも無効です。</p>
         <div class="actions">
-          <a class="download-button" href="/">トップへ戻る</a>
-          <a class="download-button ghost" href="https://github.com/syouziroupc/helpsys/pull/21" target="_blank" rel="noopener noreferrer">監査中の変更を見る</a>
+          <a class="download-button" href="/download/safe">Safe Preview ZIPをダウンロード</a>
+          <a class="download-button ghost" href="/">通常版・Education版を見る</a>
         </div>
+        <span class="download-note">64-bit ・ 開発版 ・ AI事業者側のプライバシー監査は継続中</span>
       </div>
     </section>
 
     <section class="section">
       <div class="section-title">
-        <p class="eyebrow">RELEASE GATE</p>
-        <h2>未確認事項を残したまま配布しない。</h2>
+        <p class="eyebrow">SAFE DEFAULTS</p>
+        <h2>送らない状態を初期値にする。</h2>
       </div>
       <div class="feature-list">
-        <div><strong>ローカル安全機構</strong><span>Privacy Gate、危険画面の事前遮断、入力欄マスク、UNKNOWN時fail-closedを通常CIとSafe専用CIで検査します。</span></div>
-        <div><strong>クラウド送信</strong><span>画面由来データはPrivacy Gateを通過した場合だけCloud AI Adapterへ渡します。危険画面ではスクリーンショット自体を生成しません。</span></div>
-        <div><strong>保存</strong><span>生スクリーンショット、OCR全文、入力値、Cookie、Token、Passwordは通常保存対象にしません。Safe版では診断用の生画面保存も無効化します。</span></div>
-        <div><strong>事業者条件</strong><span>学習利用、保持、目的外利用、処理地域、契約・モデル利用条件を確認し、必須項目が揃った後にのみSafe ZIPを公開します。</span></div>
+        <div><strong>既定ではクラウドAI接続なし</strong><span>Safe版には通常版のAI API接続先を引き継ぐ既定値がありません。接続先未設定なら、クラウド利用前にfail-closedで停止します。</span></div>
+        <div><strong>秘密情報をローカル遮断</strong><span>Password、OTP、Token、API Key、Cookie/Storage、金融認証などはAIに判定させる前にPrivacy Gateで遮断します。</span></div>
+        <div><strong>UNKNOWNも送らない</strong><span>安全判定に失敗した場合や画面状態を十分に確認できない場合は、クラウド送信せずPrivacy Modeへ移行します。</span></div>
+        <div><strong>クラウド音声を無効化</strong><span>Safe版では音声データをクラウドへ送らず、Commanderのクラウド文字起こしも使用しません。文字入力で依頼します。</span></div>
+      </div>
+    </section>
+
+    <section class="privacy">
+      <div>
+        <p class="eyebrow">CURRENT LIMITATION</p>
+        <h2>「Safe Preview」と「AI事業者承認済み」は別です。</h2>
+      </div>
+      <p>配布しているSafe Previewは、クラウド送信を既定で無効にしたバイナリです。Cloudflare Workers AIについては、プロンプトキャッシュ、推論処理地域、各モデルの利用条件に未確認事項が残るため、AI接続を含むSafe運用を「プライバシー監査完了」とは扱っていません。将来、接続運用を正式化する場合は別途監査を完了させます。</p>
+    </section>
+
+    <section class="download-panel">
+      <div>
+        <p class="eyebrow">DOWNLOAD</p>
+        <h2>HelpSys Safe Preview</h2>
+        <p>Windows 10 / 11、64-bit向け。通常版・Education版とは別のSafeプロファイルでビルドされています。</p>
+      </div>
+      <div class="download-panel-actions">
+        <a class="download-button secondary" href="/download/safe">安全版をダウンロード</a>
       </div>
     </section>
   </main>
