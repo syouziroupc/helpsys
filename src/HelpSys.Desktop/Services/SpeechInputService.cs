@@ -10,11 +10,14 @@ namespace HelpSys.Services;
 
 public sealed class SpeechInputService : IDisposable
 {
-    private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan InitialSilenceTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan EndSilenceTimeout = TimeSpan.FromMilliseconds(900);
-    private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan MaximumCaptureTime = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan MinimumSpeechTime = TimeSpan.FromMilliseconds(240);
     private static readonly TimeSpan TranscriptionTimeout = TimeSpan.FromSeconds(18);
-    private const double MinimumVoiceLevel = 0.018;
+    private const double InitialNoiseFloor = 0.0025;
+    private const double MinimumStartThreshold = 0.010;
+    private const double MaximumStartThreshold = 0.065;
 
     private readonly CloudAiAdapter _adapter = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -110,6 +113,9 @@ public sealed class SpeechInputService : IDisposable
         var completion = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopwatch = Stopwatch.StartNew();
         var lastVoice = TimeSpan.Zero;
+        var speechStartedAt = TimeSpan.Zero;
+        var noiseFloor = InitialNoiseFloor;
+        var possibleVoiceFrames = 0;
         var speechHeard = 0;
         var stopRequested = 0;
         var cancelled = 0;
@@ -142,18 +148,56 @@ public sealed class SpeechInputService : IDisposable
                 return;
             }
 
-            var level = CalculatePeak(e.Buffer, e.BytesRecorded);
+            var level = CalculateRms(e.Buffer, e.BytesRecorded);
             var elapsed = stopwatch.Elapsed;
-            if (level >= MinimumVoiceLevel)
+            var startThreshold = Math.Clamp(noiseFloor * 2.6 + 0.004, MinimumStartThreshold, MaximumStartThreshold);
+            var continueThreshold = Math.Clamp(
+                Math.Max(noiseFloor * 1.55 + 0.0025, startThreshold * 0.55),
+                0.006,
+                startThreshold * 0.82);
+
+            if (Volatile.Read(ref speechHeard) == 0)
             {
-                Interlocked.Exchange(ref speechHeard, 1);
-                lastVoice = elapsed;
+                if (level >= startThreshold)
+                {
+                    possibleVoiceFrames++;
+                }
+                else
+                {
+                    possibleVoiceFrames = Math.Max(0, possibleVoiceFrames - 1);
+                    noiseFloor = UpdateNoiseFloor(noiseFloor, level, 0.08);
+                }
+
+                // Two consecutive 100 ms frames prevent clicks/fan transients from starting a turn.
+                if (possibleVoiceFrames >= 2)
+                {
+                    Interlocked.Exchange(ref speechHeard, 1);
+                    speechStartedAt = elapsed;
+                    lastVoice = elapsed;
+                }
             }
-            ShowListening(level);
+            else
+            {
+                // Hysteresis: once speech starts, use a lower threshold so quiet syllables do not
+                // terminate the utterance, while steady microphone noise still falls below it.
+                if (level >= continueThreshold)
+                {
+                    lastVoice = elapsed;
+                }
+                else
+                {
+                    noiseFloor = UpdateNoiseFloor(noiseFloor, level, 0.015);
+                }
+            }
+
+            var displayReference = Volatile.Read(ref speechHeard) == 0 ? startThreshold : continueThreshold;
+            ShowListening(Math.Clamp(level / Math.Max(displayReference * 2.2, 0.02), 0d, 1d));
 
             if (elapsed >= MaximumCaptureTime ||
                 (Volatile.Read(ref speechHeard) == 0 && elapsed >= InitialSilenceTimeout) ||
-                (Volatile.Read(ref speechHeard) != 0 && elapsed - lastVoice >= EndSilenceTimeout))
+                (Volatile.Read(ref speechHeard) != 0 &&
+                 elapsed - speechStartedAt >= MinimumSpeechTime &&
+                 elapsed - lastVoice >= EndSilenceTimeout))
             {
                 RequestStop();
             }
@@ -246,16 +290,26 @@ public sealed class SpeechInputService : IDisposable
         if (_listeningOverlay.IsVisible) _listeningOverlay.Hide();
     }
 
-    private static double CalculatePeak(byte[] buffer, int count)
+    private static double CalculateRms(byte[] buffer, int count)
     {
-        var peak = 0;
+        if (count < 2) return 0d;
+        double sumSquares = 0d;
+        var samples = 0;
         for (var i = 0; i + 1 < count; i += 2)
         {
             var sample = (short)(buffer[i] | (buffer[i + 1] << 8));
-            var value = Math.Abs(sample == short.MinValue ? short.MaxValue : sample);
-            if (value > peak) peak = value;
+            var normalized = sample / 32768d;
+            sumSquares += normalized * normalized;
+            samples++;
         }
-        return Math.Clamp(peak / 32767d, 0d, 1d);
+        return samples == 0 ? 0d : Math.Clamp(Math.Sqrt(sumSquares / samples), 0d, 1d);
+    }
+
+    private static double UpdateNoiseFloor(double current, double observed, double alpha)
+    {
+        if (!double.IsFinite(observed) || observed < 0) return current;
+        var bounded = Math.Clamp(observed, 0d, MaximumStartThreshold);
+        return Math.Clamp(current * (1d - alpha) + bounded * alpha, 0.0005, 0.04);
     }
 
     private void DispatchOverlay(Action action)

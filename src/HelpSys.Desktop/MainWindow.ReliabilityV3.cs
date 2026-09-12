@@ -459,6 +459,18 @@ public partial class MainWindow
         if (after.ForegroundProcessId <= 0 || string.IsNullOrWhiteSpace(after.ForegroundProcess)) return false;
         if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
+
+        // Browser navigations can keep the same process and very similar UIA geometry. Window title
+        // is a local-only signal and catches result-page transitions even when URL capture is stale
+        // or unavailable. Stability is still required by WaitForStableStateTransitionV3Async.
+        if (before.Browser is not null && after.Browser is not null)
+        {
+            var beforeTitle = before.ForegroundTitle?.Trim() ?? string.Empty;
+            var afterTitle = after.ForegroundTitle?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(afterTitle) &&
+                !beforeTitle.Equals(afterTitle, StringComparison.Ordinal)) return true;
+        }
+
         var beforeUrl = before.Browser?.Url ?? string.Empty;
         var afterUrl = after.Browser?.Url ?? string.Empty;
         return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(afterUrl);
@@ -509,11 +521,31 @@ public partial class MainWindow
         var by = (int)Math.Round(x.Y / 24d);
         var bw = (int)Math.Round(x.Width / 24d);
         var bh = (int)Math.Round(x.Height / 24d);
-        var stableName = x.ControlType.ToLowerInvariant() is
-            "button" or "menuitem" or "listitem" or "treeitem" or "tabitem" or "hyperlink" or "checkbox" or "radiobutton"
-            ? NormalizeStableName(x.Name)
-            : string.Empty;
-        return $"{x.ProcessId}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{stableName}|{bx},{by},{bw},{bh}";
+
+        // Names from visible static text are useful for local transition detection, especially on
+        // search-result pages whose layout remains almost unchanged. Never place the raw text in the
+        // key: hash it locally and discard it. Input controls remain excluded from this content token.
+        var localTextToken = x.Password || x.ControlType is "Edit" or "ComboBox"
+            ? string.Empty
+            : LocalTextFingerprintV3(x.Name);
+        return $"{x.ProcessId}|{x.ControlType}|{x.AutomationId}|{x.ClassName}|{localTextToken}|{bx},{by},{bw},{bh}";
+    }
+
+    private static string LocalTextFingerprintV3(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var normalized = NormalizeStableName(value);
+        if (string.IsNullOrWhiteSpace(normalized)) return string.Empty;
+        if (normalized.Length > 180) normalized = normalized[..180];
+
+        // FNV-1a is sufficient here: the token is process-local, ephemeral and never leaves HelpSys.
+        ulong hash = 1469598103934665603UL;
+        foreach (var ch in normalized)
+        {
+            hash ^= char.ToLowerInvariant(ch);
+            hash *= 1099511628211UL;
+        }
+        return hash.ToString("x16");
     }
 
     private static bool MatchesKeySpecV3(string? keySpec, KeyObservation observation)

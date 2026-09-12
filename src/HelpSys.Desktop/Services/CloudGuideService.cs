@@ -168,13 +168,57 @@ public sealed class CloudGuideService : IDisposable
         var foregroundId = systemContext.ForegroundProcessId;
         if (foregroundId <= 0 && string.IsNullOrWhiteSpace(foregroundName)) return [];
 
-        return elements
+        var relevant = elements
             .Where(x =>
                 (foregroundId > 0 && x.ProcessId == foregroundId) ||
                 (!string.IsNullOrWhiteSpace(foregroundName) && x.ProcessName.Equals(foregroundName, StringComparison.OrdinalIgnoreCase)) ||
                 ShellProcesses.Contains(x.ProcessName))
-            .Take(280)
             .ToArray();
+
+        // Keep the outbound cap unchanged, but reserve browser evidence slots for headings, result
+        // snippets and document text. Previously a link-heavy page could consume all 280 slots with
+        // interactable nodes and starve the model of the surrounding context needed to understand it.
+        var contextBudget = systemContext.Browser is null ? 45 : 80;
+        var interactiveBudget = 280 - contextBudget;
+
+        var selected = new List<UiElementCandidate>(280);
+        selected.AddRange(relevant
+            .Where(x => x.Interactable)
+            .OrderByDescending(x => x.Focused)
+            .ThenByDescending(x => x.Enabled)
+            .ThenByDescending(x => !string.IsNullOrWhiteSpace(x.Name))
+            .Take(interactiveBudget));
+
+        selected.AddRange(relevant
+            .Where(x => !x.Interactable && !string.IsNullOrWhiteSpace(x.Name))
+            .OrderByDescending(ContextPriority)
+            .Take(contextBudget));
+
+        if (selected.Count < 280)
+        {
+            var selectedIds = selected.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
+            selected.AddRange(relevant
+                .Where(x => !selectedIds.Contains(x.Id))
+                .Take(280 - selected.Count));
+        }
+
+        return selected.Take(280).ToArray();
+    }
+
+    private static int ContextPriority(UiElementCandidate item)
+    {
+        var score = item.ControlType switch
+        {
+            "Document" => 90,
+            "Text" => 80,
+            "Group" => 60,
+            "Pane" => 50,
+            "Window" => 40,
+            _ => 10
+        };
+        if (!string.IsNullOrWhiteSpace(item.Name)) score += Math.Min(30, item.Name.Length / 12);
+        if (item.Focused) score += 40;
+        return score;
     }
 
     private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
