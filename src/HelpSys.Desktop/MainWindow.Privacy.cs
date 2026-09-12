@@ -34,9 +34,7 @@ public partial class MainWindow
             return;
         }
 
-        SetState(
-            "HelpSys 統合版：Privacy Gateで秘密情報を遮断し、安全な画面だけを解析します。音声入力は利用者が開始したときだけ送信します。",
-            speak: false);
+        SetState("HelpSys 統合版：秘密情報の画面では送信を停止します。", speak: false);
     }
 
     private void MainWindow_PrivacyClosed(object? sender, EventArgs e)
