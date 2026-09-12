@@ -13,6 +13,9 @@
     <TieredPGO>true</TieredPGO>
     <OptimizationPreference>Speed</OptimizationPreference>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(TestBuild)' == 'true'">
+    <DefineConstants>$(DefineConstants);HELPSYS_TEST_BUILD</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
     <PackageReference Include="NAudio" Version="3.0.1" />
