@@ -17,6 +17,7 @@ const wrangler = read('wrangler.jsonc');
 const normalRelease = read('.github/workflows/release.yml');
 const educationRelease = read('.github/workflows/education-preview.yml');
 const providerReview = read('docs/AI_PROVIDER_PRIVACY_REVIEW.md');
+const cloudAdapter = read('src/Shared/CloudAiAdapter.cs');
 const educationService = read('src/HelpSys.Education/EducationGuideService.cs');
 const productionGuard = read('worker/reliability-v4-guard.js');
 const educationDoc = read('EDUCATION.md');
@@ -32,7 +33,7 @@ const NORMAL_VERSIONED = 'HelpSys-Reliability-v9-win-x64.zip';
 const SAFE_VERSIONED = 'HelpSys-Safe-v1-win-x64.zip';
 const EDUCATION_VERSIONED = 'HelpSys-Education-v2.2-preview-win-x64.zip';
 const NORMAL_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${NORMAL_ALIAS}`;
-const SAFE_HOLDING_DEST = '/safe.html';
+const SAFE_DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${SAFE_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
 
 function redirectMap(text) {
@@ -51,31 +52,40 @@ function redirectMap(text) {
 const routeMap = redirectMap(redirects);
 assert(routeMap.get(NORMAL_ROUTE)?.destination === NORMAL_DEST, 'Normal HelpSys /download redirect does not match the stable release alias.');
 assert(routeMap.get(NORMAL_ROUTE)?.code === '302', 'Normal HelpSys download redirect must be temporary (302).');
-assert(routeMap.get(SAFE_ROUTE)?.destination === SAFE_HOLDING_DEST, 'Safe /download/safe must remain on the local privacy-review holding page until provider approval.');
-assert(routeMap.get(SAFE_ROUTE)?.code === '302', 'Safe holding redirect must be temporary (302).');
+assert(routeMap.get(SAFE_ROUTE)?.destination === SAFE_DEST, 'Safe /download/safe redirect does not match the Safe stable release alias.');
+assert(routeMap.get(SAFE_ROUTE)?.code === '302', 'Safe download redirect must be temporary (302).');
 assert(routeMap.get(EDUCATION_ROUTE)?.destination === EDUCATION_DEST, 'Education /download/education redirect does not match the stable release alias.');
 assert(routeMap.get(EDUCATION_ROUTE)?.code === '302', 'Education download redirect must be temporary (302).');
 
 assert(index.includes(`href="${NORMAL_ROUTE}"`), 'Public site does not expose the stable normal download route.');
-assert(index.includes(`href="${SAFE_ROUTE}"`), 'Public site does not expose the Safe review route.');
+assert(index.includes(`href="${SAFE_ROUTE}"`), 'Public site does not expose the Safe download route.');
 assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site does not expose the stable Education download route.');
 assert(!index.includes('HelpSys-win-x64.zip'), 'Removed broken HelpSys-win-x64.zip URL has reappeared in the public site.');
-assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not couple directly to a versioned GitHub ZIP URL; use stable local routes.');
+assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must not couple directly to a GitHub ZIP URL; use stable local routes.');
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing from the public site.');
-assert(safePage.includes('公開前プライバシー監査中') || safePage.includes('公開前監査中'), 'Safe holding page must clearly state that public release is still under review.');
-assert(!/\.zip(?:["'])/i.test(safePage), 'Safe holding page must not expose a ZIP while provider approval is blocked.');
+assert(safePage.includes('Safe Preview'), 'Safe detail page must clearly identify the binary as a Safe Preview.');
+assert(safePage.includes('既定ではクラウドAI接続なし') || safePage.includes('クラウドAI接続は既定で無効'), 'Safe detail page must disclose that cloud AI is disabled by default.');
+assert(safePage.includes(`href="${SAFE_ROUTE}"`), 'Safe detail page must expose the stable Safe download route.');
+assert(!/releases\/download\/[^"']+\.zip/i.test(safePage), 'Safe detail HTML must use the stable local route rather than a direct release URL.');
 
-assert(providerReview.includes('SAFE_RELEASE_STATUS: BLOCKED'), 'Safe provider privacy review must remain BLOCKED until every mandatory provider condition is verified.');
+assert(providerReview.includes('SAFE_RELEASE_STATUS: BLOCKED'), 'Provider-connected Safe status must remain BLOCKED until every mandatory provider condition is verified.');
+assert(providerReview.includes('SAFE_BINARY_PREVIEW_STATUS: ALLOWED_WITH_DEFAULT_EGRESS_OFF'), 'Safe binary preview must be explicitly limited to default-egress-off distribution.');
 assert(providerReview.includes('Processing geography / data residency of Workers AI inference | UNRESOLVED'), 'Provider review must explicitly track unresolved Workers AI processing geography.');
 assert(providerReview.includes('Applicable model / third-party license terms | UNRESOLVED'), 'Provider review must explicitly track unresolved model license evidence.');
 
+assert(cloudAdapter.includes('var resolvedBase = apiBase ?? Environment.GetEnvironmentVariable("HELPSYS_SAFE_API_BASE");'), 'Safe CloudAiAdapter must require explicit Safe endpoint configuration.');
+assert(cloudAdapter.includes('_apiBase = string.IsNullOrWhiteSpace(resolvedBase) ? null'), 'Safe CloudAiAdapter must remain unconfigured when the Safe endpoint is absent.');
+assert(cloudAdapter.includes('handler.UseProxy = false;'), 'Safe transport must not inherit an unreviewed OS/user proxy.');
+assert(cloudAdapter.includes('AllowAutoRedirect = false'), 'Safe transport must reject automatic redirects.');
+assert(cloudAdapter.includes('UseCookies = false'), 'Safe transport must not persist cookies.');
+
 assert(normalRelease.includes(NORMAL_ALIAS), 'Normal release workflow does not publish the stable alias used by /download.');
 assert(normalRelease.includes(NORMAL_VERSIONED), 'Normal release workflow lost the traceable Reliability v9 package.');
-assert(normalRelease.includes(SAFE_ALIAS), 'Preview release workflow must still know the Safe stable alias for a future approved release.');
-assert(normalRelease.includes(SAFE_VERSIONED), 'Preview release workflow must still build the traceable Safe package for QA.');
+assert(normalRelease.includes(SAFE_ALIAS), 'Preview release workflow does not publish the Safe stable alias used by /download/safe.');
+assert(normalRelease.includes(SAFE_VERSIONED), 'Preview release workflow lost the traceable Safe package.');
 assert(normalRelease.includes('-p:SafeBuild=true'), 'Safe package is not compiled with the fixed Safe privacy profile.');
-assert(normalRelease.includes("'^SAFE_RELEASE_STATUS: APPROVED$'"), 'Safe public upload must require explicit provider privacy approval.');
-assert(normalRelease.includes('Safe release gate failed'), 'Release workflow must fail if a Safe ZIP becomes public while provider approval is blocked.');
+assert(normalRelease.includes('SAFE_BINARY_PREVIEW_STATUS: ALLOWED_WITH_DEFAULT_EGRESS_OFF'), 'Safe public binary upload must require explicit default-egress-off preview authorization.');
+assert(normalRelease.includes('$normalAsset $normalStable $safeAsset $safeStable'), 'Preview release workflow must upload normal and Safe assets together.');
 assert(normalRelease.includes('Release asset missing after publish'), 'Normal/Safe release workflow does not verify its published assets.');
 assert(educationRelease.includes(EDUCATION_ALIAS), 'Education release workflow does not publish the stable alias used by /download/education.');
 assert(educationRelease.includes(EDUCATION_VERSIONED), 'Education release workflow lost the traceable v2.2 package.');
@@ -100,7 +110,7 @@ assert(exists('site/favicon.svg'), 'favicon.svg referenced by the public site is
 assert(exists('site/style.css'), 'style.css referenced by the public site is missing.');
 assert(index.includes('href="favicon.svg"'), 'favicon should use a deployment-portable relative URL.');
 assert(index.includes('href="style.css"'), 'stylesheet should use a deployment-portable relative URL.');
-assert(safePage.includes('href="favicon.svg"') && safePage.includes('href="style.css"'), 'Safe holding page must use deployment-portable local assets.');
+assert(safePage.includes('href="favicon.svg"') && safePage.includes('href="style.css"'), 'Safe detail page must use deployment-portable local assets.');
 
 assert(/Content-Security-Policy:/i.test(headers), 'Static site security headers are missing Content-Security-Policy.');
 assert(/X-Content-Type-Options:\s*nosniff/i.test(headers), 'Static site security headers are missing nosniff.');
@@ -119,6 +129,6 @@ for (const html of [index, safePage]) {
 
 console.log('HelpSys site/release/API contract passed.');
 console.log(`normal: ${NORMAL_ROUTE} -> ${NORMAL_DEST}`);
-console.log(`safe: ${SAFE_ROUTE} -> ${SAFE_HOLDING_DEST} (provider review blocked)`);
+console.log(`safe: ${SAFE_ROUTE} -> ${SAFE_DEST} (default cloud egress off)`);
 console.log(`education: ${EDUCATION_ROUTE} -> ${EDUCATION_DEST}`);
 console.log(`education API: ${PRODUCTION_BASE}/v1/education/assist`);
