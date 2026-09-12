@@ -320,7 +320,14 @@ public sealed class ScreenCaptureService
                 try
                 {
                     var current = root.Current;
-                    if (current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
+                    // For a normal app, only its verified top-level UIA tree can contribute pixels
+                    // inside the captured work surface. For Windows shell surfaces, include the
+                    // related Explorer/Search/Start trees. Unrelated windows above the target are
+                    // black-redacted wholesale by CaptureOccluderBounds, so walking their full UIA
+                    // trees adds latency without increasing privacy protection.
+                    var inspectRoot = current.ProcessId == captureArea.TargetProcessId ||
+                                      (captureArea.ShellSurface && IsRelatedShellProcess(current.ProcessId));
+                    if (!inspectRoot || current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
                     var bounds = current.BoundingRectangle;
                     if (!bounds.IsEmpty && captureRect.IntersectsWith(bounds)) queue.Enqueue(root);
                 }

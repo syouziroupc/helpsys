@@ -78,27 +78,27 @@ public partial class MainWindow
     {
         if (sender is not Button button || Window.GetWindow(button) is not MainWindow window) return;
 
-        var startsGuideWork = button.Name is "GuideButton" or "AnswerButton";
-        var startsCloudWork = startsGuideWork;
+        // Starting guidance is local work: establish the request, inspect UIA locally, then let the
+        // mandatory per-egress Privacy Gate decide whether any structured data or screenshot may
+        // leave the machine. Blocking the routed Click here made a transient foreground race look
+        // like a dead button even though no cloud egress had been attempted yet.
+        if (button.Name is "GuideButton" or "AnswerButton")
+        {
+            window.PrivacySentinel_ClearPendingInput();
+            return;
+        }
+
+        var startsCloudWork = false;
         if (button.Name is "VoiceButton" or "AnswerVoiceButton")
             startsCloudWork = window._voiceCts is null;
         if (button.Name == "CommanderButton")
             startsCloudWork = !window._commander.Enabled;
 
         if (!startsCloudWork) return;
-        if (window.PrivacySentinel_AllowCloudAction())
-        {
-            if (startsGuideWork) window.PrivacySentinel_ClearPendingInput();
-            return;
-        }
+        if (window.PrivacySentinel_AllowCloudAction()) return;
 
-        if (startsGuideWork)
-            window.PrivacySentinel_StagePendingInput(button.Name == "AnswerButton" ? window.AnswerBox : window.RequestBox);
-
-        // Class handlers run before the XAML instance Click handler. Marking the routed event
-        // handled prevents the original handler from starting UIA scanning, microphone capture or
-        // cloud work on a known-dangerous/unknown screen. The user's typed request is retained only
-        // in local memory so the same task can continue after a safe foreground is verified.
+        // Cloud audio can begin directly from these controls, so an unsafe/unknown foreground still
+        // blocks the action before microphone data can reach cloud transcription.
         e.Handled = true;
     }
 
@@ -106,14 +106,10 @@ public partial class MainWindow
     {
         if (e.Key != Key.Enter || sender is not TextBox box || Window.GetWindow(box) is not MainWindow window) return;
         if (box.Name is not ("RequestBox" or "AnswerBox")) return;
-        if (window.PrivacySentinel_AllowCloudAction())
-        {
-            window.PrivacySentinel_ClearPendingInput();
-            return;
-        }
 
-        window.PrivacySentinel_StagePendingInput(box);
-        e.Handled = true;
+        // Enter starts the same local guidance path as GuideButton. Do not swallow it here; all
+        // actual cloud-bound guidance paths are independently gated immediately before egress.
+        window.PrivacySentinel_ClearPendingInput();
     }
 
     private void PrivacySentinel_StagePendingInput(TextBox source)
@@ -156,10 +152,6 @@ public partial class MainWindow
             return true;
         }
 
-        // A fresh request can be blocked by the class-level preflight before the normal Guide
-        // handler has a chance to establish a session. Recreate only the local session state here;
-        // no UIA scan, screenshot, microphone or network work happens until the safe-screen checks
-        // in TryResumePrivacyModeAsync finish.
         EndSession();
         _originalRequest = pending;
         _activeRequest = pending;
@@ -205,9 +197,9 @@ public partial class MainWindow
             {
                 try
                 {
-                    // SystemContextService has its own foreground hook. Yield briefly so both hooks
-                    // settle on the same HWND; disagreement is treated as UNKNOWN below.
-                    await Task.Delay(45);
+                    // Foreground hooks from different processes can arrive a few tens of milliseconds
+                    // apart. Give SystemContextService a small settling window before comparing HWNDs.
+                    await Task.Delay(70);
                     await PrivacySentinel_CheckForegroundAsync(hwnd);
                 }
                 catch { }
@@ -229,15 +221,43 @@ public partial class MainWindow
         var eventPid = unchecked((int)rawEventPid);
         var context = _systemContext.Capture();
 
-        if (eventPid <= 0 || !HasUsableForeground(context) || context.ForegroundProcessId != eventPid ||
-            context.ForegroundWindowHandle != eventWindow)
+        if (!PrivacySentinel_MatchesForeground(eventPid, eventWindow, context))
         {
+            // Stop cloud audio immediately while the desktop is unsettled, but do not kill a
+            // guidance session on one transient HWND mismatch. Screen/structured egress remains
+            // fail-closed because every send path runs PrivacyGate and an identity check again.
             PrivacySentinel_SuspendCloudAudio();
-            EnterPrivacyMode(new PrivacyAssessment(
-                PrivacyClassification.Unknown,
-                "foreground_transition_unverified",
-                "画面切替を安全に照合できないため、クラウド画面解析を停止しています。"));
-            return;
+
+            await Task.Delay(140);
+            context = _systemContext.Capture();
+
+            // A newer external foreground can legitimately supersede the event we are handling.
+            // Treat the old event as stale, then validate the current foreground normally.
+            if (HasUsableForeground(context) && context.ForegroundWindowHandle != eventWindow)
+            {
+                var currentAssessment = _cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>());
+                if (currentAssessment.CanSend)
+                {
+                    if (_privacyPaused) await TryResumePrivacyModeAsync();
+                    if (!_privacyPaused) PrivacySentinel_RestoreCloudAudio();
+                }
+                return;
+            }
+
+            if (!PrivacySentinel_MatchesForeground(eventPid, eventWindow, context))
+            {
+                await Task.Delay(180);
+                context = _systemContext.Capture();
+            }
+
+            if (!PrivacySentinel_MatchesForeground(eventPid, eventWindow, context))
+            {
+                EnterPrivacyMode(new PrivacyAssessment(
+                    PrivacyClassification.Unknown,
+                    "foreground_transition_unverified",
+                    "画面切替の確認が安定しないため、クラウド画面解析を一時停止しています。"));
+                return;
+            }
         }
 
         var assessment = _cloudGuide.PreflightPrivacy(context, Array.Empty<UiElementCandidate>());
@@ -253,6 +273,12 @@ public partial class MainWindow
             if (!_privacyPaused) PrivacySentinel_RestoreCloudAudio();
         }
     }
+
+    private static bool PrivacySentinel_MatchesForeground(int eventPid, nint eventWindow, SystemContextSnapshot context) =>
+        eventPid > 0 &&
+        HasUsableForeground(context) &&
+        context.ForegroundProcessId == eventPid &&
+        context.ForegroundWindowHandle == eventWindow;
 
     private void PrivacySentinel_SuspendCloudAudio()
     {

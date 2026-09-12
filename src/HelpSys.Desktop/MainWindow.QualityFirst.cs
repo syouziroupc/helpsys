@@ -28,7 +28,7 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(70));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(38));
         var cancellationToken = planningCts.Token;
 
         try
@@ -227,7 +227,7 @@ public partial class MainWindow
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
             {
                 using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
                 try { await TryRouteRecoveryAsync("通常の画面確認が時間内に完了しなかった", generation, recoveryCts.Token); }
                 catch (OperationCanceledException)
                 {
@@ -241,7 +241,7 @@ public partial class MainWindow
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
             {
                 using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
                 try { await TryRouteRecoveryAsync($"操作対象の構造確認に失敗: {ex.GetType().Name}", generation, recoveryCts.Token); }
                 catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
             }
@@ -251,7 +251,7 @@ public partial class MainWindow
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
             {
                 using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(22));
+                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
                 try { await TryRouteRecoveryAsync($"案内処理を現在状態から再構成: {ex.GetType().Name}", generation, recoveryCts.Token); }
                 catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
             }
@@ -357,30 +357,24 @@ public partial class MainWindow
         _speechInput.HideOverlay();
         _overlay.Hide();
         _keyHint.Hide();
-        var previousOpacity = Opacity;
-        try
-        {
-            Opacity = 0;
-            await Task.Delay(70, cancellationToken);
 
-            var captureContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(expectedContext, captureContext))
-                throw new InvalidOperationException("撮影直前に操作対象ウィンドウが変わったため、画面画像を送信しません。");
+        // Keep the HelpSys window visually stable while capturing. ScreenCaptureService already
+        // redacts windows that occlude the verified target, including HelpSys itself, before any
+        // image can leave the machine. Making this window transparent caused visible flicker and
+        // also created unnecessary foreground-transition races.
+        var captureContext = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, captureContext))
+            throw new InvalidOperationException("撮影直前に操作対象ウィンドウが変わったため、画面画像を送信しません。");
 
-            var secondPrivacy = _cloudGuide.PreflightPrivacy(captureContext, candidates);
-            if (!secondPrivacy.CanSend)
-                throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
+        var secondPrivacy = _cloudGuide.PreflightPrivacy(captureContext, candidates);
+        if (!secondPrivacy.CanSend)
+            throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
 
-            return await _screenCapture.CaptureAsync(
-                passwordBounds,
-                expectedProcessId,
-                expectedContext.ForegroundWindowHandle,
-                cancellationToken);
-        }
-        finally
-        {
-            Opacity = previousOpacity;
-        }
+        return await _screenCapture.CaptureAsync(
+            passwordBounds,
+            expectedProcessId,
+            expectedContext.ForegroundWindowHandle,
+            cancellationToken);
     }
 
     private static bool HasSameCaptureIdentity(SystemContextSnapshot expected, SystemContextSnapshot current)

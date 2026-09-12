@@ -87,6 +87,15 @@ var rawCardContext = safeContext with
 Assert(gate.EvaluateState(rawCardContext, []).Classification == PrivacyClassification.Blocked,
     "A valid card-number pattern must hard-block cloud screen analysis.");
 
+var ordinaryContactContext = safeContext with
+{
+    ForegroundProcess = "chrome",
+    ForegroundTitle = "Example shop contact alice@example.com 090-1234-5678 123-4567",
+    ForegroundProcessId = 7733
+};
+Assert(gate.EvaluateState(ordinaryContactContext, []).Classification == PrivacyClassification.Safe,
+    "Ordinary email/phone/postal contact data must be locally redacted instead of globally stopping guidance.");
+
 var unknownContext = safeContext with { ForegroundProcess = "", ForegroundProcessId = 0 };
 Assert(gate.EvaluateState(unknownContext, []).Classification == PrivacyClassification.Unknown,
     "UNKNOWN must not silently become SAFE.");
