@@ -7,21 +7,37 @@ const sentinel = read('src/HelpSys.Desktop/MainWindow.PrivacySentinel.cs');
 const privacy = read('src/HelpSys.Desktop/MainWindow.Privacy.cs');
 const session = read('src/HelpSys.Desktop/Services/GuidanceSessionController.cs');
 
-assert(sentinel.includes('_privacySentinelPendingInput'), 'Blocked Guide/Answer input must have a local-only pending slot.');
-assert(sentinel.includes('_privacySentinelPendingClarification'), 'Blocked clarification input must retain its semantic role locally.');
-assert(sentinel.includes('PrivacySentinel_StagePendingInput'), 'Privacy Sentinel must stage typed intent when it blocks the original routed handler.');
-assert(sentinel.includes('PrivacySentinel_RestorePendingInputForResume'), 'Privacy Sentinel must expose a local restore path for safe-screen resume.');
-assert(sentinel.includes('EndSession();') && sentinel.includes('_activeRequest = pending;'), 'A fresh blocked request must be rebuilt as a normal local session before resume.');
-assert(sentinel.includes('_activeRequest += $"\\n利用者からの追加回答: {pending}"'), 'Blocked clarification answers must remain attached to the existing task.');
-assert(sentinel.includes('no UIA scan, screenshot, microphone or network work happens'), 'Pending request staging must document that it is local-only.');
-assert(!/PrivacySentinel_StagePendingInput[\s\S]{0,900}(?:HttpClient|CloudAiAdapter|CaptureAsync\(|RecognizeOnceAsync)/.test(sentinel),
-  'Pending input staging must not perform cloud, screenshot or microphone work.');
+// Guide/Answer startup is local-only. A transient foreground race must not swallow the routed
+// button/Enter event before the request exists; every actual cloud egress is gated later.
+const guideBranchStart = sentinel.indexOf('if (button.Name is "GuideButton" or "AnswerButton")');
+const guideBranch = guideBranchStart >= 0 ? sentinel.slice(guideBranchStart, guideBranchStart + 420) : '';
+assert(guideBranchStart >= 0, 'Privacy Sentinel must explicitly distinguish local Guide/Answer startup.');
+assert(guideBranch.includes('PrivacySentinel_ClearPendingInput();') && guideBranch.includes('return;'),
+  'Guide/Answer startup must continue through the normal local handler without an early cloud preflight.');
+assert(!guideBranch.includes('e.Handled = true'),
+  'Privacy Sentinel must not swallow Guide/Answer button clicks before the request session starts.');
+
+const enterStart = sentinel.indexOf('private static void PrivacySentinel_TextBoxKeyDown');
+const enterBody = enterStart >= 0 ? sentinel.slice(enterStart, enterStart + 620) : '';
+assert(enterStart >= 0 && enterBody.includes('RequestBox') && enterBody.includes('AnswerBox'),
+  'Enter-key guidance startup must remain covered by the sentinel integration.');
+assert(!enterBody.includes('e.Handled = true'),
+  'Privacy Sentinel must not swallow Request/Answer Enter before the local guidance path runs.');
+
+assert(sentinel.includes('PrivacySentinel_RestorePendingInputForResume'),
+  'Privacy resume must retain backward-compatible local pending-input restoration.');
+assert(sentinel.includes('PrivacySentinel_SuspendCloudAudio'),
+  'Foreground uncertainty must still suspend active cloud audio immediately.');
+assert(sentinel.includes('await Task.Delay(140)') && sentinel.includes('await Task.Delay(180)'),
+  'Transient foreground disagreement must be rechecked before escalating to UNKNOWN Privacy Mode.');
+assert(sentinel.includes('foreground_transition_unverified'),
+  'Persistently unverified foreground transitions must still fail closed.');
 
 const preflight = privacy.indexOf('var contextAssessment = _cloudGuide.PreflightPrivacy');
 const restore = privacy.indexOf('PrivacySentinel_RestorePendingInputForResume();');
 const candidateScan = privacy.indexOf('_scanner.CaptureCandidatesForProcessAsync', restore);
-assert(preflight >= 0 && restore > preflight, 'Pending request must not be restored until the current foreground passes the context-only Privacy Gate.');
-assert(candidateScan > restore, 'UIA candidate scanning must remain after local pending-request restoration and safe foreground verification.');
+assert(preflight >= 0 && restore > preflight, 'Privacy resume must not restore local session state until the current foreground passes the context-only Privacy Gate.');
+assert(candidateScan > restore, 'UIA candidate scanning must remain after safe foreground verification.');
 assert(privacy.includes('DispatcherTimer _privacyResumeTimer'), 'Privacy Mode must retain its low-frequency missed-event resume fallback.');
 assert(privacy.includes('Interval = TimeSpan.FromMilliseconds(900)'), 'Privacy Mode resume polling must remain low-frequency.');
 
@@ -49,4 +65,4 @@ assert(resumeAssessment >= 0 && resumeAbort > resumeAssessment,
 assert(newSessionToken > resumeAbort && advance > newSessionToken,
   'Privacy resume must establish a fresh token after abort and before starting the replacement planner.');
 
-console.log('HelpSys Privacy Mode pending-request/resume contract passed.');
+console.log('HelpSys Privacy Mode startup/resume contract passed.');
