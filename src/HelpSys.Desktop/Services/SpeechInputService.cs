@@ -26,23 +26,13 @@ public sealed class SpeechInputService : IDisposable
     private int _captureActive;
     private bool _disposed;
 
-    public bool CloudTranscriptionAllowed
-    {
-        get
-        {
-#if HELPSYS_SAFE_BUILD
-            return false;
-#else
-            return true;
-#endif
-        }
-    }
+    // Unified HelpSys keeps cloud transcription because it is initiated explicitly by the user
+    // (Voice button or local wake phrase). Screen privacy remains independently gated by PrivacyGate.
+    public bool CloudTranscriptionAllowed => true;
 
     public async Task<string?> RecognizeOnceAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!CloudTranscriptionAllowed)
-            throw new InvalidOperationException("安全版では音声データをクラウドへ送信しません。文字入力を使用してください。");
 
         if (Interlocked.Exchange(ref _captureActive, 1) != 0)
             throw new InvalidOperationException("別の音声入力がまだ終了していません。");
@@ -168,7 +158,6 @@ public sealed class SpeechInputService : IDisposable
                     noiseFloor = UpdateNoiseFloor(noiseFloor, level, 0.08);
                 }
 
-                // Two consecutive 100 ms frames prevent clicks/fan transients from starting a turn.
                 if (possibleVoiceFrames >= 2)
                 {
                     Interlocked.Exchange(ref speechHeard, 1);
@@ -178,8 +167,6 @@ public sealed class SpeechInputService : IDisposable
             }
             else
             {
-                // Hysteresis: once speech starts, use a lower threshold so quiet syllables do not
-                // terminate the utterance, while steady microphone noise still falls below it.
                 if (level >= continueThreshold)
                 {
                     lastVoice = elapsed;
