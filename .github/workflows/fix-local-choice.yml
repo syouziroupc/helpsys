@@ -55,3 +55,5 @@ jobs:
           git add src/HelpSys.Desktop/MainWindow.xaml.cs src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs tests/local-choice-contract.mjs
           git commit -m '[auto-local-choice-fix] Resolve account choices locally without raw identity egress'
           git push origin HEAD:fix/choice-replan-recovery-20260913
+
+# Product files are committed only after the privacy contract, existing Worker tests, and Windows build pass.
