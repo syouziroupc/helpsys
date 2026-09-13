@@ -2,6 +2,7 @@ import fs from 'node:fs';
 
 const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs', 'utf8');
 const helper = fs.readFileSync('src/HelpSys.Desktop/MainWindow.CurrentStateReplan.cs', 'utf8');
+const main = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml.cs', 'utf8');
 
 for (const reason of [
   'マウス操作の結果監視で現在状態を確定できない',
@@ -25,5 +26,14 @@ if (!reliability.includes('routeRecoveryIssue = "同じ操作を複数回行っ�
   throw new Error('repeated confirmed action failure must retain route recovery as the final fallback');
 if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPendingLiveReplanAsync()'))
   throw new Error('observer replanning must still delegate to the established live replan pipeline');
+
+
+const clarificationStart = main.indexOf('private void WaitForClarification(');
+const genuineStart = main.indexOf('_technicalClarificationRetries = 0;', clarificationStart);
+const technicalBlock = main.slice(clarificationStart, genuineStart);
+if (!technicalBlock.includes('_liveReplanPending = true;') || !technicalBlock.includes('TryRunPendingLiveReplanAsync()'))
+  throw new Error('technical clarification retries must be owned by the established live replan pipeline');
+if (technicalBlock.includes('await AdvanceGuideAsync();'))
+  throw new Error('technical clarification retries must not bypass live replan ownership with a direct AdvanceGuideAsync call');
 
 console.log('HelpSys live replan ownership contract passed.');

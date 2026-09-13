@@ -534,16 +534,13 @@ public partial class MainWindow : Window
             _clarificationQuestion = null;
             HideClarificationUiIfNeeded(force: true);
             _sessionState.Invalidate(GuidanceSessionState.Idle);
+            _liveReplanPending = true;
             SetState("現在の画面情報を取り直して案内を続けています…", speak: false);
 
             Dispatcher.BeginInvoke(new Action(async () =>
             {
                 if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
-                try
-                {
-                    await Task.Delay(320, _sessionCts.Token);
-                    if (_activeRequest is not null && !_sessionCts.IsCancellationRequested) await AdvanceGuideAsync();
-                }
+                try { await TryRunPendingLiveReplanAsync(); }
                 catch (OperationCanceledException) { }
             }));
             return;
