@@ -6,6 +6,7 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 const xaml = read('src/HelpSys.Desktop/MainWindow.xaml');
 const privacy = read('src/HelpSys.Desktop/MainWindow.Privacy.cs');
 const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
+const smoke = read('tests/ui_surface_smoke.ps1');
 
 assert(xaml.includes('Width="620" MinHeight="122"'), 'Main HelpSys surface must retain the established compact 620px width and 122px minimum height.');
 assert(xaml.includes('SizeToContent="Height"'), 'Main HelpSys surface must grow only when safety/clarification content actually needs height.');
@@ -65,5 +66,17 @@ for (const method of [
   'StableRelevantLiveKeys',
   'ValidateCurrentVisionTargetAsync'
 ]) assert(stable.includes(method), `Live guidance safeguard missing after UI/performance changes: ${method}`);
+
+assert(smoke.includes('class HelpSysSmokeNative') && smoke.includes('IsWindowVisible') && smoke.includes('GetWindowRect'),
+  'Visible-surface timing must use Win32 visibility/window bounds rather than UI Automation readiness.');
+assert(smoke.includes('$mainHwnd = $helpSys.MainWindowHandle') && smoke.includes('[HelpSysSmokeNative]::VisibleWidth($mainHwnd)'),
+  'Visible-surface timing must inspect the actual process main HWND.');
+const startupLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs)');
+const uiAutomationLookup = smoke.indexOf('$window = Find-MainWindow $helpSys', startupLoopStart);
+const nativeVisibilityLookup = smoke.indexOf('$mainHwnd = $helpSys.MainWindowHandle', startupLoopStart);
+assert(startupLoopStart >= 0 && nativeVisibilityLookup > startupLoopStart && uiAutomationLookup > nativeVisibilityLookup,
+  'Strict visible-surface timing must be captured before any potentially delayed UI Automation lookup.');
+assert(smoke.includes('$surfaceMaximumMs = 4000') && smoke.includes('$automationMaximumMs = 6500'),
+  'Visible paint and UI Automation readiness must retain separate performance budgets.');
 
 console.log('HelpSys compact unified UI surface contract passed.');
