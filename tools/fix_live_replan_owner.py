@@ -78,9 +78,13 @@ if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPen
 console.log('HelpSys live replan bootstrap passed.');
 ''', encoding='utf-8')
 
-# Keep the same CI gate: the existing workflow always executes this script before focused
-# contracts and the Windows build. The taxonomy patches therefore inherit the same verify-before-commit path.
-for patch_name in ['tools/fix_recovery_taxonomy.py', 'tools/fix_recovery_taxonomy_followup.py']:
+# Keep one verify-before-commit pipeline. Product/test patches are applied to the runner,
+# then focused contracts, all standard regressions, and the Windows build must pass before commit.
+for patch_name in [
+    'tools/fix_recovery_taxonomy.py',
+    'tools/fix_recovery_taxonomy_followup.py',
+    'tools/fix_regression_coverage.py'
+]:
     patch = Path(patch_name)
     if patch.exists():
         exec(compile(patch.read_text(encoding='utf-8'), str(patch), 'exec'), {'__name__': '__main__'})
