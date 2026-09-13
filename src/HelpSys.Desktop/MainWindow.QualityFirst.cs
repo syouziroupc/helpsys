@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using HelpSys.Models;
 using HelpSys.Services;
@@ -51,13 +52,27 @@ public partial class MainWindow
 
             if (!HasUsableForeground(systemContext))
             {
-                await TryRouteRecoveryAsync("前面ウィンドウを一時的に特定できない", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("再確認しても前面ウィンドウを特定できない", generation);
                 return;
             }
 
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
             var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
+
+            if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
+            {
+                try
+                {
+                    var diagnostic = await _scanner.CaptureWindowDiagnosticsAsync(
+                        systemContext.ForegroundWindowHandle,
+                        systemContext.ForegroundProcessId,
+                        cancellationToken);
+                    Trace.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
 
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
@@ -67,6 +82,13 @@ public partial class MainWindow
             {
                 frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
+                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                HandleTechnicalPlanningUncertainty("Privacy Gateにより画面画像を利用できない", generation);
+                return;
+            }
             catch (OperationCanceledException)
             {
                 throw;
@@ -75,7 +97,7 @@ public partial class MainWindow
             {
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("画面画像を取得できないため他の情報源から現在位置を復元する", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("画面画像を取得できない", generation);
                 return;
             }
 
@@ -84,7 +106,7 @@ public partial class MainWindow
             var afterCaptureContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, afterCaptureContext) || HasSystemTransitionV3(systemContext, afterCaptureContext))
             {
-                await TryRouteRecoveryAsync("確認中に画面が切り替わった", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
             }
 
@@ -109,9 +131,13 @@ public partial class MainWindow
             }
             catch (GuideServiceException error)
             {
+                if (error.Kind == GuideFailureKind.ContextChanged)
+                {
+                    HandleTechnicalPlanningUncertainty("通常計画中に画面状態が変化した", generation);
+                    return;
+                }
                 if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                if (_sessionState.IsCurrent(generation))
-                    await TryRouteRecoveryAsync($"通常計画を継続できない: {error.Kind}", generation, cancellationToken);
+                if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
                 return;
             }
 
@@ -119,7 +145,7 @@ public partial class MainWindow
             var postPlanContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, postPlanContext) || HasSystemTransitionV3(systemContext, postPlanContext))
             {
-                await TryRouteRecoveryAsync("判断中に画面が変化した", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
             }
 
@@ -127,7 +153,7 @@ public partial class MainWindow
             {
                 if (!quality.ScreenConfirmed || quality.Confidence < MinimumQualityDoneConfidence || string.IsNullOrWhiteSpace(quality.VisualEvidence))
                 {
-                    await TryRouteRecoveryAsync("完了を現在状態から確認できない", generation, cancellationToken);
+                    HandleTechnicalPlanningUncertainty("完了を現在状態から確認できない", generation);
                     return;
                 }
 
@@ -155,12 +181,11 @@ public partial class MainWindow
                 (!quality.ScreenConfirmed && !structuredFusionTarget))
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync(
+                HandleTechnicalPlanningUncertainty(
                     string.IsNullOrWhiteSpace(quality.Instruction)
-                        ? "通常ルート上の次操作を確定できない"
-                        : quality.Instruction,
-                    generation,
-                    cancellationToken);
+                        ? "次の操作を十分な信頼度で確定できない"
+                        : "次の操作候補を安全に確定できない",
+                    generation);
                 return;
             }
 
@@ -177,7 +202,7 @@ public partial class MainWindow
             {
                 if (!quality.ScreenConfirmed)
                 {
-                    await TryRouteRecoveryAsync("対象なしのキー操作を画面情報で確認できない", generation, cancellationToken);
+                    HandleTechnicalPlanningUncertainty("対象なしのキー操作を画面情報で確認できない", generation);
                     return;
                 }
                 ShowKeyboardGuide(decision, candidates, systemContext, generation);
@@ -193,7 +218,7 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("操作内容は候補になったが対象を特定できない", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("操作内容は候補になったが対象を特定できない", generation);
                 return;
             }
 
@@ -201,7 +226,7 @@ public partial class MainWindow
             if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("選ばれた対象が現在は操作できない", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("選ばれた対象を現在画面で操作できない", generation);
                 return;
             }
 
@@ -210,13 +235,13 @@ public partial class MainWindow
             var prePresentContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, prePresentContext) || HasSystemTransitionV3(systemContext, prePresentContext))
             {
-                await TryRouteRecoveryAsync("案内表示の直前に画面が変わった", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
             if (freshTarget is null)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("案内対象が表示直前に消えた", generation, cancellationToken);
+                HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
                 return;
             }
 
@@ -225,36 +250,17 @@ public partial class MainWindow
         catch (OperationCanceledException)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-            {
-                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
-                try { await TryRouteRecoveryAsync("通常の画面確認が時間内に完了しなかった", generation, recoveryCts.Token); }
-                catch (OperationCanceledException)
-                {
-                    if (_sessionState.IsCurrent(generation))
-                        WaitForClarification("現在位置を特定するため、今いちばん手前に見えている画面の大きな見出しを1つ教えてください。そこから案内を続けます。", generation);
-                }
-            }
+                HandleTechnicalPlanningUncertainty("通常の画面確認が時間内に完了しなかった", generation);
         }
         catch (InvalidOperationException ex)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-            {
-                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
-                try { await TryRouteRecoveryAsync($"操作対象の構造確認に失敗: {ex.GetType().Name}", generation, recoveryCts.Token); }
-                catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
-            }
+                HandleTechnicalPlanningUncertainty($"操作対象の構造確認に失敗: {ex.GetType().Name}", generation);
         }
         catch (Exception ex)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-            {
-                using var recoveryCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-                recoveryCts.CancelAfter(TimeSpan.FromSeconds(12));
-                try { await TryRouteRecoveryAsync($"案内処理を現在状態から再構成: {ex.GetType().Name}", generation, recoveryCts.Token); }
-                catch { WaitForClarification("現在の画面の大きな見出しか、目立つボタン名を1つ教えてください。そこから案内を続けます。", generation); }
-            }
+                HandleTechnicalPlanningUncertainty($"案内処理の例外: {ex.GetType().Name}", generation);
         }
         finally
         {
@@ -397,7 +403,7 @@ public partial class MainWindow
         var bounds = frame.MapNormalizedBounds(quality.X, quality.Y, quality.Width, quality.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8)
         {
-            await TryRouteRecoveryAsync("画像上の候補位置が有効な操作領域にならない", generation, cancellationToken);
+            HandleTechnicalPlanningUncertainty("画像上の候補位置が有効な操作領域にならない", generation);
             return;
         }
 
@@ -409,7 +415,7 @@ public partial class MainWindow
         var currentContext = _systemContext.Capture();
         if (!HasSameCaptureIdentity(systemContext, currentContext) || HasSystemTransitionV3(systemContext, currentContext))
         {
-            await TryRouteRecoveryAsync("画像上の候補を確認中に画面が変わった", generation, cancellationToken);
+            HandleTechnicalPlanningUncertainty("画像候補確認中の画面変化が続いている", generation);
             return;
         }
 
@@ -419,7 +425,7 @@ public partial class MainWindow
         }
         else if (quality.Confidence < MinimumVisualOnlyTargetConfidence)
         {
-            await TryRouteRecoveryAsync("画像候補とWindows構造が一致しない", generation, cancellationToken);
+            HandleTechnicalPlanningUncertainty("画像候補とWindows構造が一致しない", generation);
             return;
         }
 
@@ -433,6 +439,7 @@ public partial class MainWindow
             : decision.Instruction;
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
+        ResetCurrentStateReplanBudget();
         _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;

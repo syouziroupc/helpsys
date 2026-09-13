@@ -9,9 +9,10 @@ const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const qualityWindow = read('src/HelpSys.Desktop/MainWindow.QualityFirst.cs');
 const qualityWorker = read('worker/quality-guide.js');
 
-assert(guards.includes('off_route_click'), 'Off-route clicks must be recorded as route-deviation evidence.');
-assert(guards.includes('TryRouteRecoveryAsync("案内枠以外の場所が操作された"'), 'Off-route clicks must immediately trigger route recovery.');
-assert(guards.includes('IsPointInsideHelpSysWindow'), 'HelpSys self-interaction must not be mistaken for route deviation.');
+assert(!guards.includes('ObserveOffRouteClickDeepAudit'), 'Click position alone must not trigger route recovery.');
+assert(!guards.includes('off_route_click'), 'Off-guide clicks must not be classified as route deviation before the resulting UI state is observed.');
+assert(!guards.includes('TryRouteRecoveryAsync("案内枠以外の場所が操作された"'), 'Off-guide clicks must not immediately invoke the heavy recovery planner.');
+assert(!guards.includes('_actionObserver.LeftClick += ObserveOffRouteClickDeepAudit;'), 'The deep-audit guard must leave ordinary click observation to the normal verifier/live watcher.');
 assert(guards.includes('_actionObserver.KeyReleased -= OnObservedKeyReleasedV3;'), 'The type-text submit guard must run before the normal key verifier.');
 assert(guards.includes('_actionObserver.KeyReleased += ObserveTypeTextSubmitDeepAudit;'), 'A synchronous type-text submit guard must be installed.');
 assert(guards.includes('type_target_lost_focus'), 'Lost focus at text-submit time must be recorded as route-deviation evidence.');
@@ -20,6 +21,7 @@ assert(guards.includes('ClearCurrentGuidanceV3();'), 'A bad finishing key must c
 assert(guards.includes('入力確定時に案内対象の入力欄からフォーカスが外れている'), 'Lost-focus text entry must route into current-state recovery.');
 
 assert(stable.includes('AttachDeepAuditGuards();'), 'Deep-audit interaction guards must be attached with the live watcher.');
+assert(stable.includes('ConfirmStableLiveChange'), 'Actual stable screen changes, not click coordinates, must drive stale-guidance invalidation.');
 assert(stable.includes('HasSemanticLiveStateChanged'), 'Single-control semantic state changes must be detected independently of whole-screen similarity.');
 assert(stable.includes('semanticChange || HasStableLiveTopologyChanged'), 'Semantic deviations must feed the live change decision directly.');
 assert(stable.includes('!semanticChange && !ConfirmStableLiveChange'), 'A confirmed UIA semantic change must not be hidden by the whole-screen similarity threshold.');

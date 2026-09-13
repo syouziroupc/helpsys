@@ -16,7 +16,7 @@ const env = {
   }
 };
 
-async function ask(body) {
+async function ask(body, expectModel = true) {
   lastInvocation = null;
   const request = new Request('https://example.test/v1/quality-guide', {
     method: 'POST',
@@ -26,8 +26,12 @@ async function ask(body) {
   const response = await quality.fetch(request, env, {});
   assert(response.status === 200, `unexpected quality response ${response.status}`);
   const value = await response.json();
-  assert(lastInvocation?.args?.image?.startsWith('data:image/png;base64,'), 'quality planner must send the screenshot to the model');
-  assert(lastInvocation?.args?.store === false, 'quality planner must explicitly disable model-side storage when supported.');
+  if (expectModel) {
+    assert(lastInvocation?.args?.image?.startsWith('data:image/png;base64,'), 'quality planner must send the screenshot to the model');
+    assert(lastInvocation?.args?.store === false, 'quality planner must explicitly disable model-side storage when supported.');
+  } else {
+    assert(lastInvocation === null, 'deterministic choice handling must not call the model');
+  }
   return value;
 }
 
@@ -214,5 +218,41 @@ value = await ask({
   elements: []
 });
 assert(value.status === 'not_found', 'quality planner must never ask HelpSys to receive a secret');
+
+
+value = await ask({
+  request: 'Gmailを開いてメールを見たい',
+  history: [{ step: 0, action: 'clarification_answer', targetName: '正二郎商事', instruction: 'どの名前を使うか教えてください。' }],
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 91, foregroundTitle: 'アカウントの選択', runningApps: ['chrome'] },
+  elements: [
+    { id: 'choice-personal', name: '正二郎', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'choice-business', name: '正二郎商事', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'choice-other', name: '別のアカウントを使用', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true }
+  ]
+}, false);
+assert(value.status === 'target' && value.targetId === 'choice-business',
+  'answered account choice must resolve deterministically on the quality path');
+
+value = await ask({
+  request: 'Gmailを開いてメールを見たい',
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 92, foregroundTitle: 'Choose an account', runningApps: ['chrome'] },
+  elements: [
+    { id: 'choice-a', name: 'Personal', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'choice-b', name: 'Business', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'choice-other', name: 'Use another account', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true }
+  ]
+}, false);
+assert(value.status === 'clarify', 'English account chooser must be recognized as a user choice');
+
+value = await ask({
+  request: 'Gmailを開いてメールを見たい',
+  history: [{ step: 0, action: 'clarification_answer', targetName: '<email>', instruction: 'どのアカウントを使いますか？' }],
+  systemContext: { foregroundProcess: 'chrome', foregroundProcessId: 93, foregroundTitle: 'アカウントの選択', runningApps: ['chrome'] },
+  elements: [
+    { id: 'choice-a', name: '<email>', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true },
+    { id: 'choice-b', name: '<email>', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true }
+  ]
+}, false);
+assert(value.status === 'clarify', 'redacted account identity must never be guessed or auto-selected');
 
 console.log('HelpSys multisource evidence-fusion and route-recovery self-test passed.');

@@ -116,6 +116,13 @@ export default {
     const recoveryMode = body?.recoveryMode === true;
     const routeIssue = text(body?.routeIssue, 180);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
+    if (task?.kind === 'choice' && task?.deterministic) {
+      return json(validateQualityDecision(
+        qualityRawFromTaskDecision(task.deterministic),
+        elements,
+        task,
+        recoveryMode));
+    }
     const canonical = compactCanonical(task, recoveryMode);
 
     const model = selectQualityModel(env.HELPSYS_QUALITY_MODEL);
@@ -160,6 +167,24 @@ export default {
     }
   }
 };
+
+
+function qualityRawFromTaskDecision(decision) {
+  return {
+    status: String(decision?.status || 'not_found'),
+    targetId: decision?.targetId ?? null,
+    action: String(decision?.action || 'none'),
+    instruction: String(decision?.instruction || ''),
+    question: decision?.question ?? null,
+    key: decision?.key ?? null,
+    confidence: Number.isFinite(Number(decision?.confidence)) ? Number(decision.confidence) : 0.99,
+    x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: false,
+    visualEvidence: '',
+    observedDomain: null,
+    sponsored: false
+  };
+}
 
 export function validateQualityDecision(raw, elements, task, recoveryMode = false) {
   const ids = new Set(elements.map(x => x.id));

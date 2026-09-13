@@ -40,7 +40,10 @@ public partial class MainWindow
             try
             {
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                    await RecoverFromObserverFailureAsync("マウス操作の結果監視で現在状態を確定できない");
+                {
+                    var generation = _sessionState.Generation;
+                    HandleTechnicalPlanningUncertainty("マウス操作の結果監視で現在状態を確定できない", generation);
+                }
             }
             catch { }
         }
@@ -86,7 +89,10 @@ public partial class MainWindow
             try
             {
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
-                    await RecoverFromObserverFailureAsync("キー操作の結果監視で現在状態を確定できない");
+                {
+                    var generation = _sessionState.Generation;
+                    HandleTechnicalPlanningUncertainty("キー操作の結果監視で現在状態を確定できない", generation);
+                }
             }
             catch { }
         }
@@ -137,7 +143,9 @@ public partial class MainWindow
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Verifying)) return;
 
         var decision = _currentDecision;
-        var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
+        var targetName = _localChoiceTargetActive
+            ? "利用者が選んだアカウント"
+            : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         string? retryMessage = null;
         string? routeRecoveryIssue = null;
         bool replan = false;
@@ -171,10 +179,10 @@ public partial class MainWindow
                         _stepSystemBaseline = _systemContext.Capture();
                         if (!HasUsableForeground(_stepSystemBaseline))
                         {
-                            _history.Add(new GuideHistoryItem(_stepNumber, "foreground_lost", targetName, "操作後の前面アプリを一時的に特定できないため、停止せず現在位置を再取得して復帰経路を探す。"));
+                            _history.Add(new GuideHistoryItem(_stepNumber, "foreground_lost", targetName, "操作後の前面アプリを一時的に特定できないため、現在画面を取り直して通常案内を再計画する。"));
                             if (_history.Count > 12) _history.RemoveAt(0);
                             ClearCurrentGuidanceV3();
-                            routeRecoveryIssue = "操作後の前面アプリを一時的に特定できない";
+                            replan = true;
                         }
                         else
                         {
@@ -302,6 +310,7 @@ public partial class MainWindow
         _validatedVisionInstruction = null;
         _v3TrackedDecision = null;
         _v3TypeActivityObserved = false;
+        _localChoiceTargetActive = false;
     }
 
     private async Task<bool> WaitForStableStateTransitionV3Async(
