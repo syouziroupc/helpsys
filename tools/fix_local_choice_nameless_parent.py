@@ -25,10 +25,13 @@ path.write_text(text, encoding='utf-8')
 contract_path = Path('tests/local-choice-contract.mjs')
 contract = contract_path.read_text(encoding='utf-8')
 addition = r'''
-if (!local.includes('.Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)'))
+const interactableStart = local.indexOf('var interactable = candidates');
+const interactableEnd = local.indexOf('var exact = interactable', interactableStart);
+const interactablePool = local.slice(interactableStart, interactableEnd);
+if (!interactablePool.includes('.Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)'))
   throw new Error('context-to-card mapping must allow a nameless clickable parent when its child identity is unique');
-if (local.includes('x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name)'))
-  throw new Error('nameless clickable account cards must not be discarded before local child-context mapping');
+if (interactablePool.includes('!string.IsNullOrWhiteSpace(x.Name)'))
+  throw new Error('nameless clickable account cards must not be discarded from the local choice target pool');
 '''
 marker = 'nameless clickable parent when its child identity is unique'
 if marker not in contract:
@@ -36,4 +39,8 @@ if marker not in contract:
     if console not in contract:
         raise SystemExit('local choice contract anchor not found')
     contract = contract.replace(console, addition + '\n' + console, 1)
-    contract_path.write_text(contract, encoding='utf-8')
+elif "local.includes('x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name)')" in contract:
+    start = contract.index("if (!local.includes('.Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)'))")
+    end = contract.index("console.log('HelpSys local account-choice privacy contract passed.');", start)
+    contract = contract[:start] + addition + '\n' + contract[end:]
+contract_path.write_text(contract, encoding='utf-8')
