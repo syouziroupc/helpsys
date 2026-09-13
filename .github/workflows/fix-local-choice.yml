@@ -39,7 +39,9 @@ jobs:
 
       - name: Apply bounded current-state replan patch
         shell: pwsh
-        run: python tools/fix_current_state_replan.py
+        run: |
+          python tools/fix_current_state_replan.py
+          python tools/fix_current_state_replan_followup.py
 
       - name: Focused contracts
         run: |
