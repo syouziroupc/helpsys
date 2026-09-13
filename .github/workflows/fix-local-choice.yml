@@ -5,6 +5,10 @@ on:
     branches:
       - fix/choice-replan-recovery-20260913
 
+concurrency:
+  group: helpsys-fix-choice-replan-recovery-20260913
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
