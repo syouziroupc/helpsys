@@ -102,9 +102,9 @@ try {
   $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
   Start-Sleep -Seconds 2
 
-  # User-visible startup and UI Automation readiness are different phenomena. Measure actual
-  # Win32 window visibility for the strict surface budget, then allow a little extra time for
-  # Windows UIA providers to expose every child control under CI load.
+  # User-visible startup and UI Automation readiness are different phenomena. The strict first
+  # loop measures only the actual Win32 surface. UI Automation is not touched until that loop has
+  # succeeded, so a slow UIA provider cannot consume the first-paint budget.
   $surfaceMaximumMs = 4000
   $automationMaximumMs = 6500
   $guideMaximumMs = 5000
@@ -116,27 +116,31 @@ try {
   $window = $null
   $surfaceVisibleAtMs = $null
 
-  while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs) {
-    if ($helpSys.HasExited) { throw 'HelpSys exited during UI surface startup smoke.' }
-
-    # Do not use UI Automation to decide whether the surface itself is visible. UIA provider
-    # startup can lag behind first paint on hosted Windows runners and is measured separately.
+  while ($startup.Elapsed.TotalMilliseconds -lt $surfaceMaximumMs) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited during visible-surface startup smoke.' }
     $helpSys.Refresh()
     $mainHwnd = $helpSys.MainWindowHandle
-    if ($null -eq $surfaceVisibleAtMs -and $mainHwnd -ne [IntPtr]::Zero) {
+    if ($mainHwnd -ne [IntPtr]::Zero) {
       $nativeWidth = [HelpSysSmokeNative]::VisibleWidth($mainHwnd)
       $nativeHeight = [HelpSysSmokeNative]::VisibleHeight($mainHwnd)
       if ($nativeWidth -ge 580 -and $nativeHeight -ge 100) {
         $surfaceVisibleAtMs = [math]::Round($startup.Elapsed.TotalMilliseconds)
+        break
       }
     }
+    Start-Sleep -Milliseconds 40
+  }
 
+  if ($null -eq $surfaceVisibleAtMs) {
+    Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
+    throw "HelpSys visible surface did not appear within $surfaceMaximumMs ms."
+  }
+
+  # Only after the Win32 surface has passed do we ask UIA for the window and child controls.
+  # This remains a separate readiness metric with its own larger CI budget.
+  while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited during UI Automation readiness smoke.' }
     $window = Find-MainWindow $helpSys
-
-    if ($null -eq $surfaceVisibleAtMs -and $startup.Elapsed.TotalMilliseconds -ge $surfaceMaximumMs) {
-      Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
-      throw "HelpSys visible surface did not appear within $surfaceMaximumMs ms."
-    }
 
     foreach ($id in $ids) {
       if (-not $controls.ContainsKey($id) -or $null -eq $controls[$id]) {
@@ -151,11 +155,11 @@ try {
   $startup.Stop()
 
   $missing = @($ids | Where-Object { $null -eq $controls[$_] })
-  if ($null -eq $window -or $missing.Count -gt 0) {
+  if ($null -eq $window -or $missing.Count -gt 0 -or $automationReadyAtMs -gt $automationMaximumMs) {
     Save-Screenshot 'helpsys-ui-automation-readiness-failure.png'
     throw "Core UI Automation controls did not become available within $automationMaximumMs ms. Missing: $($missing -join ', ')"
   }
-  if ($null -eq $surfaceVisibleAtMs -or $surfaceVisibleAtMs -gt $surfaceMaximumMs) {
+  if ($surfaceVisibleAtMs -gt $surfaceMaximumMs) {
     throw "HelpSys visible surface exceeded the $surfaceMaximumMs ms budget."
   }
 
