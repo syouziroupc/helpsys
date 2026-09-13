@@ -42,6 +42,7 @@ jobs:
         run: |
           python tools/fix_current_state_replan.py
           python tools/fix_current_state_replan_followup.py
+          python tools/fix_current_state_replan_usings.py
 
       - name: Focused contracts
         run: |
