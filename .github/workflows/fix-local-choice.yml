@@ -31,6 +31,7 @@ jobs:
         run: |
           python tools/fix_local_choice.py
           python tools/fix_local_choice_extended.py
+          python tools/fix_local_choice_contract.py
 
       - name: Apply off-route click regression patch idempotently
         shell: pwsh
