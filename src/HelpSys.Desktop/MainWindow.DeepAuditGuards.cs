@@ -8,14 +8,12 @@ namespace HelpSys;
 public partial class MainWindow
 {
     private bool _deepAuditGuardsAttached;
-    private int _offRouteRecoveryInFlight;
     private int _typeTextFocusRecoveryInFlight;
 
     private void AttachDeepAuditGuards()
     {
         if (_deepAuditGuardsAttached) return;
         _deepAuditGuardsAttached = true;
-        _actionObserver.LeftClick += ObserveOffRouteClickDeepAudit;
 
         // KeyReleased was originally subscribed in the constructor. Reorder it once so this
         // synchronous focus guard sees the finishing key before the normal verifier can mark a
@@ -29,60 +27,8 @@ public partial class MainWindow
     {
         if (!_deepAuditGuardsAttached) return;
         _deepAuditGuardsAttached = false;
-        _actionObserver.LeftClick -= ObserveOffRouteClickDeepAudit;
         _actionObserver.KeyReleased -= ObserveTypeTextSubmitDeepAudit;
-        Interlocked.Exchange(ref _offRouteRecoveryInFlight, 0);
         Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 0);
-    }
-
-    private async void ObserveOffRouteClickDeepAudit(Point point)
-    {
-        if (_sessionState.State != GuidanceSessionState.AwaitingUserAction ||
-            _currentDecision is null ||
-            _guidedBounds is null ||
-            _activeRequest is null ||
-            _sessionCts is null ||
-            _sessionCts.IsCancellationRequested)
-            return;
-
-        var action = _currentDecision.Action;
-        if (!action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
-            !action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-            return;
-
-        var expectedBounds = _guidedBounds.Value;
-        expectedBounds.Inflate(10, 10);
-        if (expectedBounds.Contains(point) || IsPointInsideHelpSysWindow(point)) return;
-        if (Interlocked.Exchange(ref _offRouteRecoveryInFlight, 1) != 0) return;
-
-        try
-        {
-            var generation = _sessionState.Generation;
-            if (!_sessionState.IsCurrent(generation)) return;
-
-            _history.Add(new GuideHistoryItem(
-                _stepNumber,
-                "off_route_click",
-                "案内枠以外の場所",
-                "案内していた青い枠とは別の場所が操作されたため、現在状態を取り直して目的への復帰経路を選ぶ。"));
-            if (_history.Count > 12) _history.RemoveAt(0);
-
-            _speechOutput.Stop();
-            ClearCurrentGuidanceV3();
-            SetState("案内とは別の場所が操作されたため、現在の画面から目的への戻り方を確認しています…", speak: false);
-            await TryRouteRecoveryAsync("案内枠以外の場所が操作された", generation, _sessionCts.Token);
-        }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
-        catch
-        {
-            try { await RecoverFromObserverFailureAsync("案内外の操作後に現在状態を確定できない"); }
-            catch { }
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _offRouteRecoveryInFlight, 0);
-        }
     }
 
     private void ObserveTypeTextSubmitDeepAudit(KeyObservation observation)
@@ -192,19 +138,5 @@ public partial class MainWindow
         return false;
     }
 
-    private bool IsPointInsideHelpSysWindow(Point screenPoint)
-    {
-        if (!IsVisible || ActualWidth <= 0 || ActualHeight <= 0) return false;
-        try
-        {
-            var topLeft = PointToScreen(new Point(0, 0));
-            var bottomRight = PointToScreen(new Point(ActualWidth, ActualHeight));
-            var rect = new Rect(topLeft, bottomRight);
-            return rect.Contains(screenPoint);
-        }
-        catch
-        {
-            return false;
-        }
-    }
+
 }
