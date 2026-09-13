@@ -1,27 +1,31 @@
 from pathlib import Path
 
 
-def replace_once(text: str, old: str, new: str, label: str) -> str:
+def replace_once_if_needed(text: str, old: str, new: str, label: str) -> str:
+    if new in text:
+        return text
     if old not in text:
         raise SystemExit(f'{label} anchor not found')
     return text.replace(old, new, 1)
 
 
+# 1/2: make the shared Windows choice detector history-aware.
 path = Path('worker/windows-knowledge.js')
 text = path.read_text(encoding='utf-8')
-text = replace_once(
+text = replace_once_if_needed(
     text,
     "  const branch = detectChoiceBranch(elements, systemContext);",
     "  const branch = detectChoiceBranch(elements, history, systemContext);",
     'choice branch call',
 )
 
-start = text.find('function detectChoiceBranch(elements, systemContext) {')
-end = text.find('\nfunction buildKnowledge(goal) {', start)
-if start < 0 or end < 0:
-    raise SystemExit('detectChoiceBranch block anchor not found')
+if 'function detectChoiceBranch(elements, history, systemContext) {' not in text:
+    start = text.find('function detectChoiceBranch(elements, systemContext) {')
+    end = text.find('\nfunction buildKnowledge(goal) {', start)
+    if start < 0 or end < 0:
+        raise SystemExit('detectChoiceBranch block anchor not found')
 
-replacement = r'''function detectChoiceBranch(elements, history, systemContext) {
+    replacement = r'''function detectChoiceBranch(elements, history, systemContext) {
   const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
   const relevant = elements.filter(x => !foreground || String(x.processName || '').toLowerCase() === foreground);
   const text = `${systemContext?.foregroundTitle || ''} ${relevant.map(x => x.name).join(' ')}`;
@@ -107,21 +111,59 @@ function safeChoiceLabel(value) {
   return label.length <= 60 ? label : label.slice(0, 60);
 }
 '''
-text = text[:start] + replacement + text[end:]
+    text = text[:start] + replacement + text[end:]
+
 path.write_text(text, encoding='utf-8')
 
 
+# Quality First must honor deterministic choice resolution before invoking the model.
+quality_path = Path('worker/quality-guide.js')
+quality = quality_path.read_text(encoding='utf-8')
+old_task = """    const task = buildWindowsTaskContext(goal, elements, history, systemContext);\n    const canonical = compactCanonical(task, recoveryMode);\n"""
+new_task = """    const task = buildWindowsTaskContext(goal, elements, history, systemContext);\n    if (task?.kind === 'choice' && task?.deterministic) {\n      return json(validateQualityDecision(\n        qualityRawFromTaskDecision(task.deterministic),\n        elements,\n        task,\n        recoveryMode));\n    }\n    const canonical = compactCanonical(task, recoveryMode);\n"""
+quality = replace_once_if_needed(quality, old_task, new_task, 'quality deterministic choice short-circuit')
+
+if 'function qualityRawFromTaskDecision(decision) {' not in quality:
+    marker = '\nexport function validateQualityDecision(raw, elements, task, recoveryMode = false) {'
+    if marker not in quality:
+        raise SystemExit('quality validation marker not found')
+    helper = r'''
+
+function qualityRawFromTaskDecision(decision) {
+  return {
+    status: String(decision?.status || 'not_found'),
+    targetId: decision?.targetId ?? null,
+    action: String(decision?.action || 'none'),
+    instruction: String(decision?.instruction || ''),
+    question: decision?.question ?? null,
+    key: decision?.key ?? null,
+    confidence: Number.isFinite(Number(decision?.confidence)) ? Number(decision.confidence) : 0.99,
+    x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: false,
+    visualEvidence: '',
+    observedDomain: null,
+    sponsored: false
+  };
+}
+'''
+    quality = quality.replace(marker, helper + marker, 1)
+
+quality_path.write_text(quality, encoding='utf-8')
+
+
+# Regression coverage for JP/EN chooser and redacted identities.
 test_path = Path('worker/quality-guide-selftest.mjs')
 tests = test_path.read_text(encoding='utf-8')
 old_ask = """async function ask(body) {\n  lastInvocation = null;\n  const request = new Request('https://example.test/v1/quality-guide', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ image: 'data:image/png;base64,AAAA', history: [], ...body })\n  });\n  const response = await quality.fetch(request, env, {});\n  assert(response.status === 200, `unexpected quality response ${response.status}`);\n  const value = await response.json();\n  assert(lastInvocation?.args?.image?.startsWith('data:image/png;base64,'), 'quality planner must send the screenshot to the model');\n  assert(lastInvocation?.args?.store === false, 'quality planner must explicitly disable model-side storage when supported.');\n  return value;\n}\n"""
 new_ask = """async function ask(body, expectModel = true) {\n  lastInvocation = null;\n  const request = new Request('https://example.test/v1/quality-guide', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ image: 'data:image/png;base64,AAAA', history: [], ...body })\n  });\n  const response = await quality.fetch(request, env, {});\n  assert(response.status === 200, `unexpected quality response ${response.status}`);\n  const value = await response.json();\n  if (expectModel) {\n    assert(lastInvocation?.args?.image?.startsWith('data:image/png;base64,'), 'quality planner must send the screenshot to the model');\n    assert(lastInvocation?.args?.store === false, 'quality planner must explicitly disable model-side storage when supported.');\n  } else {\n    assert(lastInvocation === null, 'deterministic choice handling must not call the model');\n  }\n  return value;\n}\n"""
-tests = replace_once(tests, old_ask, new_ask, 'quality selftest ask')
+tests = replace_once_if_needed(tests, old_ask, new_ask, 'quality selftest ask')
 
-marker = "\nconsole.log('HelpSys multisource evidence-fusion and route-recovery self-test passed.');"
-if marker not in tests:
-    raise SystemExit('quality selftest final marker not found')
-
-added = r'''
+sentinel = "answered account choice must resolve deterministically on the quality path"
+if sentinel not in tests:
+    marker = "\nconsole.log('HelpSys multisource evidence-fusion and route-recovery self-test passed.');"
+    if marker not in tests:
+        raise SystemExit('quality selftest final marker not found')
+    added = r'''
 
 value = await ask({
   request: 'Gmailを開いてメールを見たい',
@@ -158,6 +200,6 @@ value = await ask({
 }, false);
 assert(value.status === 'clarify', 'redacted account identity must never be guessed or auto-selected');
 '''
+    tests = tests.replace(marker, added + marker, 1)
 
-tests = tests.replace(marker, added + marker, 1)
 test_path.write_text(tests, encoding='utf-8')
