@@ -3,6 +3,40 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class HelpSysSmokeNative
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    public static int VisibleWidth(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return 0;
+        return Math.Max(0, rect.Right - rect.Left);
+    }
+
+    public static int VisibleHeight(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return 0;
+        return Math.Max(0, rect.Bottom - rect.Top);
+    }
+}
+"@
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
@@ -68,9 +102,9 @@ try {
   $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
   Start-Sleep -Seconds 2
 
-  # User-visible startup and UI Automation readiness are different phenomena. Keep the visible
-  # surface budget strict, while allowing a little extra time for Windows UIA providers to expose
-  # every child control under CI load. A fully rendered surface must still appear within 4 seconds.
+  # User-visible startup and UI Automation readiness are different phenomena. Measure actual
+  # Win32 window visibility for the strict surface budget, then allow a little extra time for
+  # Windows UIA providers to expose every child control under CI load.
   $surfaceMaximumMs = 4000
   $automationMaximumMs = 6500
   $guideMaximumMs = 5000
@@ -84,13 +118,20 @@ try {
 
   while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs) {
     if ($helpSys.HasExited) { throw 'HelpSys exited during UI surface startup smoke.' }
-    $window = Find-MainWindow $helpSys
-    if ($null -ne $window -and $null -eq $surfaceVisibleAtMs) {
-      $candidateRect = $window.Current.BoundingRectangle
-      if (-not $candidateRect.IsEmpty -and $candidateRect.Width -ge 580 -and $candidateRect.Height -ge 100) {
+
+    # Do not use UI Automation to decide whether the surface itself is visible. UIA provider
+    # startup can lag behind first paint on hosted Windows runners and is measured separately.
+    $helpSys.Refresh()
+    $mainHwnd = $helpSys.MainWindowHandle
+    if ($null -eq $surfaceVisibleAtMs -and $mainHwnd -ne [IntPtr]::Zero) {
+      $nativeWidth = [HelpSysSmokeNative]::VisibleWidth($mainHwnd)
+      $nativeHeight = [HelpSysSmokeNative]::VisibleHeight($mainHwnd)
+      if ($nativeWidth -ge 580 -and $nativeHeight -ge 100) {
         $surfaceVisibleAtMs = [math]::Round($startup.Elapsed.TotalMilliseconds)
       }
     }
+
+    $window = Find-MainWindow $helpSys
 
     if ($null -eq $surfaceVisibleAtMs -and $startup.Elapsed.TotalMilliseconds -ge $surfaceMaximumMs) {
       Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
