@@ -91,3 +91,9 @@ if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPen
 
 console.log('HelpSys live replan ownership contract passed.');
 ''', encoding='utf-8')
+
+# Keep the same CI gate: the existing workflow always executes this script before focused
+# contracts and the Windows build. The taxonomy patch therefore inherits the same verify-before-commit path.
+recovery_patch = Path('tools/fix_recovery_taxonomy.py')
+if recovery_patch.exists():
+    exec(compile(recovery_patch.read_text(encoding='utf-8'), str(recovery_patch), 'exec'), {'__name__': '__main__'})
