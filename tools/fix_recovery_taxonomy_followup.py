@@ -54,3 +54,19 @@ new = '''    private Task RecoverTypeTextFocusDeviationAsync(long generation)
 '''
 text = replace_once(text, old, new, 'type_text focus deviation taxonomy')
 path.write_text(text, encoding='utf-8')
+
+violations = []
+for cs_path in Path('src/HelpSys.Desktop').glob('*.cs'):
+    for line_no, line in enumerate(cs_path.read_text(encoding='utf-8').splitlines(), 1):
+        if 'RecoverFromObserverFailureAsync' in line:
+            violations.append(f'{cs_path.name}:{line_no}: obsolete observer recovery wrapper')
+        if 'TryRouteRecoveryAsync(' not in line:
+            continue
+        if cs_path.name == 'MainWindow.RouteRecovery.cs' and 'private async Task<bool> TryRouteRecoveryAsync(' in line:
+            continue
+        if cs_path.name == 'MainWindow.ReliabilityV3.cs' and 'await TryRouteRecoveryAsync(routeRecoveryIssue' in line:
+            continue
+        violations.append(f'{cs_path.name}:{line_no}: {line.strip()}')
+
+if violations:
+    raise SystemExit('unexpected route-recovery call sites:\n' + '\n'.join(violations))
