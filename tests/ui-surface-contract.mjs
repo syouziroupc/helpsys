@@ -69,11 +69,13 @@ for (const method of [
 
 assert(smoke.includes('class HelpSysSmokeNative') && smoke.includes('IsWindowVisible') && smoke.includes('GetWindowRect'),
   'Visible-surface timing must use Win32 visibility/window bounds rather than UI Automation readiness.');
-assert(smoke.includes('$mainHwnd = $helpSys.MainWindowHandle') && smoke.includes('[HelpSysSmokeNative]::VisibleWidth($mainHwnd)'),
-  'Visible-surface timing must inspect the actual process main HWND.');
+assert(smoke.includes('EnumWindows') && smoke.includes('GetWindowThreadProcessId') && smoke.includes('FindLargestVisibleWindowForProcess'),
+  'Visible-surface timing must enumerate top-level windows and bind them to the HelpSys process ID.');
+assert(smoke.includes('[HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)'),
+  'Visible-surface timing must not depend on Process.MainWindowHandle becoming available.');
 const surfaceLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $surfaceMaximumMs)');
 const automationLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs)', surfaceLoopStart);
-const nativeVisibilityLookup = smoke.indexOf('$mainHwnd = $helpSys.MainWindowHandle', surfaceLoopStart);
+const nativeVisibilityLookup = smoke.indexOf('[HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)', surfaceLoopStart);
 const uiAutomationLookup = smoke.indexOf('$window = Find-MainWindow $helpSys', automationLoopStart);
 assert(surfaceLoopStart >= 0 && nativeVisibilityLookup > surfaceLoopStart && automationLoopStart > nativeVisibilityLookup,
   'Strict visible-surface timing must run in its own Win32-only polling loop.');
@@ -82,6 +84,8 @@ assert(uiAutomationLookup > automationLoopStart,
 const surfaceLoop = smoke.slice(surfaceLoopStart, automationLoopStart);
 assert(!surfaceLoop.includes('Find-MainWindow') && !surfaceLoop.includes('Find-Element'),
   'The strict visible-surface loop must never call UI Automation APIs that can block first-paint polling.');
+assert(smoke.includes('helpsys-ui-visible-startup-failure.json') && smoke.includes('enumeratedVisibleWindowHandle'),
+  'First-paint failures must leave non-content Win32 diagnostics for root-cause analysis.');
 assert(smoke.includes('$surfaceMaximumMs = 4000') && smoke.includes('$automationMaximumMs = 6500'),
   'Visible paint and UI Automation readiness must retain separate performance budgets.');
 
