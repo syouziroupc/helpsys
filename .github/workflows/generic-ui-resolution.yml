@@ -1,0 +1,77 @@
+name: Generic UI resolution verification
+
+on:
+  push:
+    branches:
+      - feat/generic-ui-resolution-20260913
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generic-ui-resolution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-commit:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Apply generic UI resolution patch
+        shell: pwsh
+        run: python tools/apply_generic_ui_resolution.py
+
+      - name: Run focused contracts
+        shell: pwsh
+        run: |
+          node tests/local-choice-contract.mjs
+          node tests/window-scoped-uia-contract.mjs
+          node tests/current-state-replan-contract.mjs
+          node tests/live-replan-owner-contract.mjs
+          node tests/recovery-taxonomy-contract.mjs
+
+      - name: Run full Node regression suite
+        shell: pwsh
+        run: |
+          npm run check
+          npm test
+
+      - name: Windows Release test build
+        shell: pwsh
+        run: |
+          dotnet restore src/HelpSys.Desktop/HelpSys.Desktop.csproj
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:TestBuild=true
+
+      - name: Commit verified product changes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs `
+                  src/HelpSys.Desktop/MainWindow.StructuralCapture.cs `
+                  src/HelpSys.Desktop/MainWindow.LiveGuidance.cs `
+                  src/HelpSys.Desktop/MainWindow.xaml.cs `
+                  src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs `
+                  src/HelpSys.Desktop/MainWindow.QualityFirst.cs `
+                  src/HelpSys.Desktop/Services/UiAutomationScanner.cs `
+                  tests/local-choice-contract.mjs `
+                  tests/window-scoped-uia-contract.mjs `
+                  package.json
+          if (git diff --cached --quiet) {
+            Write-Host "No product changes to commit."
+            exit 0
+          }
+          git commit -m "Generalize visible choice and HWND UI resolution"
+          git push origin HEAD:feat/generic-ui-resolution-20260913
