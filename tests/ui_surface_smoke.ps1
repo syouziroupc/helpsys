@@ -3,6 +3,69 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class HelpSysSmokeNative
+{
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    public static IntPtr FindLargestVisibleWindowForProcess(int processId)
+    {
+        IntPtr best = IntPtr.Zero;
+        long bestArea = 0;
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var ownerPid);
+            if (ownerPid != (uint)processId || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return true;
+            var width = Math.Max(0, rect.Right - rect.Left);
+            var height = Math.Max(0, rect.Bottom - rect.Top);
+            var area = (long)width * height;
+            if (area > bestArea)
+            {
+                bestArea = area;
+                best = hWnd;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
+
+    public static int VisibleWidth(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return 0;
+        return Math.Max(0, rect.Right - rect.Left);
+    }
+
+    public static int VisibleHeight(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return 0;
+        return Math.Max(0, rect.Bottom - rect.Top);
+    }
+}
+"@
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
@@ -68,9 +131,9 @@ try {
   $target = Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
   Start-Sleep -Seconds 2
 
-  # User-visible startup and UI Automation readiness are different phenomena. Keep the visible
-  # surface budget strict, while allowing a little extra time for Windows UIA providers to expose
-  # every child control under CI load. A fully rendered surface must still appear within 4 seconds.
+  # User-visible startup and UI Automation readiness are different phenomena. The strict first
+  # loop measures only Win32 top-level windows owned by the HelpSys process. UI Automation is not
+  # touched until that loop succeeds, so UIA provider latency cannot consume first-paint budget.
   $surfaceMaximumMs = 4000
   $automationMaximumMs = 6500
   $guideMaximumMs = 5000
@@ -81,21 +144,43 @@ try {
   $controls = @{}
   $window = $null
   $surfaceVisibleAtMs = $null
+  $surfaceHwnd = [IntPtr]::Zero
 
-  while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs) {
-    if ($helpSys.HasExited) { throw 'HelpSys exited during UI surface startup smoke.' }
-    $window = Find-MainWindow $helpSys
-    if ($null -ne $window -and $null -eq $surfaceVisibleAtMs) {
-      $candidateRect = $window.Current.BoundingRectangle
-      if (-not $candidateRect.IsEmpty -and $candidateRect.Width -ge 580 -and $candidateRect.Height -ge 100) {
+  while ($startup.Elapsed.TotalMilliseconds -lt $surfaceMaximumMs) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited during visible-surface startup smoke.' }
+    $surfaceHwnd = [HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)
+    if ($surfaceHwnd -ne [IntPtr]::Zero) {
+      $nativeWidth = [HelpSysSmokeNative]::VisibleWidth($surfaceHwnd)
+      $nativeHeight = [HelpSysSmokeNative]::VisibleHeight($surfaceHwnd)
+      if ($nativeWidth -ge 580 -and $nativeHeight -ge 100) {
         $surfaceVisibleAtMs = [math]::Round($startup.Elapsed.TotalMilliseconds)
+        break
       }
     }
+    Start-Sleep -Milliseconds 40
+  }
 
-    if ($null -eq $surfaceVisibleAtMs -and $startup.Elapsed.TotalMilliseconds -ge $surfaceMaximumMs) {
-      Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
-      throw "HelpSys visible surface did not appear within $surfaceMaximumMs ms."
-    }
+  if ($null -eq $surfaceVisibleAtMs) {
+    $helpSys.Refresh()
+    $diagnosticHwnd = [HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)
+    [ordered]@{
+      elapsedMilliseconds = [math]::Round($startup.Elapsed.TotalMilliseconds)
+      processId = $helpSys.Id
+      hasExited = $helpSys.HasExited
+      processMainWindowHandle = $helpSys.MainWindowHandle.ToInt64()
+      enumeratedVisibleWindowHandle = $diagnosticHwnd.ToInt64()
+      enumeratedVisibleWindowWidth = [HelpSysSmokeNative]::VisibleWidth($diagnosticHwnd)
+      enumeratedVisibleWindowHeight = [HelpSysSmokeNative]::VisibleHeight($diagnosticHwnd)
+    } | ConvertTo-Json | Set-Content 'artifacts/helpsys-ui-visible-startup-failure.json' -Encoding UTF8
+    Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
+    throw "HelpSys visible surface did not appear within $surfaceMaximumMs ms."
+  }
+
+  # Only after the Win32 surface has passed do we ask UIA for the window and child controls.
+  # This remains a separate readiness metric with its own larger CI budget.
+  while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited during UI Automation readiness smoke.' }
+    $window = Find-MainWindow $helpSys
 
     foreach ($id in $ids) {
       if (-not $controls.ContainsKey($id) -or $null -eq $controls[$id]) {
@@ -110,11 +195,11 @@ try {
   $startup.Stop()
 
   $missing = @($ids | Where-Object { $null -eq $controls[$_] })
-  if ($null -eq $window -or $missing.Count -gt 0) {
+  if ($null -eq $window -or $missing.Count -gt 0 -or $automationReadyAtMs -gt $automationMaximumMs) {
     Save-Screenshot 'helpsys-ui-automation-readiness-failure.png'
     throw "Core UI Automation controls did not become available within $automationMaximumMs ms. Missing: $($missing -join ', ')"
   }
-  if ($null -eq $surfaceVisibleAtMs -or $surfaceVisibleAtMs -gt $surfaceMaximumMs) {
+  if ($surfaceVisibleAtMs -gt $surfaceMaximumMs) {
     throw "HelpSys visible surface exceeded the $surfaceMaximumMs ms budget."
   }
 
