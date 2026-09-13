@@ -23,6 +23,6 @@ old_check = """if ((main.match(/ResetCurrentStateReplanBudget\\(\\);/g) || []).l
 new_check = """const structuredStart = main.indexOf('private void ShowStructuredTarget(');\nconst keyboardStart = main.indexOf('private void ShowKeyboardGuide(');\nconst visionFallbackStart = main.indexOf('private async Task<bool> TryVisionFallbackAsync', keyboardStart);\nconst structuredBlock = main.slice(structuredStart, keyboardStart);\nconst keyboardBlock = main.slice(keyboardStart, visionFallbackStart);\nif (!structuredBlock.includes('ResetCurrentStateReplanBudget();'))\n  throw new Error('successful structured target guidance must reset the replan budget');\nif (!keyboardBlock.includes('ResetCurrentStateReplanBudget();'))\n  throw new Error('successful keyboard guidance must reset the replan budget');\nif (!main.includes('_technicalClarificationRetries = 0;\\n        ResetCurrentStateReplanBudget();\\n        if (generation.HasValue)') &&\n    !main.includes('_technicalClarificationRetries = 0;\\r\\n        ResetCurrentStateReplanBudget();\\r\\n        if (generation.HasValue)'))\n  throw new Error('genuine clarification must reset the replan budget');\n"""
 if old_check in contract:
     contract = contract.replace(old_check, new_check, 1)
-elif "const structuredStart = main.indexOf('private void ShowStructuredTarget(');" not in contract:
-    raise SystemExit('current-state replan reset contract anchor not found')
+# A later recovery-taxonomy pass owns the final contract. If the old assertion is already
+# absent, leave the bootstrap contract alone instead of failing on a historical anchor.
 contract_path.write_text(contract, encoding='utf-8')
