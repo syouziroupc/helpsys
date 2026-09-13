@@ -109,6 +109,11 @@ quality_path = Path('src/HelpSys.Desktop/MainWindow.QualityFirst.cs')
 quality = quality_path.read_text(encoding='utf-8')
 if not quality.startswith('using System.Diagnostics;'):
     quality = 'using System.Diagnostics;\n' + quality
+# Upgrade any earlier Debug-only diagnostic hook so it remains available in Release builds
+# (TRACE is enabled by the SDK in normal Release builds; no file persistence is introduced).
+quality = quality.replace(
+    'Debug.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");',
+    'Trace.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");')
 quality_anchor = '''            var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
@@ -125,7 +130,7 @@ quality_add = '''            var candidates = await _scanner.CaptureCandidatesFo
                         systemContext.ForegroundWindowHandle,
                         systemContext.ForegroundProcessId,
                         cancellationToken);
-                    Debug.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
+                    Trace.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { }
@@ -137,7 +142,7 @@ quality = replace_once(
     quality,
     quality_anchor,
     quality_add,
-    'Debug.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}")',
+    'Trace.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}")',
     'quality diagnostics hook')
 quality_path.write_text(quality, encoding='utf-8')
 
@@ -168,8 +173,8 @@ if (!main.includes('private readonly DiagnosticModePolicy _diagnosticMode = new(
   throw new Error('diagnostics must use the existing explicit opt-in policy');
 if (!quality.includes('_diagnosticMode.Enabled && systemContext.Browser is not null'))
   throw new Error('browser UIA diagnostics must be disabled by default and browser-scoped');
-if (!quality.includes('Debug.WriteLine($"[HelpSys:UIA]'))
-  throw new Error('diagnostics must remain ephemeral debugger output');
+if (!quality.includes('Trace.WriteLine($"[HelpSys:UIA]') || quality.includes('Debug.WriteLine($"[HelpSys:UIA]'))
+  throw new Error('browser diagnostics must use ephemeral Release-capable trace output, not Debug-only output');
 if (!policy.includes('HELPSYS_DIAGNOSTIC_MODE') || !policy.includes('RawScreenPersistenceAllowed = false'))
   throw new Error('diagnostics must retain explicit opt-in and no raw-screen persistence');
 
