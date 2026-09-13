@@ -100,7 +100,7 @@ public partial class MainWindow
         if (_history.Count > 12) _history.RemoveAt(0);
 
         _clarificationQuestion = null;
-        GuideButton.Content = "案内";
+        HideClarificationUiIfNeeded(force: true);
         RequestBox.Text = _originalRequest ?? _activeRequest;
         RequestBox.CaretIndex = RequestBox.Text.Length;
         _localChoiceTargetActive = true;
@@ -123,6 +123,7 @@ public partial class MainWindow
     {
         _localChoiceTargetActive = false;
         WaitForClarification(question);
+        EnsureClarificationUi();
     }
 
     private static bool LooksLikeAccountChoiceQuestion(string? question)
