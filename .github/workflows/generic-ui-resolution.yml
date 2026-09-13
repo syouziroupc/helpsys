@@ -29,15 +29,16 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Apply generic UI resolution patch
+      - name: Apply follow-up generic UI hardening
         shell: pwsh
-        run: python tools/apply_generic_ui_resolution.py
+        run: python tools/apply_generic_ui_resolution_followup.py
 
       - name: Run focused contracts
         shell: pwsh
         run: |
           node tests/local-choice-contract.mjs
           node tests/window-scoped-uia-contract.mjs
+          node tests/window-scoped-revalidation-contract.mjs
           node tests/current-state-replan-contract.mjs
           node tests/live-replan-owner-contract.mjs
           node tests/recovery-taxonomy-contract.mjs
@@ -61,17 +62,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs `
                   src/HelpSys.Desktop/MainWindow.StructuralCapture.cs `
-                  src/HelpSys.Desktop/MainWindow.LiveGuidance.cs `
-                  src/HelpSys.Desktop/MainWindow.xaml.cs `
+                  src/HelpSys.Desktop/MainWindow.StableGuidance.cs `
                   src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs `
                   src/HelpSys.Desktop/MainWindow.QualityFirst.cs `
                   src/HelpSys.Desktop/Services/UiAutomationScanner.cs `
                   tests/local-choice-contract.mjs `
-                  tests/window-scoped-uia-contract.mjs `
+                  tests/window-scoped-revalidation-contract.mjs `
                   package.json
           if (git diff --cached --quiet) {
             Write-Host "No product changes to commit."
             exit 0
           }
-          git commit -m "Generalize visible choice and HWND UI resolution"
+          git commit -m "Harden generic choice ordering and target revalidation"
           git push origin HEAD:feat/generic-ui-resolution-20260913
