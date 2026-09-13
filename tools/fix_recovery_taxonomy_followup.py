@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -70,3 +71,12 @@ for cs_path in Path('src/HelpSys.Desktop').glob('*.cs'):
 
 if violations:
     raise SystemExit('unexpected route-recovery call sites:\n' + '\n'.join(violations))
+
+# The workflow's final commit runs only after focused contracts, all existing regressions,
+# and the Windows build succeed. Pre-stage files that its historical fixed git-add list
+# does not know about; no commit or push occurs here.
+subprocess.run([
+    'git', 'add',
+    'src/HelpSys.Desktop/MainWindow.RecoveryPolicy.cs',
+    'src/HelpSys.Desktop/MainWindow.RouteRecovery.cs'
+], check=True)
