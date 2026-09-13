@@ -33,12 +33,15 @@ jobs:
                   {'id': 'choice-business', 'name': 'テスト法人', 'controlType': 'Button', 'processName': 'chrome', 'interactable': True, 'enabled': True},
                   {'id': 'choice-other', 'name': '別のアカウントを使用', 'controlType': 'Button', 'processName': 'chrome', 'interactable': True, 'enabled': True}
               ],
-              # Intentionally syntactically valid but non-image base64. The new deterministic
-              # choice path must resolve before any model needs to inspect image bytes.
               'image': 'data:image/png;base64,AAAA'
           }
           body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-          headers = {'content-type': 'application/json', 'accept': 'application/json'}
+          headers = {
+              'content-type': 'application/json',
+              'accept': 'application/json,text/plain,*/*',
+              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36',
+              'x-helpsys-request-id': 'github-production-choice-smoke'
+          }
           last = None
           for attempt in range(15):
               try:
