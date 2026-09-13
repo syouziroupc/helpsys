@@ -26,11 +26,13 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Apply already-verified local account-choice patch idempotently
+      - name: Apply local account-choice patches idempotently
         shell: pwsh
-        run: python tools/fix_local_choice.py
+        run: |
+          python tools/fix_local_choice.py
+          python tools/fix_local_choice_extended.py
 
-      - name: Apply off-route click regression patch
+      - name: Apply off-route click regression patch idempotently
         shell: pwsh
         run: python tools/fix_off_route_click.py
 
@@ -56,8 +58,8 @@ jobs:
           }
           git config user.name 'HelpSys Fix Bot'
           git config user.email 'actions@users.noreply.github.com'
-          git add src/HelpSys.Desktop/MainWindow.xaml.cs src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs tests/local-choice-contract.mjs src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs tests/deep-audit-contract.mjs
-          git commit -m '[auto-off-route-fix] Let stable UI state, not click coordinates, drive replanning'
+          git add src/HelpSys.Desktop/MainWindow.xaml.cs src/HelpSys.Desktop/MainWindow.LiveGuidance.cs src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs tests/local-choice-contract.mjs src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs tests/deep-audit-contract.mjs
+          git commit -m '[auto-local-choice-complete] Cover AnswerBox local account resolution'
           git push origin HEAD:fix/choice-replan-recovery-20260913
 
 # Product files are committed only after contracts, existing regressions, and the Windows build pass.
