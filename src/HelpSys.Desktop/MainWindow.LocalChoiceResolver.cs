@@ -164,7 +164,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(normalizedAnswer)) return null;
 
         var interactable = candidates
-            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name))
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)
             .ToArray();
 
         var exact = interactable

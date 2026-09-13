@@ -42,4 +42,13 @@ if (!local.includes('mapped.Count == 1 ? mapped.Values.Single() : null'))
 if (!local.includes('!x.Interactable && x.Enabled') || !local.includes('context.ProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ProcessId'))
   throw new Error('context identity mapping must stay local to visible context and the same UIA process when known');
 
+
+const interactableStart = local.indexOf('var interactable = candidates');
+const interactableEnd = local.indexOf('var exact = interactable', interactableStart);
+const interactablePool = local.slice(interactableStart, interactableEnd);
+if (!interactablePool.includes('.Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)'))
+  throw new Error('context-to-card mapping must allow a nameless clickable parent when its child identity is unique');
+if (interactablePool.includes('!string.IsNullOrWhiteSpace(x.Name)'))
+  throw new Error('nameless clickable account cards must not be discarded from the local choice target pool');
+
 console.log('HelpSys local account-choice privacy contract passed.');
