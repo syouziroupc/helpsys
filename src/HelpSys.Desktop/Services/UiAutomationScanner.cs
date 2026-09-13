@@ -19,6 +19,73 @@ public sealed class UiAutomationScanner
         return Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
     }
 
+    public Task<string> CaptureWindowDiagnosticsAsync(
+        nint windowHandle,
+        int expectedProcessId,
+        CancellationToken cancellationToken = default)
+    {
+        if (windowHandle == nint.Zero) return Task.FromResult("hwnd=missing");
+        return Task.Run(() => CaptureWindowDiagnostics(windowHandle, expectedProcessId, cancellationToken), cancellationToken);
+    }
+
+    private static string CaptureWindowDiagnostics(nint windowHandle, int expectedProcessId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var root = AutomationElement.FromHandle((IntPtr)windowHandle);
+        if (root is null) return $"expectedPid={expectedProcessId};root=missing";
+
+        var walker = TreeWalker.ControlViewWalker;
+        var queue = new Queue<(AutomationElement Element, int Depth)>();
+        queue.Enqueue((root, 0));
+        var visited = 0;
+        var visible = 0;
+        var enabled = 0;
+        var focusable = 0;
+        var knownInteractive = 0;
+        var unclassifiedFocusable = 0;
+        var processIds = new HashSet<int>();
+        var controlCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var stopwatch = Stopwatch.StartNew();
+
+        while (queue.Count > 0 && visited < 7500 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(2200))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (element, depth) = queue.Dequeue();
+            visited++;
+            try
+            {
+                var current = element.Current;
+                if (current.ProcessId > 0) processIds.Add(current.ProcessId);
+                var typeName = current.ControlType?.ProgrammaticName ?? "ControlType.Unknown";
+                controlCounts[typeName] = controlCounts.TryGetValue(typeName, out var count) ? count + 1 : 1;
+
+                var isVisible = !current.IsOffscreen && !current.BoundingRectangle.IsEmpty;
+                if (isVisible) visible++;
+                if (current.IsEnabled) enabled++;
+                if (current.IsKeyboardFocusable) focusable++;
+                var isKnownInteractive = IsInteractiveType(typeName);
+                if (isKnownInteractive) knownInteractive++;
+                if (isVisible && current.IsEnabled && current.IsKeyboardFocusable && !isKnownInteractive)
+                    unclassifiedFocusable++;
+
+                if (depth < 12) EnqueueChildren(walker, element, depth + 1, queue);
+            }
+            catch (ElementNotAvailableException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        var pidSummary = processIds.Count == 0
+            ? "none"
+            : string.Join(',', processIds.OrderBy(x => x));
+        var typeSummary = string.Join(',', controlCounts
+            .OrderByDescending(x => x.Value)
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .Take(16)
+            .Select(x => $"{x.Key.Replace("ControlType.", string.Empty, StringComparison.Ordinal)}:{x.Value}"));
+
+        return $"expectedPid={expectedProcessId};pids={pidSummary};crossProcess={processIds.Any(x => x != expectedProcessId)};visited={visited};visible={visible};enabled={enabled};focusable={focusable};knownInteractive={knownInteractive};unclassifiedFocusable={unclassifiedFocusable};types={typeSummary}";
+    }
+
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, CancellationToken cancellationToken = default)
         => Task.Run(() => RevalidateCandidate(candidate, null, cancellationToken), cancellationToken);
 

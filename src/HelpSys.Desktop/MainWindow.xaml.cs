@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly KeyHintWindow _keyHint = new();
     private readonly List<GuideHistoryItem> _history = [];
     private readonly GuidanceSessionController _sessionState = new();
+    private readonly DiagnosticModePolicy _diagnosticMode = new();
 
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _voiceCts;

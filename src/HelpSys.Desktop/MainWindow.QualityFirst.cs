@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using HelpSys.Models;
 using HelpSys.Services;
@@ -58,6 +59,20 @@ public partial class MainWindow
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
             var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
+
+            if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
+            {
+                try
+                {
+                    var diagnostic = await _scanner.CaptureWindowDiagnosticsAsync(
+                        systemContext.ForegroundWindowHandle,
+                        systemContext.ForegroundProcessId,
+                        cancellationToken);
+                    Debug.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { }
+            }
 
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
