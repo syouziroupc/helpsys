@@ -9,6 +9,8 @@ using System.Runtime.InteropServices;
 
 public static class HelpSysSmokeNative
 {
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
     {
@@ -19,10 +21,37 @@ public static class HelpSysSmokeNative
     }
 
     [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    public static IntPtr FindLargestVisibleWindowForProcess(int processId)
+    {
+        IntPtr best = IntPtr.Zero;
+        long bestArea = 0;
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var ownerPid);
+            if (ownerPid != (uint)processId || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return true;
+            var width = Math.Max(0, rect.Right - rect.Left);
+            var height = Math.Max(0, rect.Bottom - rect.Top);
+            var area = (long)width * height;
+            if (area > bestArea)
+            {
+                bestArea = area;
+                best = hWnd;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
 
     public static int VisibleWidth(IntPtr hWnd)
     {
@@ -103,8 +132,8 @@ try {
   Start-Sleep -Seconds 2
 
   # User-visible startup and UI Automation readiness are different phenomena. The strict first
-  # loop measures only the actual Win32 surface. UI Automation is not touched until that loop has
-  # succeeded, so a slow UIA provider cannot consume the first-paint budget.
+  # loop measures only Win32 top-level windows owned by the HelpSys process. UI Automation is not
+  # touched until that loop succeeds, so UIA provider latency cannot consume first-paint budget.
   $surfaceMaximumMs = 4000
   $automationMaximumMs = 6500
   $guideMaximumMs = 5000
@@ -115,14 +144,14 @@ try {
   $controls = @{}
   $window = $null
   $surfaceVisibleAtMs = $null
+  $surfaceHwnd = [IntPtr]::Zero
 
   while ($startup.Elapsed.TotalMilliseconds -lt $surfaceMaximumMs) {
     if ($helpSys.HasExited) { throw 'HelpSys exited during visible-surface startup smoke.' }
-    $helpSys.Refresh()
-    $mainHwnd = $helpSys.MainWindowHandle
-    if ($mainHwnd -ne [IntPtr]::Zero) {
-      $nativeWidth = [HelpSysSmokeNative]::VisibleWidth($mainHwnd)
-      $nativeHeight = [HelpSysSmokeNative]::VisibleHeight($mainHwnd)
+    $surfaceHwnd = [HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)
+    if ($surfaceHwnd -ne [IntPtr]::Zero) {
+      $nativeWidth = [HelpSysSmokeNative]::VisibleWidth($surfaceHwnd)
+      $nativeHeight = [HelpSysSmokeNative]::VisibleHeight($surfaceHwnd)
       if ($nativeWidth -ge 580 -and $nativeHeight -ge 100) {
         $surfaceVisibleAtMs = [math]::Round($startup.Elapsed.TotalMilliseconds)
         break
@@ -132,6 +161,17 @@ try {
   }
 
   if ($null -eq $surfaceVisibleAtMs) {
+    $helpSys.Refresh()
+    $diagnosticHwnd = [HelpSysSmokeNative]::FindLargestVisibleWindowForProcess($helpSys.Id)
+    [ordered]@{
+      elapsedMilliseconds = [math]::Round($startup.Elapsed.TotalMilliseconds)
+      processId = $helpSys.Id
+      hasExited = $helpSys.HasExited
+      processMainWindowHandle = $helpSys.MainWindowHandle.ToInt64()
+      enumeratedVisibleWindowHandle = $diagnosticHwnd.ToInt64()
+      enumeratedVisibleWindowWidth = [HelpSysSmokeNative]::VisibleWidth($diagnosticHwnd)
+      enumeratedVisibleWindowHeight = [HelpSysSmokeNative]::VisibleHeight($diagnosticHwnd)
+    } | ConvertTo-Json | Set-Content 'artifacts/helpsys-ui-visible-startup-failure.json' -Encoding UTF8
     Save-Screenshot 'helpsys-ui-visible-startup-failure.png'
     throw "HelpSys visible surface did not appear within $surfaceMaximumMs ms."
   }
