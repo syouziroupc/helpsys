@@ -27,7 +27,6 @@ jobs:
 
       - name: Syntax and regression tests
         run: |
-          npm ci
           npm run check
           npm test
 
