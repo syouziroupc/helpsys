@@ -83,7 +83,8 @@ console.log('HelpSys live replan bootstrap passed.');
 for patch_name in [
     'tools/fix_recovery_taxonomy.py',
     'tools/fix_recovery_taxonomy_followup.py',
-    'tools/fix_regression_coverage.py'
+    'tools/fix_regression_coverage.py',
+    'tools/fix_browser_uia_diagnostics.py'
 ]:
     patch = Path(patch_name)
     if patch.exists():
