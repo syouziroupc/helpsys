@@ -42,8 +42,7 @@ public partial class MainWindow
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 {
                     var generation = _sessionState.Generation;
-                    if (!TryQueueCurrentStateReplan("マウス操作の結果監視で現在状態を確定できない", generation))
-                        await RecoverFromObserverFailureAsync("マウス操作の結果監視で現在状態を確定できない");
+                    HandleTechnicalPlanningUncertainty("マウス操作の結果監視で現在状態を確定できない", generation);
                 }
             }
             catch { }
@@ -92,8 +91,7 @@ public partial class MainWindow
                 if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 {
                     var generation = _sessionState.Generation;
-                    if (!TryQueueCurrentStateReplan("キー操作の結果監視で現在状態を確定できない", generation))
-                        await RecoverFromObserverFailureAsync("キー操作の結果監視で現在状態を確定できない");
+                    HandleTechnicalPlanningUncertainty("キー操作の結果監視で現在状態を確定できない", generation);
                 }
             }
             catch { }

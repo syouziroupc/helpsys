@@ -7,10 +7,10 @@ for (const reason of [
   'マウス操作の結果監視で現在状態を確定できない',
   'キー操作の結果監視で現在状態を確定できない'
 ]) {
-  const replan = reliability.indexOf(`TryQueueCurrentStateReplan("${reason}"`);
-  const recovery = reliability.indexOf(`RecoverFromObserverFailureAsync("${reason}"`);
-  if (replan < 0 || recovery < 0 || replan > recovery)
-    throw new Error(`observer failure must try current-state replan before heavy recovery: ${reason}`);
+  if (!reliability.includes(`HandleTechnicalPlanningUncertainty("${reason}"`))
+    throw new Error(`observer failure must use technical current-state policy: ${reason}`);
+  if (reliability.includes(`RecoverFromObserverFailureAsync("${reason}"`))
+    throw new Error(`observer failure must not be classified as route recovery: ${reason}`);
 }
 
 const lost = reliability.indexOf('"foreground_lost"');

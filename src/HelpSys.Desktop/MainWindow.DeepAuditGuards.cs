@@ -63,24 +63,25 @@ public partial class MainWindow
         _ = RecoverTypeTextFocusDeviationAsync(generation);
     }
 
-    private async Task RecoverTypeTextFocusDeviationAsync(long generation)
+    private Task RecoverTypeTextFocusDeviationAsync(long generation)
     {
         try
         {
-            if (_sessionCts is null || _sessionCts.IsCancellationRequested || !_sessionState.IsCurrent(generation)) return;
-            await TryRouteRecoveryAsync("入力確定時に案内対象の入力欄からフォーカスが外れている", generation, _sessionCts.Token);
+            if (_sessionCts is null || _sessionCts.IsCancellationRequested || !_sessionState.IsCurrent(generation))
+                return Task.CompletedTask;
+            HandleTechnicalPlanningUncertainty("入力確定時に案内対象の入力欄からフォーカスが外れている", generation);
         }
-        catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch
         {
-            try { await RecoverFromObserverFailureAsync("入力欄の再確認で現在状態を確定できない"); }
+            try { HandleTechnicalPlanningUncertainty("入力欄の再確認で現在状態を確定できない", generation); }
             catch { }
         }
         finally
         {
             Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 0);
         }
+        return Task.CompletedTask;
     }
 
     private static bool IsCurrentTextTargetFocusedDeepAudit(UiElementCandidate target)
