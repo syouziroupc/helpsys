@@ -350,6 +350,7 @@ public partial class MainWindow : Window
     {
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
+        ResetCurrentStateReplanBudget();
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
@@ -369,6 +370,7 @@ public partial class MainWindow : Window
     {
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
+        ResetCurrentStateReplanBudget();
         _currentDecision = decision;
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -547,6 +549,7 @@ public partial class MainWindow : Window
         }
 
         _technicalClarificationRetries = 0;
+        ResetCurrentStateReplanBudget();
         if (generation.HasValue)
         {
             if (!_sessionState.TryTransition(generation.Value, GuidanceSessionState.Clarifying)) return;
@@ -655,6 +658,7 @@ public partial class MainWindow : Window
         _doubleClickCount = 0;
         _consecutiveFailures = 0;
         _technicalClarificationRetries = 0;
+        ResetCurrentStateReplanBudget();
         _forceVisionNext = false;
         _clarificationQuestion = null;
         _localChoiceTargetActive = false;

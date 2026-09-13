@@ -51,7 +51,8 @@ public partial class MainWindow
 
             if (!HasUsableForeground(systemContext))
             {
-                await TryRouteRecoveryAsync("前面ウィンドウを一時的に特定できない", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("前面ウィンドウを一時的に特定できない", generation)) return;
+                await TryRouteRecoveryAsync("再確認しても前面ウィンドウを特定できない", generation, cancellationToken);
                 return;
             }
 
@@ -84,7 +85,8 @@ public partial class MainWindow
             var afterCaptureContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, afterCaptureContext) || HasSystemTransitionV3(systemContext, afterCaptureContext))
             {
-                await TryRouteRecoveryAsync("確認中に画面が切り替わった", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("確認中に画面が切り替わった", generation)) return;
+                await TryRouteRecoveryAsync("再確認後も確認中の画面切替が続いている", generation, cancellationToken);
                 return;
             }
 
@@ -109,6 +111,8 @@ public partial class MainWindow
             }
             catch (GuideServiceException error)
             {
+                if (error.Kind == GuideFailureKind.ContextChanged &&
+                    TryQueueCurrentStateReplan("通常計画中に画面状態が変化した", generation)) return;
                 if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 if (_sessionState.IsCurrent(generation))
                     await TryRouteRecoveryAsync($"通常計画を継続できない: {error.Kind}", generation, cancellationToken);
@@ -119,7 +123,8 @@ public partial class MainWindow
             var postPlanContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, postPlanContext) || HasSystemTransitionV3(systemContext, postPlanContext))
             {
-                await TryRouteRecoveryAsync("判断中に画面が変化した", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("判断中に画面が変化した", generation)) return;
+                await TryRouteRecoveryAsync("再確認後も判断中の画面変化が続いている", generation, cancellationToken);
                 return;
             }
 
@@ -201,7 +206,8 @@ public partial class MainWindow
             if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("選ばれた対象が現在は操作できない", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("選ばれた対象が現在は操作できない", generation)) return;
+                await TryRouteRecoveryAsync("再確認しても選ばれた対象を操作できない", generation, cancellationToken);
                 return;
             }
 
@@ -210,13 +216,15 @@ public partial class MainWindow
             var prePresentContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, prePresentContext) || HasSystemTransitionV3(systemContext, prePresentContext))
             {
-                await TryRouteRecoveryAsync("案内表示の直前に画面が変わった", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("案内表示の直前に画面が変わった", generation)) return;
+                await TryRouteRecoveryAsync("再確認後も案内表示直前の画面変化が続いている", generation, cancellationToken);
                 return;
             }
             if (freshTarget is null)
             {
                 if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                await TryRouteRecoveryAsync("案内対象が表示直前に消えた", generation, cancellationToken);
+                if (TryQueueCurrentStateReplan("案内対象が表示直前に消えた", generation)) return;
+                await TryRouteRecoveryAsync("再確認しても案内対象を確定できない", generation, cancellationToken);
                 return;
             }
 
@@ -409,7 +417,8 @@ public partial class MainWindow
         var currentContext = _systemContext.Capture();
         if (!HasSameCaptureIdentity(systemContext, currentContext) || HasSystemTransitionV3(systemContext, currentContext))
         {
-            await TryRouteRecoveryAsync("画像上の候補を確認中に画面が変わった", generation, cancellationToken);
+            if (TryQueueCurrentStateReplan("画像上の候補を確認中に画面が変わった", generation)) return;
+            await TryRouteRecoveryAsync("再確認後も画像候補確認中の画面変化が続いている", generation, cancellationToken);
             return;
         }
 
@@ -433,6 +442,7 @@ public partial class MainWindow
             : decision.Instruction;
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
+        ResetCurrentStateReplanBudget();
         _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;
