@@ -144,7 +144,7 @@ public partial class MainWindow
 
         var decision = _currentDecision;
         var targetName = _localChoiceTargetActive
-            ? "利用者が選んだアカウント"
+            ? "利用者が選んだ項目"
             : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         string? retryMessage = null;
         string? routeRecoveryIssue = null;
@@ -186,7 +186,7 @@ public partial class MainWindow
                         }
                         else
                         {
-                            _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
+                            _stepBaseline = await CaptureForegroundCandidatesAsync(_stepSystemBaseline, 420, _sessionCts.Token);
                             if (!_sessionState.IsCurrent(generation)) return;
 
                             if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))

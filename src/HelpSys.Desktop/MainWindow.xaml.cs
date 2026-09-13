@@ -164,7 +164,7 @@ public partial class MainWindow : Window
 
         if (_awaitingClarification && _activeRequest is not null && _sessionCts is not null)
         {
-            var localChoice = await TryHandleLocalAccountChoiceAnswerAsync(text);
+            var localChoice = await TryHandleLocalVisibleChoiceAnswerAsync(text);
             if (localChoice == LocalChoiceAnswerResult.Handled) return;
 
             _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", text, _clarificationQuestion ?? "確認質問"));

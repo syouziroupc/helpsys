@@ -5,50 +5,34 @@ const live = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LiveGuidance.cs', '
 const local = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs', 'utf8');
 const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs', 'utf8');
 
-const legacyHook = main.indexOf('TryHandleLocalAccountChoiceAnswerAsync(text)');
-const legacyHistory = main.indexOf('new GuideHistoryItem(_stepNumber, "clarification_answer", text');
-if (legacyHook < 0 || legacyHistory < 0 || legacyHook > legacyHistory)
-  throw new Error('legacy clarification path must intercept the raw account answer before history/cloud handling');
+for (const [source, answer, label] of [
+  [main, 'text', 'legacy RequestBox'],
+  [live, 'answer', 'AnswerBox']
+]) {
+  const hook = source.indexOf(`TryHandleLocalVisibleChoiceAnswerAsync(${answer})`);
+  const history = source.indexOf(`new GuideHistoryItem(_stepNumber, "clarification_answer", ${answer}`);
+  if (hook < 0 || history < 0 || hook > history)
+    throw new Error(`${label} clarification path must intercept visible-choice answers before cloud/history handling`);
+}
 
-const liveHook = live.indexOf('TryHandleLocalAccountChoiceAnswerAsync(answer)');
-const liveHistory = live.indexOf('new GuideHistoryItem(_stepNumber, "clarification_answer", answer');
-if (liveHook < 0 || liveHistory < 0 || liveHook > liveHistory)
-  throw new Error('AnswerBox clarification path must intercept the raw account answer before history/cloud handling');
+if (!local.includes('LocalVisibleChoiceQuestionRegex') || !local.includes('LooksLikeVisibleChoiceQuestion'))
+  throw new Error('local resolver must detect generic visible-choice clarifications');
+if (!local.includes('Button", "ListItem", "MenuItem", "Hyperlink", "TabItem", "ComboBox"') ||
+    !local.includes('"CheckBox", "RadioButton", "TreeItem"'))
+  throw new Error('generic local choice must cover common choice/list/menu/dialog control types');
+if (local.includes('IsSupportedLocalChoiceBrowser'))
+  throw new Error('generic visible-choice resolution must not be browser-whitelisted');
+if (!local.includes('preferWindowScope: true'))
+  throw new Error('local visible-choice resolution must prefer the current foreground window scope');
+if (!local.includes('FindUniqueLocalVisibleChoice') || !local.includes('RevalidateCandidateAsync(match, context.ForegroundProcessId'))
+  throw new Error('generic local choice must require a unique match and revalidate it');
+if (!local.includes('利用者が選んだ項目') || local.includes('_activeRequest +=') || local.includes('clarification_answer", answer'))
+  throw new Error('local visible-choice answers must remain opaque to cloud-bound request/history');
+if (!local.includes('x.Bounds.Contains(center)') || !local.includes('mapped.Count == 1 ? mapped.Values.Single() : null'))
+  throw new Error('context-text mapping must use geometric containment and fail closed on ambiguity');
+if (!local.includes('if (normalizedAnswer.Length < 3) return null'))
+  throw new Error('short answers must not use fuzzy/partial matching');
+if (!reliability.includes('_localChoiceTargetActive') || !reliability.includes('利用者が選んだ項目'))
+  throw new Error('later action history must keep every locally resolved choice opaque');
 
-if (!local.includes('FindUniqueLocalAccountChoice'))
-  throw new Error('local account resolver must require a unique local UIA match');
-if (!local.includes('RevalidateCandidateAsync(match, context.ForegroundProcessId'))
-  throw new Error('local account target must be revalidated before guidance');
-if (!local.includes('利用者が選んだアカウント'))
-  throw new Error('local account history must use an opaque label');
-if (local.includes('_activeRequest +=') || local.includes('clarification_answer", answer'))
-  throw new Error('local resolver must not append the raw account answer to the cloud-bound request/history');
-if (!local.includes('HideClarificationUiIfNeeded(force: true)'))
-  throw new Error('successful local choice must close the clarification panel before target guidance');
-const retryWait = local.indexOf('WaitForClarification(question);');
-const retryUi = local.indexOf('EnsureClarificationUi();', retryWait);
-if (retryWait < 0 || retryUi < 0 || retryUi < retryWait)
-  throw new Error('failed local matching must keep the clarification UI available for retry');
-if (!reliability.includes('_localChoiceTargetActive') || !reliability.includes('利用者が選んだアカウント'))
-  throw new Error('successful local account selection must keep later history opaque');
-
-
-if (!local.includes('FindUniqueContainingLocalChoice(candidates, interactable, normalizedAnswer'))
-  throw new Error('local resolver must support context-text to containing account-card mapping');
-if (!local.includes('x.Bounds.Contains(center)'))
-  throw new Error('context identity mapping must require geometric containment, not nearest-neighbour guessing');
-if (!local.includes('mapped.Count == 1 ? mapped.Values.Single() : null'))
-  throw new Error('context identity mapping must fail closed unless exactly one clickable target remains');
-if (!local.includes('!x.Interactable && x.Enabled') || !local.includes('context.ProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ProcessId'))
-  throw new Error('context identity mapping must stay local to visible context and the same UIA process when known');
-
-
-const interactableStart = local.indexOf('var interactable = candidates');
-const interactableEnd = local.indexOf('var exact = interactable', interactableStart);
-const interactablePool = local.slice(interactableStart, interactableEnd);
-if (!interactablePool.includes('.Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)'))
-  throw new Error('context-to-card mapping must allow a nameless clickable parent when its child identity is unique');
-if (interactablePool.includes('!string.IsNullOrWhiteSpace(x.Name)'))
-  throw new Error('nameless clickable account cards must not be discarded from the local choice target pool');
-
-console.log('HelpSys local account-choice privacy contract passed.');
+console.log('HelpSys generic visible-choice privacy contract passed.');

@@ -57,7 +57,7 @@ public partial class MainWindow
             }
 
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
-            var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
+            var candidates = await CaptureForegroundCandidatesAsync(systemContext, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
 
             if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
@@ -284,7 +284,7 @@ public partial class MainWindow
         IReadOnlyList<UiElementCandidate> candidates;
         try
         {
-            candidates = await _scanner.CaptureCandidatesForProcessAsync(expectedContext.ForegroundProcessId, 420, cancellationToken);
+            candidates = await CaptureForegroundCandidatesAsync(expectedContext, 420, cancellationToken);
         }
         catch (OperationCanceledException) { throw; }
         catch { return false; }

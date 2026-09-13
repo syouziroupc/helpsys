@@ -19,6 +19,16 @@ public sealed class UiAutomationScanner
         return Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
     }
 
+    public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForWindowAsync(
+        nint windowHandle,
+        int expectedProcessId,
+        int maxCandidates = 360,
+        CancellationToken cancellationToken = default)
+    {
+        if (windowHandle == nint.Zero) return Task.FromResult<IReadOnlyList<UiElementCandidate>>([]);
+        return Task.Run(() => CaptureCandidatesForWindow(windowHandle, expectedProcessId, maxCandidates, cancellationToken), cancellationToken);
+    }
+
     public Task<string> CaptureWindowDiagnosticsAsync(
         nint windowHandle,
         int expectedProcessId,
@@ -258,7 +268,41 @@ public sealed class UiAutomationScanner
         var queue = new Queue<(AutomationElement Element, int Depth)>();
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildren(walker, root, 0, queue);
+        return CaptureCandidatesFromQueue(queue, walker, maxCandidates, cancellationToken);
+    }
 
+    private IReadOnlyList<UiElementCandidate> CaptureCandidatesForWindow(
+        nint windowHandle,
+        int expectedProcessId,
+        int maxCandidates,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (windowHandle == nint.Zero) return [];
+
+        AutomationElement? root;
+        try
+        {
+            root = AutomationElement.FromHandle((IntPtr)windowHandle);
+            if (root is null) return [];
+            var rootProcessId = root.Current.ProcessId;
+            if (expectedProcessId > 0 && rootProcessId > 0 && rootProcessId != expectedProcessId) return [];
+        }
+        catch (ElementNotAvailableException) { return []; }
+        catch (InvalidOperationException) { return []; }
+
+        var walker = TreeWalker.ControlViewWalker;
+        var queue = new Queue<(AutomationElement Element, int Depth)>();
+        queue.Enqueue((root, 0));
+        return CaptureCandidatesFromQueue(queue, walker, maxCandidates, cancellationToken);
+    }
+
+    private IReadOnlyList<UiElementCandidate> CaptureCandidatesFromQueue(
+        Queue<(AutomationElement Element, int Depth)> queue,
+        TreeWalker walker,
+        int maxCandidates,
+        CancellationToken cancellationToken)
+    {
         var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
         var contextPoolLimit = Math.Max(180, maxCandidates / 2);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);

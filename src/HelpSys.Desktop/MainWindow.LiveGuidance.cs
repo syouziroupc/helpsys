@@ -197,7 +197,7 @@ public partial class MainWindow
             return;
         }
 
-        var localChoice = await TryHandleLocalAccountChoiceAnswerAsync(answer);
+        var localChoice = await TryHandleLocalVisibleChoiceAnswerAsync(answer);
         if (localChoice == LocalChoiceAnswerResult.Handled) return;
 
         _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", answer, _clarificationQuestion ?? "確認質問"));
