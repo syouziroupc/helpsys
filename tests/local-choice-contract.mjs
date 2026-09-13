@@ -32,4 +32,14 @@ if (retryWait < 0 || retryUi < 0 || retryUi < retryWait)
 if (!reliability.includes('_localChoiceTargetActive') || !reliability.includes('利用者が選んだアカウント'))
   throw new Error('successful local account selection must keep later history opaque');
 
+
+if (!local.includes('FindUniqueContainingLocalChoice(candidates, interactable, normalizedAnswer'))
+  throw new Error('local resolver must support context-text to containing account-card mapping');
+if (!local.includes('x.Bounds.Contains(center)'))
+  throw new Error('context identity mapping must require geometric containment, not nearest-neighbour guessing');
+if (!local.includes('mapped.Count == 1 ? mapped.Values.Single() : null'))
+  throw new Error('context identity mapping must fail closed unless exactly one clickable target remains');
+if (!local.includes('!x.Interactable && x.Enabled') || !local.includes('context.ProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ProcessId'))
+  throw new Error('context identity mapping must stay local to visible context and the same UIA process when known');
+
 console.log('HelpSys local account-choice privacy contract passed.');

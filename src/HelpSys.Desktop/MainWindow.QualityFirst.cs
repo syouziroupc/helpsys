@@ -68,7 +68,7 @@ public partial class MainWindow
                         systemContext.ForegroundWindowHandle,
                         systemContext.ForegroundProcessId,
                         cancellationToken);
-                    Debug.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
+                    Trace.WriteLine($"[HelpSys:UIA] processCandidates={candidates.Count};{diagnostic}");
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { }

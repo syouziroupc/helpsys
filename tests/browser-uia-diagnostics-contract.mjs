@@ -23,8 +23,8 @@ if (!main.includes('private readonly DiagnosticModePolicy _diagnosticMode = new(
   throw new Error('diagnostics must use the existing explicit opt-in policy');
 if (!quality.includes('_diagnosticMode.Enabled && systemContext.Browser is not null'))
   throw new Error('browser UIA diagnostics must be disabled by default and browser-scoped');
-if (!quality.includes('Debug.WriteLine($"[HelpSys:UIA]'))
-  throw new Error('diagnostics must remain ephemeral debugger output');
+if (!quality.includes('Trace.WriteLine($"[HelpSys:UIA]') || quality.includes('Debug.WriteLine($"[HelpSys:UIA]'))
+  throw new Error('browser diagnostics must use ephemeral Release-capable trace output, not Debug-only output');
 if (!policy.includes('HELPSYS_DIAGNOSTIC_MODE') || !policy.includes('RawScreenPersistenceAllowed = false'))
   throw new Error('diagnostics must retain explicit opt-in and no raw-screen persistence');
 
