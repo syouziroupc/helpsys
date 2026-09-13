@@ -137,7 +137,9 @@ public partial class MainWindow
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Verifying)) return;
 
         var decision = _currentDecision;
-        var targetName = _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
+        var targetName = _localChoiceTargetActive
+            ? "利用者が選んだアカウント"
+            : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         string? retryMessage = null;
         string? routeRecoveryIssue = null;
         bool replan = false;
@@ -302,6 +304,7 @@ public partial class MainWindow
         _validatedVisionInstruction = null;
         _v3TrackedDecision = null;
         _v3TypeActivityObserved = false;
+        _localChoiceTargetActive = false;
     }
 
     private async Task<bool> WaitForStableStateTransitionV3Async(

@@ -163,6 +163,9 @@ public partial class MainWindow : Window
 
         if (_awaitingClarification && _activeRequest is not null && _sessionCts is not null)
         {
+            var localChoice = await TryHandleLocalAccountChoiceAnswerAsync(text);
+            if (localChoice == LocalChoiceAnswerResult.Handled) return;
+
             _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", text, _clarificationQuestion ?? "確認質問"));
             _activeRequest += $"\n利用者からの追加回答: {text}";
             _clarificationQuestion = null;
@@ -654,6 +657,7 @@ public partial class MainWindow : Window
         _technicalClarificationRetries = 0;
         _forceVisionNext = false;
         _clarificationQuestion = null;
+        _localChoiceTargetActive = false;
         _actionObserver.Stop();
         _sessionCts?.Cancel();
         _sessionCts?.Dispose();
