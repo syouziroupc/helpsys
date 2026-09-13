@@ -72,7 +72,7 @@ export function buildWindowsTaskContext(goal, elements = [], history = [], syste
   const safety = detectSafetyState(elements, systemContext);
   if (safety) return safety;
 
-  const branch = detectChoiceBranch(elements, systemContext);
+  const branch = detectChoiceBranch(elements, history, systemContext);
   if (branch) return branch;
 
   const site = detectSiteGoal(goal);
@@ -304,15 +304,32 @@ function detectSafetyState(elements, systemContext) {
   }, false, new Set());
 }
 
-function detectChoiceBranch(elements, systemContext) {
+function detectChoiceBranch(elements, history, systemContext) {
   const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
-  const text = `${systemContext?.foregroundTitle || ''} ${elements.filter(x => !foreground || String(x.processName || '').toLowerCase() === foreground).map(x => x.name).join(' ')}`;
-  if (/(どなたが使用|プロファイル.*選|プロフィール.*選|アカウント.*選|ゲストモード)/i.test(text)) {
+  const relevant = elements.filter(x => !foreground || String(x.processName || '').toLowerCase() === foreground);
+  const text = `${systemContext?.foregroundTitle || ''} ${relevant.map(x => x.name).join(' ')}`;
+  const accountChoice = /(どなたが使用|プロファイル.*選|プロフィール.*選|アカウント(?:の)?選択|アカウント.*選|ユーザー.*選|別のアカウントを使用|ゲストモード|choose\s+an?\s+account|select\s+an?\s+account|who(?:'s|\s+is)\s+using\s+chrome|use\s+another\s+account|guest\s+mode)/i.test(text);
+
+  if (accountChoice) {
+    const answer = latestChoiceAnswer(history);
+    if (answer && !looksRedactedChoiceAnswer(answer)) {
+      const matches = findAnsweredChoiceTargets(relevant, answer);
+      if (matches.length === 1) {
+        const selected = matches[0];
+        return task('choice', CORE_KNOWLEDGE, {
+          status: 'target', targetId: selected.id, action: 'left_click',
+          instruction: `青い枠の「${safeChoiceLabel(selected.name)}」で、マウスの左ボタンを1回押してください。`,
+          question: null, key: null, confidence: 0.99
+        }, false, new Set([selected.id]));
+      }
+    }
+
     return task('choice', CORE_KNOWLEDGE, {
       status: 'clarify', targetId: null, action: 'none', instruction: '',
       question: '使う人を選ぶ画面です。勝手に選ばないので、画面に出ている名前のうち、どの名前を使うか教えてください。', key: null, confidence: 0.99
     }, false, null);
   }
+
   if (/(上書き|置き換えますか|削除しますか|既定.*ブラウ|アクセスを許可|許可しますか|購入|支払い|注文を確定)/i.test(text)) {
     return task('choice', CORE_KNOWLEDGE, {
       status: 'clarify', targetId: null, action: 'none', instruction: '',
@@ -320,6 +337,57 @@ function detectChoiceBranch(elements, systemContext) {
     }, false, null);
   }
   return null;
+}
+
+function latestChoiceAnswer(history) {
+  if (!Array.isArray(history)) return '';
+  const item = [...history].reverse().find(entry =>
+    String(entry?.action ?? entry?.Action ?? '').toLowerCase() === 'clarification_answer');
+  return String(
+    item?.targetName ?? item?.TargetName ??
+    item?.target ?? item?.Target ?? ''
+  ).trim();
+}
+
+function findAnsweredChoiceTargets(elements, answer) {
+  const normalizedAnswer = normalizeChoiceText(answer);
+  if (!normalizedAnswer) return [];
+
+  const candidates = elements.filter(element =>
+    element?.interactable !== false &&
+    element?.enabled !== false &&
+    String(element?.id || '').trim() &&
+    String(element?.name || '').trim() &&
+    !/(ゲストモード|guest\s+mode|別のアカウントを使用|use\s+another\s+account|アカウントを追加|add\s+account|その他|more|設定|settings|閉じる|close)/i.test(String(element?.name || '')));
+
+  const exact = candidates.filter(element => normalizeChoiceText(element.name) === normalizedAnswer);
+  if (exact.length === 1) return exact;
+  if (exact.length > 1) return [];
+
+  const partial = candidates.filter(element => {
+    const name = normalizeChoiceText(element.name);
+    return name && (name.includes(normalizedAnswer) || normalizedAnswer.includes(name));
+  });
+  return partial.length === 1 ? partial : [];
+}
+
+function normalizeChoiceText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\s　「」『』\"'()（）\[\]【】<>＜＞]/g, '');
+}
+
+function looksRedactedChoiceAnswer(value) {
+  const text = String(value || '').trim();
+  return !text || /^<(?:email|phone|postal-code|redacted[^>]*)>$/i.test(text);
+}
+
+function safeChoiceLabel(value) {
+  const label = String(value || '').replace(/[\r\n\t]+/g, ' ').trim();
+  if (!label) return '選んだ名前';
+  if (/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(label)) return '選んだアカウント';
+  return label.length <= 60 ? label : label.slice(0, 60);
 }
 
 function buildKnowledge(goal) {
