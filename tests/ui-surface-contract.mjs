@@ -71,11 +71,17 @@ assert(smoke.includes('class HelpSysSmokeNative') && smoke.includes('IsWindowVis
   'Visible-surface timing must use Win32 visibility/window bounds rather than UI Automation readiness.');
 assert(smoke.includes('$mainHwnd = $helpSys.MainWindowHandle') && smoke.includes('[HelpSysSmokeNative]::VisibleWidth($mainHwnd)'),
   'Visible-surface timing must inspect the actual process main HWND.');
-const startupLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs)');
-const uiAutomationLookup = smoke.indexOf('$window = Find-MainWindow $helpSys', startupLoopStart);
-const nativeVisibilityLookup = smoke.indexOf('$mainHwnd = $helpSys.MainWindowHandle', startupLoopStart);
-assert(startupLoopStart >= 0 && nativeVisibilityLookup > startupLoopStart && uiAutomationLookup > nativeVisibilityLookup,
-  'Strict visible-surface timing must be captured before any potentially delayed UI Automation lookup.');
+const surfaceLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $surfaceMaximumMs)');
+const automationLoopStart = smoke.indexOf('while ($startup.Elapsed.TotalMilliseconds -lt $automationMaximumMs)', surfaceLoopStart);
+const nativeVisibilityLookup = smoke.indexOf('$mainHwnd = $helpSys.MainWindowHandle', surfaceLoopStart);
+const uiAutomationLookup = smoke.indexOf('$window = Find-MainWindow $helpSys', automationLoopStart);
+assert(surfaceLoopStart >= 0 && nativeVisibilityLookup > surfaceLoopStart && automationLoopStart > nativeVisibilityLookup,
+  'Strict visible-surface timing must run in its own Win32-only polling loop.');
+assert(uiAutomationLookup > automationLoopStart,
+  'UI Automation readiness must begin only after the strict visible-surface loop has completed.');
+const surfaceLoop = smoke.slice(surfaceLoopStart, automationLoopStart);
+assert(!surfaceLoop.includes('Find-MainWindow') && !surfaceLoop.includes('Find-Element'),
+  'The strict visible-surface loop must never call UI Automation APIs that can block first-paint polling.');
 assert(smoke.includes('$surfaceMaximumMs = 4000') && smoke.includes('$automationMaximumMs = 6500'),
   'Visible paint and UI Automation readiness must retain separate performance budgets.');
 
