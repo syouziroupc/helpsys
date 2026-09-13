@@ -84,7 +84,8 @@ for patch_name in [
     'tools/fix_recovery_taxonomy.py',
     'tools/fix_recovery_taxonomy_followup.py',
     'tools/fix_regression_coverage.py',
-    'tools/fix_browser_uia_diagnostics.py'
+    'tools/fix_browser_uia_diagnostics.py',
+    'tools/fix_local_choice_context_mapping.py'
 ]:
     patch = Path(patch_name)
     if patch.exists():
