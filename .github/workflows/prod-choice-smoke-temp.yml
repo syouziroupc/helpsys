@@ -1,0 +1,60 @@
+name: Temporary production choice smoke
+
+on:
+  push:
+    branches:
+      - fix/choice-replan-recovery-20260913
+
+jobs:
+  production-choice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify production deterministic choice route
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, time, urllib.error, urllib.request
+
+          url = 'https://helpsys.syouziroupc.workers.dev/v1/quality-guide'
+          payload = {
+              'request': 'Gmailを開いてメールを見たい',
+              'history': [
+                  {'step': 0, 'action': 'clarification_answer', 'targetName': 'テスト法人', 'instruction': 'どの名前を使うか教えてください。'}
+              ],
+              'systemContext': {
+                  'foregroundProcess': 'chrome',
+                  'foregroundProcessId': 91,
+                  'foregroundTitle': 'アカウントの選択',
+                  'runningApps': ['chrome']
+              },
+              'elements': [
+                  {'id': 'choice-personal', 'name': 'テスト個人', 'controlType': 'Button', 'processName': 'chrome', 'interactable': True, 'enabled': True},
+                  {'id': 'choice-business', 'name': 'テスト法人', 'controlType': 'Button', 'processName': 'chrome', 'interactable': True, 'enabled': True},
+                  {'id': 'choice-other', 'name': '別のアカウントを使用', 'controlType': 'Button', 'processName': 'chrome', 'interactable': True, 'enabled': True}
+              ],
+              # Intentionally syntactically valid but non-image base64. The new deterministic
+              # choice path must resolve before any model needs to inspect image bytes.
+              'image': 'data:image/png;base64,AAAA'
+          }
+          body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+          headers = {'content-type': 'application/json', 'accept': 'application/json'}
+          last = None
+          for attempt in range(15):
+              try:
+                  req = urllib.request.Request(url, data=body, headers=headers, method='POST')
+                  with urllib.request.urlopen(req, timeout=20) as res:
+                      value = json.loads(res.read().decode('utf-8', 'replace'))
+                  print('attempt', attempt + 1, '=>', value)
+                  if value.get('status') == 'target' and value.get('targetId') == 'choice-business' and value.get('action') == 'left_click':
+                      print('Production deterministic choice route is live.')
+                      raise SystemExit(0)
+                  last = RuntimeError(f'unexpected payload: {value}')
+              except SystemExit:
+                  raise
+              except Exception as exc:
+                  last = exc
+                  print('attempt', attempt + 1, 'failed:', exc)
+              time.sleep(4)
+          raise SystemExit(f'production choice route did not become live: {last}')
+          PY
