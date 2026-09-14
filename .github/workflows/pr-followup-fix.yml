@@ -28,26 +28,16 @@ jobs:
 
           privacy = Path('src/HelpSys.Desktop/Services/PrivacyGate.cs')
           s = privacy.read_text(encoding='utf-8')
-          old = '''            if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms)))
-                  return Remember(Block("otp_or_mfa", "認証コード・二段階認証の入力画面ではクラウド画面解析を停止します。"));'''
-          new = '''            var otpTitle = systemContext.ForegroundTitle ?? string.Empty;
-              var otpPromptTitle = ContainsAny(new[] { otpTitle }, OtpTerms) &&
-                                   ContainsAny(new[] { otpTitle }, new[] { "enter", "type", "verify", "入力", "認証", "確認" });
-              if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms) || otpPromptTitle))
-                  return Remember(Block("otp_or_mfa", "認証コード・二段階認証の入力画面ではクラウド画面解析を停止します。"));'''
+          old = 'if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms)))'
+          new = 'if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms) || (ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, OtpTerms) && ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, new[] { "enter", "type", "verify", "入力", "認証", "確認" }))))'
           if s.count(old) != 1:
               raise SystemExit(f'OTP anchor count={s.count(old)}')
           privacy.write_text(s.replace(old, new, 1), encoding='utf-8', newline='\n')
 
           update = Path('src/HelpSys.Desktop/MainWindow.Update.cs')
           s = update.read_text(encoding='utf-8')
-          old = '''            UpdateButton.Content = "更新する";
-              UpdateButton.ToolTip = $"HelpSys {update.BuildId} へ更新します";
-              SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);'''
-          new = '''            UpdateButton.Content = "更新する";
-              UpdateButton.ToolTip = $"HelpSys {update.BuildId} へ更新します";
-              if (announceWhenCurrent)
-                  SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);'''
+          old = 'SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);'
+          new = 'if (announceWhenCurrent) SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);'
           if s.count(old) != 1:
               raise SystemExit(f'Update anchor count={s.count(old)}')
           update.write_text(s.replace(old, new, 1), encoding='utf-8', newline='\n')
