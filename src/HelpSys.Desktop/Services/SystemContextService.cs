@@ -11,9 +11,9 @@ public sealed class SystemContextService
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
     private const uint WineventSkipownprocess = 0x0002;
+    private const uint StableExternalForegroundDwellMilliseconds = 180;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
-    private static readonly TimeSpan StableExternalForegroundDwell = TimeSpan.FromMilliseconds(180);
     private readonly int _selfProcessId = Environment.ProcessId;
     private readonly object _cacheGate = new();
     private readonly object _foregroundGate = new();
@@ -29,7 +29,7 @@ public sealed class SystemContextService
     private DateTime _browserCacheUtc = DateTime.MinValue;
     private nint _lastExternalForeground;
     private nint _observedExternalForeground;
-    private DateTime _observedExternalSinceUtc = DateTime.MinValue;
+    private uint _observedExternalSinceTick;
     private int _runningRefreshInFlight;
     private int _browserRefreshInFlight;
 
@@ -50,7 +50,7 @@ public sealed class SystemContextService
             0,
             WineventOutofcontext | WineventSkipownprocess);
 
-        InitializeForegroundTracking(GetForegroundWindow());
+        InitializeForegroundTracking(GetForegroundWindow(), CurrentTick());
     }
 
     ~SystemContextService()
@@ -92,7 +92,7 @@ public sealed class SystemContextService
     public void CommitStableForegroundForAssistantInteraction()
     {
         lock (_foregroundGate)
-            PromoteObservedExternalIfStableLocked(DateTime.UtcNow);
+            PromoteObservedExternalIfStableLocked(CurrentTick());
     }
 
     private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
@@ -196,7 +196,7 @@ public sealed class SystemContextService
         var foreground = GetForegroundWindow();
         if (IsUsableExternalWindow(foreground))
         {
-            ObserveForegroundWindow(foreground);
+            ObserveForegroundWindow(foreground, CurrentTick());
             return foreground;
         }
 
@@ -245,51 +245,53 @@ public sealed class SystemContextService
         uint eventThread,
         uint eventTime)
     {
-        if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd);
+        if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd, eventTime);
     }
 
-    private void InitializeForegroundTracking(nint hwnd)
+    private void InitializeForegroundTracking(nint hwnd, uint observedTick)
     {
         if (!IsUsableExternalWindow(hwnd)) return;
         lock (_foregroundGate)
         {
             _lastExternalForeground = hwnd;
             _observedExternalForeground = hwnd;
-            _observedExternalSinceUtc = DateTime.UtcNow;
+            _observedExternalSinceTick = observedTick;
         }
     }
 
-    private void ObserveForegroundWindow(nint hwnd)
+    private void ObserveForegroundWindow(nint hwnd, uint observedTick)
     {
-        var now = DateTime.UtcNow;
         lock (_foregroundGate)
         {
             if (BelongsToSelf(hwnd))
             {
-                PromoteObservedExternalIfStableLocked(now);
+                PromoteObservedExternalIfStableLocked(observedTick);
                 return;
             }
 
             if (!IsUsableExternalWindow(hwnd)) return;
             if (_observedExternalForeground == hwnd)
             {
-                PromoteObservedExternalIfStableLocked(now);
+                PromoteObservedExternalIfStableLocked(observedTick);
                 return;
             }
 
-            PromoteObservedExternalIfStableLocked(now);
+            PromoteObservedExternalIfStableLocked(observedTick);
             _observedExternalForeground = hwnd;
-            _observedExternalSinceUtc = now;
+            _observedExternalSinceTick = observedTick;
         }
     }
 
-    private void PromoteObservedExternalIfStableLocked(DateTime nowUtc)
+    private void PromoteObservedExternalIfStableLocked(uint nowTick)
     {
-        if (_observedExternalForeground == nint.Zero || _observedExternalSinceUtc == DateTime.MinValue) return;
-        if (nowUtc - _observedExternalSinceUtc < StableExternalForegroundDwell) return;
+        if (_observedExternalForeground == nint.Zero) return;
+        var elapsed = unchecked(nowTick - _observedExternalSinceTick);
+        if (elapsed < StableExternalForegroundDwellMilliseconds) return;
         if (!IsUsableExternalWindow(_observedExternalForeground)) return;
         _lastExternalForeground = _observedExternalForeground;
     }
+
+    private static uint CurrentTick() => unchecked((uint)Environment.TickCount);
 
     private bool IsUsableExternalWindow(nint hwnd)
     {
