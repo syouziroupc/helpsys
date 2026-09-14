@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 
+// Field regression contract for browser/Office recognition, latency, and stable same-app guidance.
 const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
 const cloud = fs.readFileSync('src/HelpSys.Desktop/Services/CloudGuideService.cs', 'utf8');
 const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
