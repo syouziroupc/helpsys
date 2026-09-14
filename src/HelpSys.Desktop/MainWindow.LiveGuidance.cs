@@ -164,6 +164,7 @@ public partial class MainWindow
 
     private void GuideButton_PreviewMouseLeftButtonDown_Extended(object sender, MouseButtonEventArgs e)
     {
+        _systemContext.CommitStableForegroundForAssistantInteraction();
         if (!_awaitingClarification) return;
         e.Handled = true;
         EnsureClarificationUi();
