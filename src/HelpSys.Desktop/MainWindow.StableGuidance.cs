@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Threading;
 using HelpSys.Models;
 using HelpSys.Services;
 
@@ -11,9 +12,19 @@ public partial class MainWindow
     private DateTime _stableLiveChangeSinceUtc = DateTime.MinValue;
     private int _stableLiveChangeSamples;
     private int _stablePulseQueued;
+    private readonly DispatcherTimer _interactionForegroundSampler = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(30)
+    };
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
     {
+        if (!_interactionForegroundSampler.IsEnabled)
+        {
+            _interactionForegroundSampler.Tick += InteractionForegroundSampler_Tick;
+            _interactionForegroundSampler.Start();
+        }
+
         AttachDeepAuditGuards();
         if (_liveWatcherStarted) return;
         _liveWatcherStarted = true;
@@ -25,8 +36,13 @@ public partial class MainWindow
         // independently, and SetForegroundProcessAsync can still establish a task-specific scope if
         // the user starts guidance before this low-priority callback runs.
         Dispatcher.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.ContextIdle,
+            DispatcherPriority.ContextIdle,
             new Action(StartLiveWatcherAfterInitialRender));
+    }
+
+    private void InteractionForegroundSampler_Tick(object? sender, EventArgs e)
+    {
+        _systemContext.CaptureExternalForegroundForAssistantInteraction();
     }
 
     private void StartLiveWatcherAfterInitialRender()
@@ -38,6 +54,8 @@ public partial class MainWindow
 
     private void MainWindow_StableClosing(object? sender, CancelEventArgs e)
     {
+        _interactionForegroundSampler.Stop();
+        _interactionForegroundSampler.Tick -= InteractionForegroundSampler_Tick;
         DetachDeepAuditGuards();
         if (!_liveWatcherStarted) return;
         _liveWatcherStarted = false;
