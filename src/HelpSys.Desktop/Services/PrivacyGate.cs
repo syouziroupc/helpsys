@@ -31,8 +31,9 @@ public sealed record PrivacyApproval(PrivacyAssessment Assessment, object? Body)
 }
 
 /// <summary>
-/// Lightweight, local-only egress policy. It never calls a model, network API, file store,
-/// clipboard, browser profile, credential store, cookie store, localStorage or sessionStorage.
+/// Lightweight local-only egress policy. Secrets, authentication, browser secret stores and
+/// transactional finance remain fail-closed. Ordinary search/form context is not discarded merely
+/// because a page mentions a security-related word; non-secret evidence is sanitized at egress.
 /// </summary>
 public sealed class PrivacyGate
 {
@@ -159,38 +160,43 @@ public sealed class PrivacyGate
             if (OsAuthProcesses.Contains(systemContext.ForegroundProcess))
                 return Remember(Block("os_authentication", "Windowsの認証画面ではクラウド画面解析を停止します。認証内容はHelpSysでは確認しません。"));
 
-            var browserUrl = systemContext.Browser?.Url;
-            if (!string.IsNullOrWhiteSpace(browserUrl) && !Uri.TryCreate(browserUrl, UriKind.Absolute, out _))
-                return Remember(Unknown("browser_url_unparseable", "ブラウザ画面の状態を安全に判定できないため、クラウド画面解析を停止しています。"));
-
             var texts = EnumerateLocalSignals(systemContext, elements).ToArray();
+            var browserUrl = systemContext.Browser?.Url ?? string.Empty;
+            var hasOrdinaryInput = elements.Any(IsNonSearchInput);
 
             if (ContainsAny(texts, PasswordManagerTerms))
                 return Remember(Block("password_manager", "パスワード管理画面ではクラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, OtpTerms))
-                return Remember(Block("otp_or_mfa", "認証コード・二段階認証の画面ではクラウド画面解析を停止します。"));
+            // A security word in documentation/help text is not itself secret material. Stop when
+            // an actual input surface is present or a high-confidence secret value is visible.
+            if (ContainsHighConfidenceSecretValue(texts))
+                return Remember(Block("secret_material", "トークン・APIキー・秘密鍵等の秘密情報を検出したため、クラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, SecretTerms) || ContainsHighConfidenceSecretValue(texts))
-                return Remember(Block("secret_material", "パスワード・トークン・APIキー等の秘密情報が表示される可能性があるため、クラウド画面解析を停止します。"));
+            if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms)))
+                return Remember(Block("otp_or_mfa", "認証コード・二段階認証の入力画面ではクラウド画面解析を停止します。"));
+
+            if (ContainsAny(texts, SecretTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, SecretTerms)))
+                return Remember(Block("secret_material", "パスワード・トークン・APIキー等の秘密情報を入力する画面ではクラウド画面解析を停止します。"));
 
             var devTools = ContainsAny(texts, DevToolsTerms);
             var storage = ContainsAny(texts, StorageTerms);
-            if (storage || (devTools && Profile == PrivacyPolicyProfile.Safe))
-                return Remember(Block("browser_secret_storage", "Cookie・Storage等を扱う画面ではクラウド画面解析を停止します。"));
+            var internalStoragePage = browserUrl.Contains("localstorage", StringComparison.OrdinalIgnoreCase) ||
+                                      browserUrl.Contains("cookie", StringComparison.OrdinalIgnoreCase) ||
+                                      browserUrl.Contains("storage", StringComparison.OrdinalIgnoreCase);
+            if (internalStoragePage || (devTools && storage))
+                return Remember(Block("browser_secret_storage", "Cookie・Storage等の秘密ストアを扱う画面ではクラウド画面解析を停止します。"));
 
             var finance = ContainsAny(texts, FinanceTerms);
             var financeAction = ContainsAny(texts, FinanceActionTerms);
-            if ((finance && financeAction) || (finance && Profile == PrivacyPolicyProfile.Safe))
+            if (finance && financeAction)
                 return Remember(Block("financial_service", "金融・証券の認証または取引画面ではクラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, CardAuthTerms) || ContainsCardNumber(texts))
+            if ((ContainsAny(texts, CardAuthTerms) && hasOrdinaryInput) || ContainsCardNumber(texts))
                 return Remember(Block("card_authentication", "カード認証情報を扱う画面ではクラウド画面解析を停止します。"));
 
-            // Ordinary contact information is not a reason to stop the entire assistant. Email,
-            // Japanese phone numbers and postal codes are removed from structured payloads below,
-            // and ScreenCaptureService independently black-redacts the same patterns before image
-            // egress. Hard-stop classes above remain fail-closed.
+            // Browser address/search text that cannot be parsed as a URL is commonly just a search
+            // query. It is not an UNKNOWN state by itself. Egress sanitization below still removes
+            // contact PII, URL secrets, tokens and card data before structured evidence is sent.
             return Remember(new PrivacyAssessment(
                 PrivacyClassification.Safe,
                 "safe",
@@ -287,6 +293,7 @@ public sealed class PrivacyGate
         focused = x.Focused,
         password = false,
         inputPresent = !x.Password && !string.IsNullOrEmpty(x.Value),
+        inputValue = SafeOutboundInputValue(x),
         toggleState = SanitizeOutboundText(x.ToggleState, 40),
         selected = x.Selected,
         expandCollapseState = SanitizeOutboundText(x.ExpandCollapseState, 40),
@@ -295,6 +302,16 @@ public sealed class PrivacyGate
         width = x.Width,
         height = x.Height
     };
+
+    private static string? SafeOutboundInputValue(UiElementCandidate element)
+    {
+        if (element.Password || string.IsNullOrWhiteSpace(element.Value)) return null;
+        var role = element.AutomationId ?? string.Empty;
+        var usefulSearchContext = role.Contains("role:browser_address", StringComparison.OrdinalIgnoreCase) ||
+                                  role.Contains("role:web_search", StringComparison.OrdinalIgnoreCase) ||
+                                  role.Contains("role:windows_search", StringComparison.OrdinalIgnoreCase);
+        return usefulSearchContext ? SanitizeOutboundText(element.Value, 240) : null;
+    }
 
     private static object[] CompactHistory(IReadOnlyList<GuideHistoryItem> history) => history
         .TakeLast(12)
@@ -375,7 +392,30 @@ public sealed class PrivacyGate
             yield return element.ClassName;
             yield return element.ControlType;
             yield return element.ProcessName;
+            yield return element.Value ?? string.Empty;
         }
+    }
+
+    private static bool IsNonSearchInput(UiElementCandidate element)
+    {
+        if (!element.Interactable || element.Password || element.ControlType is not ("Edit" or "ComboBox")) return false;
+        var role = element.AutomationId ?? string.Empty;
+        return !role.Contains("role:browser_address", StringComparison.OrdinalIgnoreCase) &&
+               !role.Contains("role:web_search", StringComparison.OrdinalIgnoreCase) &&
+               !role.Contains("role:windows_search", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasSensitiveInputSemantic(
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<string> terms)
+    {
+        foreach (var element in elements)
+        {
+            if (!IsNonSearchInput(element)) continue;
+            var signals = new[] { element.Name, element.AutomationId, element.ClassName, element.Value ?? string.Empty };
+            if (ContainsAny(signals, terms)) return true;
+        }
+        return false;
     }
 
     private static bool ContainsAny(IEnumerable<string> texts, IReadOnlyList<string> terms)
