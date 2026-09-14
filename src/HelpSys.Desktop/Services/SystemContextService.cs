@@ -10,6 +10,7 @@ public sealed class SystemContextService
 {
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
+    private const uint WineventSkipownprocess = 0x0002;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private static readonly TimeSpan StableExternalForegroundDwell = TimeSpan.FromMilliseconds(180);
@@ -47,7 +48,7 @@ public sealed class SystemContextService
             _foregroundDelegate,
             0,
             0,
-            WineventOutofcontext);
+            WineventOutofcontext | WineventSkipownprocess);
 
         InitializeForegroundTracking(GetForegroundWindow());
     }
