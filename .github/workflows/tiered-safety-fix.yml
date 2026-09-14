@@ -7,6 +7,7 @@ on:
     paths:
       - tools/apply_tiered_safety_fix.py
       - tools/repair_tiered_patch.py
+      - tools/repair_tiered_patch_xaml.py
       - .github/workflows/tiered-safety-fix.yml
   workflow_dispatch:
 
@@ -38,6 +39,10 @@ jobs:
       - name: Repair UTF-8 patch payloads
         shell: pwsh
         run: python tools/repair_tiered_patch.py
+
+      - name: Repair XAML patch anchor
+        shell: pwsh
+        run: python tools/repair_tiered_patch_xaml.py
 
       - name: Apply exact-match patch
         shell: pwsh
