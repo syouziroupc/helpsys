@@ -28,6 +28,11 @@ jobs:
 
           privacy = Path('src/HelpSys.Desktop/Services/PrivacyGate.cs')
           s = privacy.read_text(encoding='utf-8')
+          old = 'if (ContainsAny(texts, PasswordManagerTerms))'
+          new = 'if (browserUrl.Contains("://password", StringComparison.OrdinalIgnoreCase) || ContainsAny(texts, PasswordManagerTerms))'
+          if s.count(old) != 1:
+              raise SystemExit(f'password-route anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
           old = 'if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms)))'
           new = 'if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms) || (ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, OtpTerms) && ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, new[] { "enter", "type", "verify", "入力", "認証", "確認" }))))'
           if s.count(old) != 1:
@@ -67,5 +72,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src tests .github/workflows/pr-followup-fix.yml
-          git commit -m '[followup-fixed] Restore OTP hard-block, isolate update status, and align latency contracts'
+          git commit -m '[followup-fixed] Restore privacy hard-blocks, isolate update status, and align latency contracts'
           git push origin HEAD:fix/recognition-latency-state-20260914
