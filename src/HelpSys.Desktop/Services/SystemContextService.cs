@@ -10,9 +10,9 @@ public sealed class SystemContextService
 {
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
-    private const uint WineventSkipownprocess = 0x0002;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
+    private static readonly TimeSpan StableExternalForegroundDwell = TimeSpan.FromMilliseconds(180);
     private readonly int _selfProcessId = Environment.ProcessId;
     private readonly object _cacheGate = new();
     private readonly object _foregroundGate = new();
@@ -27,6 +27,8 @@ public sealed class SystemContextService
     private string _browserCacheTitle = string.Empty;
     private DateTime _browserCacheUtc = DateTime.MinValue;
     private nint _lastExternalForeground;
+    private nint _observedExternalForeground;
+    private DateTime _observedExternalSinceUtc = DateTime.MinValue;
     private int _runningRefreshInFlight;
     private int _browserRefreshInFlight;
 
@@ -45,9 +47,9 @@ public sealed class SystemContextService
             _foregroundDelegate,
             0,
             0,
-            WineventOutofcontext | WineventSkipownprocess);
+            WineventOutofcontext);
 
-        RememberExternalForeground(GetForegroundWindow());
+        InitializeForegroundTracking(GetForegroundWindow());
     }
 
     ~SystemContextService()
@@ -84,6 +86,12 @@ public sealed class SystemContextService
         {
             ForegroundWindowHandle = hwnd
         };
+    }
+
+    public void CommitStableForegroundForAssistantInteraction()
+    {
+        lock (_foregroundGate)
+            PromoteObservedExternalIfStableLocked(DateTime.UtcNow);
     }
 
     private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
@@ -187,17 +195,16 @@ public sealed class SystemContextService
         var foreground = GetForegroundWindow();
         if (IsUsableExternalWindow(foreground))
         {
-            RememberExternalForeground(foreground);
+            ObserveForegroundWindow(foreground);
             return foreground;
         }
 
         if (!BelongsToSelf(foreground))
             return ResolveVerifiedShellDesktopWindow();
 
-        // Do not infer the work surface from Z-order after HelpSys takes focus. A notification or
-        // unrelated topmost window can sit directly behind HelpSys. Prefer the last HWND that
-        // Windows actually reported through EVENT_SYSTEM_FOREGROUND. If that does not exist, use
-        // only the OS-provided shell desktop HWND, whose process identity is verified as Explorer.
+        // HelpSys taking focus must not let a transient notification/terminal/helper window steal
+        // the work surface. Use only an external HWND that survived the dwell filter. A genuinely
+        // foreground external app is still returned immediately by the branch above.
         lock (_foregroundGate)
         {
             if (IsUsableExternalWindow(_lastExternalForeground)) return _lastExternalForeground;
@@ -237,13 +244,50 @@ public sealed class SystemContextService
         uint eventThread,
         uint eventTime)
     {
-        if (eventType == EventSystemForeground) RememberExternalForeground(hwnd);
+        if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd);
     }
 
-    private void RememberExternalForeground(nint hwnd)
+    private void InitializeForegroundTracking(nint hwnd)
     {
         if (!IsUsableExternalWindow(hwnd)) return;
-        lock (_foregroundGate) _lastExternalForeground = hwnd;
+        lock (_foregroundGate)
+        {
+            _lastExternalForeground = hwnd;
+            _observedExternalForeground = hwnd;
+            _observedExternalSinceUtc = DateTime.UtcNow;
+        }
+    }
+
+    private void ObserveForegroundWindow(nint hwnd)
+    {
+        var now = DateTime.UtcNow;
+        lock (_foregroundGate)
+        {
+            if (BelongsToSelf(hwnd))
+            {
+                PromoteObservedExternalIfStableLocked(now);
+                return;
+            }
+
+            if (!IsUsableExternalWindow(hwnd)) return;
+            if (_observedExternalForeground == hwnd)
+            {
+                PromoteObservedExternalIfStableLocked(now);
+                return;
+            }
+
+            PromoteObservedExternalIfStableLocked(now);
+            _observedExternalForeground = hwnd;
+            _observedExternalSinceUtc = now;
+        }
+    }
+
+    private void PromoteObservedExternalIfStableLocked(DateTime nowUtc)
+    {
+        if (_observedExternalForeground == nint.Zero || _observedExternalSinceUtc == DateTime.MinValue) return;
+        if (nowUtc - _observedExternalSinceUtc < StableExternalForegroundDwell) return;
+        if (!IsUsableExternalWindow(_observedExternalForeground)) return;
+        _lastExternalForeground = _observedExternalForeground;
     }
 
     private bool IsUsableExternalWindow(nint hwnd)
