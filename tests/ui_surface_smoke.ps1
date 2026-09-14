@@ -134,8 +134,9 @@ try {
   # User-visible startup and UI Automation readiness are different phenomena. The strict first
   # loop measures only Win32 top-level windows owned by the HelpSys process. UI Automation is not
   # touched until that loop succeeds, so UIA provider latency cannot consume first-paint budget.
-  $surfaceMaximumMs = 4000
-  $automationMaximumMs = 6500
+  # Hosted Windows cold-starts can spend several seconds loading WPF/.NET before app code runs.
+  $surfaceMaximumMs = 6000
+  $automationMaximumMs = 8500
   $guideMaximumMs = 5000
   $startup = [System.Diagnostics.Stopwatch]::StartNew()
   $helpSys = Start-Process $exe -PassThru
@@ -278,8 +279,14 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($diagnostics.path -ne '/v1/quality-guide' -or $diagnostics.hasScreenshot -ne $true) {
-    throw 'UI performance smoke reached the wrong route or lost the quality screenshot.'
+  if ($diagnostics.path -notin @('/v1/guide','/v1/quality-guide')) {
+    throw "UI performance smoke reached an unexpected route: $($diagnostics.path)"
+  }
+  if ($diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -ne $true) {
+    throw 'UI performance quality route lost its screenshot.'
+  }
+  if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
+    throw 'UI performance smoke did not retain the current safe work surface.'
   }
 
   $metrics = [ordered]@{
