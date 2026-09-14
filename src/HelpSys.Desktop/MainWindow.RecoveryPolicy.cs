@@ -19,11 +19,13 @@ public partial class MainWindow
             _stepNumber,
             "technical_planning_uncertainty",
             "現在の画面",
-            $"経路逸脱とは判定せず、通常の画面再取得で処理する: {reason}"));
+            $"現在状態の再取得を上限まで行ったが安全に確定できなかった。経路逸脱とは推測しない: {reason}"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
-        WaitForClarification(
-            "現在の画面を安全に自動判定できないため、画面情報を取り直して案内を続けます。",
-            generation);
+        // Technical observer failure is not a question for the user and must never be converted into
+        // a clarification answer that is then appended to the cloud-bound request. Fail closed after
+        // bounded current-state replanning and let the user explicitly restart once the UI settles.
+        StopWithMessage(
+            "現在の画面を安全に自動判定できませんでした。画面の切り替えや読み込みが落ち着いてから、もう一度「案内」を押してください。");
     }
 }
