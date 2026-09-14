@@ -13,6 +13,7 @@ public sealed class SystemContextService
     private const uint WineventSkipownprocess = 0x0002;
     private const uint StableExternalForegroundDwellMilliseconds = 180;
     private const uint InteractionCandidateMaximumAgeMilliseconds = 2500;
+    private const uint AutomaticInteractionHandoffMaximumAgeMilliseconds = 600;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private readonly int _selfProcessId = Environment.ProcessId;
@@ -31,6 +32,8 @@ public sealed class SystemContextService
     private nint _lastExternalForeground;
     private nint _observedExternalForeground;
     private uint _observedExternalSinceTick;
+    private nint _interactionObservedForeground;
+    private int _interactionObservedSamples;
     private nint _interactionForegroundCandidate;
     private uint _interactionCandidateCapturedTick;
     private int _runningRefreshInFlight;
@@ -98,6 +101,15 @@ public sealed class SystemContextService
         if (!IsUsableExternalWindow(foreground)) return;
         lock (_foregroundGate)
         {
+            if (_interactionObservedForeground == foreground)
+                _interactionObservedSamples++;
+            else
+            {
+                _interactionObservedForeground = foreground;
+                _interactionObservedSamples = 1;
+            }
+
+            if (_interactionObservedSamples < 2) return;
             _interactionForegroundCandidate = foreground;
             _interactionCandidateCapturedTick = CurrentTick();
         }
@@ -108,16 +120,9 @@ public sealed class SystemContextService
         var nowTick = CurrentTick();
         lock (_foregroundGate)
         {
-            if (_interactionForegroundCandidate != nint.Zero &&
-                unchecked(nowTick - _interactionCandidateCapturedTick) <= InteractionCandidateMaximumAgeMilliseconds &&
-                IsUsableExternalWindow(_interactionForegroundCandidate))
-            {
-                _lastExternalForeground = _interactionForegroundCandidate;
-                _interactionForegroundCandidate = nint.Zero;
+            if (TryPromoteInteractionCandidateLocked(nowTick, InteractionCandidateMaximumAgeMilliseconds, out _))
                 return;
-            }
 
-            _interactionForegroundCandidate = nint.Zero;
             PromoteObservedExternalIfStableLocked(nowTick);
         }
     }
@@ -231,14 +236,29 @@ public sealed class SystemContextService
             return ResolveVerifiedShellDesktopWindow();
 
         // HelpSys taking focus must not let a transient notification/terminal/helper window steal
-        // the work surface. Use only an external HWND that survived the dwell filter or was captured
-        // immediately before the user moved into HelpSys to start guidance.
+        // the work surface. A recent external HWND sampled repeatedly immediately before activation
+        // is the strongest local handoff signal; otherwise fall back to the normal dwell-filtered HWND.
         lock (_foregroundGate)
         {
+            if (TryPromoteInteractionCandidateLocked(CurrentTick(), AutomaticInteractionHandoffMaximumAgeMilliseconds, out var interaction))
+                return interaction;
             if (IsUsableExternalWindow(_lastExternalForeground)) return _lastExternalForeground;
         }
 
         return ResolveVerifiedShellDesktopWindow();
+    }
+
+    private bool TryPromoteInteractionCandidateLocked(uint nowTick, uint maximumAgeMilliseconds, out nint hwnd)
+    {
+        hwnd = nint.Zero;
+        if (_interactionForegroundCandidate == nint.Zero) return false;
+        if (unchecked(nowTick - _interactionCandidateCapturedTick) > maximumAgeMilliseconds) return false;
+        if (!IsUsableExternalWindow(_interactionForegroundCandidate)) return false;
+
+        hwnd = _interactionForegroundCandidate;
+        _lastExternalForeground = hwnd;
+        _interactionForegroundCandidate = nint.Zero;
+        return true;
     }
 
     private nint ResolveVerifiedShellDesktopWindow()
