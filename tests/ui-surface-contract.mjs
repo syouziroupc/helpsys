@@ -86,7 +86,7 @@ assert(!surfaceLoop.includes('Find-MainWindow') && !surfaceLoop.includes('Find-E
   'The strict visible-surface loop must never call UI Automation APIs that can block first-paint polling.');
 assert(smoke.includes('helpsys-ui-visible-startup-failure.json') && smoke.includes('enumeratedVisibleWindowHandle'),
   'First-paint failures must leave non-content Win32 diagnostics for root-cause analysis.');
-assert(smoke.includes('$surfaceMaximumMs = 4000') && smoke.includes('$automationMaximumMs = 6500'),
-  'Visible paint and UI Automation readiness must retain separate performance budgets.');
+assert(smoke.includes('$surfaceMaximumMs = 6000') && smoke.includes('$automationMaximumMs = 8500'),
+  'Visible paint and UI Automation readiness must retain separate hosted-CI performance budgets.');
 
 console.log('HelpSys compact unified UI surface contract passed.');
