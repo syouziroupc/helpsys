@@ -81,13 +81,15 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($diagnostics.path -ne '/v1/quality-guide') {
-    throw "Privacy Mode resumed through an unexpected route: $($diagnostics.path)"
+  $qualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
+  $structuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
+  if (-not ($qualityRoute -or $structuredRoute)) {
+    throw "Privacy Mode resumed through an unexpected planner route: $($diagnostics.path), screenshot=$($diagnostics.hasScreenshot)"
   }
-  if ($diagnostics.hasScreenshot -ne $true) {
-    throw 'Resumed safe-screen guidance did not include the safe current screenshot.'
+  if ([int]$diagnostics.foregroundProcessId -ne $safeTarget.Id) {
+    throw "Privacy Mode resumed against the wrong foreground process: planner=$($diagnostics.foregroundProcessId) safe=$($safeTarget.Id)"
   }
-  if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
+  if ($null -ne $diagnostics.eligible -and @($diagnostics.eligible).Count -gt 0 -and $diagnostics.eligible.automationId -notcontains 'SmokeButton') {
     throw 'Privacy Mode resumed against stale Password-screen structure instead of the new safe work surface.'
   }
   if ($state.Current.Name -like '*プライバシー保護のため画面解析を一時停止中*') {
@@ -96,10 +98,10 @@ try {
   }
 
   Save-Screenshot 'helpsys-privacy-resumed.png'
-  Write-Host 'HelpSys Privacy Mode automatic resume E2E smoke passed.'
+  Write-Host "HelpSys Privacy Mode automatic resume E2E smoke passed via $($diagnostics.path)."
 
   # Independent end-to-end local latency budget. This measures Guide invocation -> mock API arrival,
-  # i.e. local context collection + Privacy Gate + UIA privacy scans + screenshot encoding + loopback send.
+  # i.e. local context collection + Privacy Gate + UIA privacy scans + optional screenshot + loopback send.
   if (-not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force; $helpSys.WaitForExit() }
   $helpSys = $null
   if ($null -ne $safeTarget -and -not $safeTarget.HasExited) { Stop-Process -Id $safeTarget.Id -Force; $safeTarget.WaitForExit() }
@@ -133,7 +135,7 @@ try {
   $performance = [ordered]@{
     guideToApiMilliseconds = [math]::Round($timer.Elapsed.TotalMilliseconds)
     maximumAllowedMilliseconds = 8000
-    includes = 'context+privacy-gate+uia-redaction-scan+screenshot+loopback-send'
+    includes = 'context+privacy-gate+uia-redaction-scan+optional-screenshot+loopback-send'
   }
   $performance | ConvertTo-Json | Set-Content 'artifacts/helpsys-privacy-performance.json' -Encoding UTF8
   Write-Host "HelpSys privacy-safe local planning latency: $($performance.guideToApiMilliseconds) ms"
