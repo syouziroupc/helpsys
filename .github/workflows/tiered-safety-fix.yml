@@ -6,6 +6,7 @@ on:
       - fix/tiered-safety-auto-update-20260914
     paths:
       - tools/apply_tiered_safety_fix.py
+      - tools/repair_tiered_patch.py
       - .github/workflows/tiered-safety-fix.yml
   workflow_dispatch:
 
@@ -34,11 +35,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Repair UTF-8 patch payloads
+        shell: pwsh
+        run: python tools/repair_tiered_patch.py
+
       - name: Apply exact-match patch
         shell: pwsh
         run: python tools/apply_tiered_safety_fix.py
 
-      - name: Verify no patch helper remains staged for product release
+      - name: Verify patch outputs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
