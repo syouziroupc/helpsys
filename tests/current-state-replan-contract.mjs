@@ -7,18 +7,18 @@ const policy = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RecoveryPolicy.cs
 
 if (!helper.includes('using HelpSys.Models;') || !helper.includes('using HelpSys.Services;'))
   throw new Error('current-state replan partial must import model and session-state namespaces');
-if (!helper.includes('MaximumAutomaticCurrentStateReplans = 2'))
-  throw new Error('automatic current-state replan must allow two bounded observations before stopping');
+if (!helper.includes('MaximumAutomaticCurrentStateReplans = 4'))
+  throw new Error('automatic current-state replan must allow four bounded observations before stopping');
 if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPendingLiveReplanAsync()'))
   throw new Error('current-state replan must use the established live replan pipeline');
 if (helper.includes('await AdvanceGuideAsync()'))
   throw new Error('current-state replan helper must not recursively start the planner directly');
-if (!helper.includes('attempt <= 1 ? 260 : 620'))
-  throw new Error('second current-state observation must use a longer settle delay');
+for (const delay of ['1 => 180', '2 => 420', '3 => 850', '_ => 1400'])
+  if (!helper.includes(delay)) throw new Error(`adaptive settle delay missing: ${delay}`);
 if (!policy.includes('TryQueueCurrentStateReplan(reason, generation)'))
   throw new Error('technical uncertainty must first use bounded current-state replan');
 if (!policy.includes('StopWithMessage('))
-  throw new Error('technical uncertainty must fail closed after bounded re-observation');
+  throw new Error('technical uncertainty must still fail closed after the bounded re-observation budget');
 if (policy.includes('WaitForClarification('))
   throw new Error('technical observer failure must not be converted into a user clarification question');
 if (policy.includes('TryRouteRecoveryAsync'))
@@ -49,4 +49,4 @@ if (!keyboardBlock.includes('ResetCurrentStateReplanBudget();'))
 if (!quality.includes('ResetCurrentStateReplanBudget();'))
   throw new Error('successful visual target guidance must reset the replan budget');
 
-console.log('HelpSys generic bounded current-state replan contract passed.');
+console.log('HelpSys adaptive bounded current-state replan contract passed.');

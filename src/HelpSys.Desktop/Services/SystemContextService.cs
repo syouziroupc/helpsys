@@ -191,14 +191,41 @@ public sealed class SystemContextService
             return foreground;
         }
 
-        if (!BelongsToSelf(foreground)) return nint.Zero;
+        if (!BelongsToSelf(foreground))
+            return ResolveVerifiedShellDesktopWindow();
 
         // Do not infer the work surface from Z-order after HelpSys takes focus. A notification or
-        // unrelated topmost window can sit directly behind HelpSys. Use only the last HWND that
-        // Windows actually reported through EVENT_SYSTEM_FOREGROUND while it belonged to another
-        // process. If no such window is still valid, fail closed and let guidance recover locally.
+        // unrelated topmost window can sit directly behind HelpSys. Prefer the last HWND that
+        // Windows actually reported through EVENT_SYSTEM_FOREGROUND. If that does not exist, use
+        // only the OS-provided shell desktop HWND, whose process identity is verified as Explorer.
         lock (_foregroundGate)
-            return IsUsableExternalWindow(_lastExternalForeground) ? _lastExternalForeground : nint.Zero;
+        {
+            if (IsUsableExternalWindow(_lastExternalForeground)) return _lastExternalForeground;
+        }
+
+        return ResolveVerifiedShellDesktopWindow();
+    }
+
+    private nint ResolveVerifiedShellDesktopWindow()
+    {
+        var shell = GetShellWindow();
+        if (shell == nint.Zero || BelongsToSelf(shell)) return nint.Zero;
+        if (!GetWindowRect(shell, out var rect)) return nint.Zero;
+        if (rect.Right - rect.Left < 80 || rect.Bottom - rect.Top < 60) return nint.Zero;
+
+        GetWindowThreadProcessId(shell, out var rawPid);
+        var pid = unchecked((int)rawPid);
+        if (pid <= 0) return nint.Zero;
+
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return process.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) ? shell : nint.Zero;
+        }
+        catch
+        {
+            return nint.Zero;
+        }
     }
 
     private void OnForegroundChanged(
@@ -431,6 +458,9 @@ public sealed class SystemContextService
 
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern nint GetShellWindow();
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);

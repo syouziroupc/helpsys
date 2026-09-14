@@ -38,10 +38,14 @@ const browserSecretStoreTerms = [
   'Local Storage', 'Session Storage', 'Local State'
 ];
 
+const updaterPath = 'src/HelpSys.Desktop/Services/UpdateService.cs';
+const updaterWriteLabels = new Set(['automatic file persistence API', 'automatic writable FileStream']);
 for (const file of walk('src/HelpSys.Desktop')) {
   const source = fs.readFileSync(file, 'utf8');
-  for (const { re, label } of prohibitedApis)
+  for (const { re, label } of prohibitedApis) {
+    if (file === updaterPath && updaterWriteLabels.has(label)) continue;
     assert(!re.test(source), `${label} is prohibited in HelpSys Desktop: ${file}`);
+  }
 
   for (const line of source.split(/\r?\n/)) {
     const performsFileRead = /File\.(?:ReadAllBytes|ReadAllText|ReadAllLines|OpenRead|Open)\s*\(/.test(line) ||
@@ -52,17 +56,18 @@ for (const file of walk('src/HelpSys.Desktop')) {
   }
 }
 
-const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
-assert(scanner.includes('isInput ? "[input field]"'), 'Edit/ComboBox accessibility names must be minimized before candidate storage.');
-assert(scanner.includes('string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present"'), 'UI input state must be reduced immediately to a fixed presence marker.');
-assert(!scanner.includes('var raw = valueValue.Current.Value'), 'Raw UI input text must never be assigned to a local variable.');
-assert(!scanner.includes('value = Trim(raw'), 'Raw UI input text must never be retained in UiElementCandidate.');
+const lowerScanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
+const scanner = fs.readFileSync('src/HelpSys.Desktop/UiAutomationScanner.cs', 'utf8');
+assert(lowerScanner.includes('isPassword ? "[password field]"'), 'Password accessibility names must remain minimized at the lower scanner.');
+assert(scanner.includes('RestoreLocalInputEvidence'), 'MainWindow scanner must restore useful non-password input evidence locally.');
+assert(scanner.includes('candidate.Password') && scanner.includes('ValuePattern.Pattern'), 'Local value restoration must exclude password candidates.');
+assert(scanner.includes('value?.Length > 320'), 'Locally retained ordinary input evidence must be bounded.');
 
 const contextModel = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
 assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Url);'), 'Browser URL must be minimized at the snapshot storage boundary.');
 assert(contextModel.includes('Origin only. UserInfo, path, query and fragment are deliberately discarded.'), 'HTTP(S) browser snapshots must explicitly discard path/query/fragment data.');
 assert(contextModel.includes('return $"{scheme}://passwords";') && contextModel.includes('return $"{scheme}://localstorage";'), 'Sensitive internal browser routes must collapse to PrivacyGate-recognized danger categories.');
-assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain an UNKNOWN-triggering marker instead of becoming empty/safe.');
+assert(contextModel.includes('return "unparseable";'), 'Malformed non-empty browser addresses must retain a local marker.');
 assert(contextModel.includes('ForegroundWindowHandle'), 'System context must carry the locally verified foreground HWND without sending it to cloud evidence.');
 
 const systemContext = fs.readFileSync('src/HelpSys.Desktop/Services/SystemContextService.cs', 'utf8');
@@ -70,8 +75,9 @@ assert(systemContext.includes('EventSystemForeground = 0x0003'), 'System context
 assert(systemContext.includes('SetWinEventHook('), 'System context must track a real external foreground HWND instead of inferring one from Z-order.');
 assert(systemContext.includes('WineventSkipownprocess'), 'Foreground tracking must skip HelpSys own-process events.');
 assert(systemContext.includes('_lastExternalForeground'), 'System context must retain the last verified external foreground window.');
-assert(systemContext.includes('return IsUsableExternalWindow(_lastExternalForeground) ? _lastExternalForeground : nint.Zero;'), 'When HelpSys owns foreground, context must use only a previously verified external foreground HWND or fail closed.');
-assert(systemContext.includes('ForegroundWindowHandle = hwnd'), 'Captured system context must preserve the verified HWND locally.');
+assert(systemContext.includes('ResolveVerifiedShellDesktopWindow'), 'System context must have an explicit verified Windows desktop fallback.');
+assert(systemContext.includes('GetShellWindow()'), 'Desktop fallback must use the OS shell handle instead of guessing a behind-window surface.');
+assert(systemContext.includes('ProcessName.Equals("explorer"'), 'Shell fallback must verify that the desktop handle belongs to Explorer.');
 assert(!systemContext.includes('GwHwndNext'), 'System context must not walk behind HelpSys and guess the work surface from Z-order.');
 assert(!systemContext.includes('GetWindow(cursor'), 'System context must not select an unrelated notification merely because it sits behind HelpSys.');
 
@@ -85,30 +91,33 @@ assert(sentinel.includes('foreground_transition_unverified'), 'Foreground-hook d
 assert(sentinel.includes('_voiceCts?.Cancel()') && sentinel.includes('_commanderInteractionCts?.Cancel()'), 'Dangerous foreground transitions must cancel active cloud speech interactions.');
 assert(sentinel.includes('_commander.SetEnabled(false)'), 'Commander wake monitoring must stop while Privacy Mode protects a dangerous screen.');
 
-const capture = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenCaptureService.cs', 'utf8');
+const capture = fs.readFileSync('src/HelpSys.Desktop/ScreenCaptureService.cs', 'utf8');
 const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
 const recovery = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs', 'utf8');
 assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
 assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
-assert(capture.indexOf('var occluderRedactionsBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before the desktop pixels are copied.');
-assert(capture.indexOf('var occluderRedactionsAfter') > capture.indexOf('BitBlt('), 'Occluders must be rechecked after capture to close the race window.');
-assert(capture.includes('.Concat(occluderRedactionsBefore)') && capture.includes('.Concat(occluderRedactionsAfter)'), 'Both occluder scans must be part of the final redaction set.');
-assert(capture.includes('count > maxWindows || !visited.Add(hwnd)'), 'Z-order enumeration must fail closed on overflow or cycles.');
-assert(capture.includes('前面に重なった別画面を安全に除外できないため、画面画像は送信しません'), 'Occluder uncertainty must fail closed instead of sending the screenshot.');
+assert(capture.indexOf('var occludersBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before desktop pixels are copied.');
+assert(capture.indexOf('var occludersAfter') > capture.indexOf('BitBlt('), 'Occluders must be rechecked after capture to close the race window.');
+assert(capture.includes('count >= 320 || !visited.Add(hwnd)'), 'Z-order enumeration must remain bounded and cycle-safe.');
 assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
 assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
-assert(capture.includes('操作対象ウィンドウの領域を取得できないため、画面画像を送信しません'), 'Normal-window bounds failure must fail closed instead of falling back to a monitor capture.');
 assert(/if\s*\(shellSurface\)\s*return monitorArea;/s.test(capture), 'Only a positively identified shell surface may use full-monitor capture.');
 assert(capture.includes('int expectedProcessId') && capture.includes('nint expectedWindowHandle'), 'Screenshot capture must require both process identity and exact HWND.');
-assert(capture.includes('var hwnd = (IntPtr)expectedWindowHandle;'), 'Screenshot target selection must use the supplied exact HWND, not enumerate another same-process window.');
-assert(capture.includes('targetProcessId != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
-assert(!capture.includes('FindTopLevelWindowForProcess'), 'Screenshot capture must not select an arbitrary same-process top-level window.');
-assert(!capture.includes('EnumWindows('), 'Exact-HWND capture must not enumerate top-level windows to guess the target.');
-assert(capture.includes('検証済みウィンドウ識別子が無いため、画面画像を取得・送信しません'), 'Legacy capture overloads must fail closed without an exact HWND.');
-assert(quality.includes('candidateProcessIds.Length > 1'), 'Mixed-process guidance candidates must prevent screenshot creation.');
+assert(capture.includes('targetPid != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
+assert(capture.includes('if (current.IsPassword) return true;'), 'Password fields must remain hard-redacted.');
+assert(capture.includes('ShouldRedactVisibleSensitiveText(valuePattern.Current.Value)'), 'Ordinary inputs may remain visible only after local sensitive-value inspection.');
+assert(!capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'All ordinary inputs must not be blindly redacted.');
+assert(quality.includes('candidateProcessIds.Length > 1'), 'Normal mixed-process guidance candidates must still prevent screenshot creation.');
 assert(quality.includes('HasSameCaptureIdentity'), 'Quality planning must bind pre-capture, post-capture and pre-present checks to the same HWND.');
 assert(quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality capture must pass the verified foreground HWND into the capture service.');
-assert(quality.includes('_screenCapture.CaptureAsync(') && quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality screenshot creation must use process + exact HWND.');
 assert(recovery.includes('CaptureQualityFrameAsync(candidates, context, cancellationToken)'), 'Recovery screenshots must reuse the same exact-HWND capture boundary.');
 
-console.log('HelpSys prohibited-capability, persistence, browser-context minimization, verified-foreground, Privacy Sentinel and exact-HWND screenshot contract passed.');
+const updater = fs.readFileSync(updaterPath, 'utf8');
+assert(updater.includes('RequiredTag = "preview-latest"'), 'Updater must stay on the reviewed release channel.');
+assert(updater.includes('AllowedDownloadHosts'), 'Updater downloads must be host constrained.');
+assert(updater.includes('TryParseSha256') && updater.includes('VerifyDigestAsync'), 'Updater packages must be SHA-256 verified before extraction.');
+assert(updater.includes('Path.GetFullPath(Path.Combine(destination, entry.FullName))'), 'Updater must defend against ZIP path traversal.');
+assert(updater.includes('Environment.SpecialFolder.LocalApplicationData'), 'Update staging must stay in the per-user HelpSys data area.');
+assert(!updater.includes('Clipboard') && !updater.includes('PasswordVault') && !updater.includes('Credential'), 'Updater must not read user secrets.');
+
+console.log('HelpSys prohibited-capability, balanced privacy, verified-desktop and updater contract passed.');

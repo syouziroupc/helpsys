@@ -1,23 +1,27 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using HelpSys.Models;
 
 namespace HelpSys;
 
-// MainWindow-facing UIA facade. The lower-level scanner remains the compatibility fallback,
-// while normal observation is narrowed to the actual foreground HWND whenever Windows can
-// bind that HWND to the requested process. This prevents unrelated windows from the same
-// process from contaminating candidate selection without weakening shell compatibility.
+// MainWindow-facing UIA facade. Normal applications are scoped to the actual foreground HWND.
+// Windows shell surfaces are process-isolated instead of merging Explorer/Search/Start candidates
+// into one mixed-PID set. Input evidence is restored locally for non-secret fields so search,
+// address and ordinary text controls remain understandable without exposing password values.
 public sealed class UiAutomationScanner
 {
-    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
+    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost"];
     private readonly HelpSys.Services.UiAutomationScanner _inner = new();
 
-    public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(
+    public async Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(
         int maxCandidates = 360,
         CancellationToken cancellationToken = default)
-        => _inner.CaptureCandidatesAsync(maxCandidates, cancellationToken);
+    {
+        var candidates = await _inner.CaptureCandidatesAsync(maxCandidates, cancellationToken);
+        return RestoreLocalInputEvidence(candidates, cancellationToken);
+    }
 
     public async Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForProcessAsync(
         int processId,
@@ -25,7 +29,8 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         var candidates = await _inner.CaptureCandidatesForProcessAsync(processId, maxCandidates, cancellationToken);
-        return ScopeToForegroundWindow(processId, candidates);
+        var scoped = ScopeToForegroundWindow(processId, candidates);
+        return RestoreLocalInputEvidence(scoped, cancellationToken);
     }
 
     public Task<string> CaptureWindowDiagnosticsAsync(
@@ -39,7 +44,8 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         var fresh = await _inner.RevalidateCandidateAsync(candidate, cancellationToken);
-        return fresh is not null && IsAllowedByForegroundWindow(fresh, candidate.ProcessId) ? fresh : null;
+        if (fresh is null || !IsAllowedByForegroundWindow(fresh, candidate.ProcessId)) return null;
+        return RestoreLocalInputEvidence([fresh], cancellationToken).FirstOrDefault();
     }
 
     public async Task<UiElementCandidate?> RevalidateCandidateAsync(
@@ -48,7 +54,8 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         var fresh = await _inner.RevalidateCandidateAsync(candidate, rootProcessId, cancellationToken);
-        return fresh is not null && IsAllowedByForegroundWindow(fresh, rootProcessId) ? fresh : null;
+        if (fresh is null || !IsAllowedByForegroundWindow(fresh, rootProcessId)) return null;
+        return RestoreLocalInputEvidence([fresh], cancellationToken).FirstOrDefault();
     }
 
     public Task<Rect?> SnapToAccessibleBoundsAsync(
@@ -60,7 +67,20 @@ public sealed class UiAutomationScanner
         int processId,
         IReadOnlyList<UiElementCandidate> candidates)
     {
-        if (candidates.Count == 0 || processId <= 0 || IsShellSurfaceProcess(processId)) return candidates;
+        if (candidates.Count == 0 || processId <= 0) return candidates;
+
+        if (IsShellSurfaceProcess(processId))
+        {
+            // The lower scanner intentionally knows about related shell processes, but mixing their
+            // PIDs into one guidance snapshot conflicts with the exact-HWND screenshot boundary.
+            // Use only the process Windows says is currently the shell foreground. If that process
+            // exposes no UIA controls, return an empty structured set and let verified full-monitor
+            // vision handle the shell instead of borrowing controls from a different shell process.
+            return candidates
+                .Where(candidate => candidate.ProcessId <= 0 || candidate.ProcessId == processId)
+                .ToArray();
+        }
+
         if (!TryGetForegroundBounds(processId, out var foregroundBounds)) return candidates;
 
         var scoped = candidates
@@ -68,14 +88,78 @@ public sealed class UiAutomationScanner
             .Where(candidate => IsInsideOrMostlyOverlapping(candidate.Bounds, foregroundBounds))
             .ToArray();
 
-        // A broken or unusually sparse UIA tree must not become a new failure mode. If the
-        // foreground HWND produced no actionable element, retain the established process scan.
+        // Sparse third-party UIA trees remain usable through the process scan, but only for the same
+        // process. This fallback never widens to another process or an unrelated window owner.
         return scoped.Any(candidate => candidate.Interactable) ? scoped : candidates;
+    }
+
+    private static IReadOnlyList<UiElementCandidate> RestoreLocalInputEvidence(
+        IReadOnlyList<UiElementCandidate> candidates,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count == 0) return candidates;
+        var restored = new UiElementCandidate[candidates.Count];
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            restored[index] = RestoreLocalInputEvidence(candidates[index]);
+        }
+        return restored;
+    }
+
+    private static UiElementCandidate RestoreLocalInputEvidence(UiElementCandidate candidate)
+    {
+        if (candidate.Password || candidate.Bounds.IsEmpty ||
+            candidate.ControlType is not ("Edit" or "ComboBox"))
+            return candidate;
+
+        try
+        {
+            var point = new Point(candidate.X + candidate.Width / 2d, candidate.Y + candidate.Height / 2d);
+            var element = AutomationElement.FromPoint(point);
+            var walker = TreeWalker.ControlViewWalker;
+
+            for (var depth = 0; element is not null && depth < 7; depth++)
+            {
+                var current = element.Current;
+                var type = (current.ControlType?.ProgrammaticName ?? string.Empty)
+                    .Replace("ControlType.", string.Empty, StringComparison.Ordinal);
+                var sameProcess = candidate.ProcessId <= 0 || current.ProcessId == candidate.ProcessId;
+                if (sameProcess && type is "Edit" or "ComboBox" && !current.IsPassword)
+                {
+                    var name = current.Name?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(name)) name = candidate.Name;
+
+                    string? value = null;
+                    if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
+                    {
+                        value = valuePattern.Current.Value?.Trim();
+                        if (value?.Length > 320) value = value[..320];
+                        if (string.IsNullOrWhiteSpace(value)) value = null;
+                    }
+
+                    return candidate with
+                    {
+                        Name = string.IsNullOrWhiteSpace(name) ? "[input field]" : name,
+                        Value = value
+                    };
+                }
+
+                element = walker.GetParent(element);
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+        catch (COMException) { }
+
+        return candidate;
     }
 
     private static bool IsAllowedByForegroundWindow(UiElementCandidate candidate, int expectedProcessId)
     {
-        if (expectedProcessId <= 0 || IsShellSurfaceProcess(expectedProcessId)) return true;
+        if (expectedProcessId <= 0) return true;
+        if (IsShellSurfaceProcess(expectedProcessId))
+            return candidate.ProcessId <= 0 || candidate.ProcessId == expectedProcessId;
         if (!TryGetForegroundBounds(expectedProcessId, out var foregroundBounds)) return true;
         if (candidate.ProcessId > 0 && candidate.ProcessId != expectedProcessId) return false;
         return IsInsideOrMostlyOverlapping(candidate.Bounds, foregroundBounds);

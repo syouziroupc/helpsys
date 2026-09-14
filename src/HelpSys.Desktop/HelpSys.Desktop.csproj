@@ -9,6 +9,8 @@
     <AssemblyName>HelpSys</AssemblyName>
     <RootNamespace>HelpSys</RootNamespace>
     <DefineConstants>$(DefineConstants);HELPSYS_SAFE_BUILD</DefineConstants>
+    <HelpSysBuildId Condition="'$(HelpSysBuildId)' == ''">dev</HelpSysBuildId>
+    <InformationalVersion>0.1.0+$(HelpSysBuildId)</InformationalVersion>
     <TieredCompilation>true</TieredCompilation>
     <TieredPGO>true</TieredPGO>
     <OptimizationPreference>Speed</OptimizationPreference>
@@ -17,6 +19,7 @@
     <DefineConstants>$(DefineConstants);HELPSYS_TEST_BUILD</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyMetadata Include="HelpSysBuildId" Value="$(HelpSysBuildId)" />
     <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
     <PackageReference Include="NAudio" Version="3.0.1" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
