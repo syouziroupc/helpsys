@@ -7,12 +7,8 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private static readonly Regex LocalAccountChoiceSurfaceRegex = new(
-        @"どなたが使用|プロファイル.*選|プロフィール.*選|アカウント(?:の)?選択|アカウント.*選|ユーザー.*選|別のアカウントを使用|ゲストモード|choose\s+an?\s+account|select\s+an?\s+account|who(?:'s|\s+is)\s+using\s+chrome|use\s+another\s+account|guest\s+mode",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-    private static readonly Regex LocalChoiceUtilityRegex = new(
-        @"^(?:ゲストモード|guest\s+mode|別のアカウントを使用|use\s+another\s+account|アカウントを追加|add\s+account|その他|more|設定|settings|閉じる|close)$",
+    private static readonly Regex LocalVisibleChoiceQuestionRegex = new(
+        @"(?:どれ(?:を|が)?|どちら(?:を|が)?|どの(?:項目|ボタン|リンク|タブ|アカウント|プロフィール|プロファイル|ファイル|フォルダ|プリンタ(?:ー)?|ネットワーク|候補)|画面(?:上|内).*(?:選択|選ん|どれ|どちら)|一覧.*(?:選択|選ん|どれ|どちら)|(?:選んで|選択して|使いたいものを|使いたい方を).*(?:ください|教えて)|which\s+(?:one|item|button|link|tab|account|profile|file|folder|printer|network)|choose\s+(?:one|an?\s+item|an?\s+account|an?\s+profile)|select\s+(?:one|an?\s+item|an?\s+account|an?\s+profile)|pick\s+(?:one|an?\s+item))",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private bool _localChoiceTargetActive;
@@ -23,9 +19,14 @@ public partial class MainWindow
         Handled
     }
 
-    private async Task<LocalChoiceAnswerResult> TryHandleLocalAccountChoiceAnswerAsync(string answer)
+    // Compatibility entry point used by both clarification UIs. The implementation is intentionally
+    // generic: account/profile choosers are only one instance of a visible-choice surface.
+    private Task<LocalChoiceAnswerResult> TryHandleLocalAccountChoiceAnswerAsync(string answer)
+        => TryHandleLocalVisibleChoiceAnswerAsync(answer);
+
+    private async Task<LocalChoiceAnswerResult> TryHandleLocalVisibleChoiceAnswerAsync(string answer)
     {
-        if (!LooksLikeAccountChoiceQuestion(_clarificationQuestion))
+        if (!LooksLikeVisibleChoiceQuestion(_clarificationQuestion))
             return LocalChoiceAnswerResult.NotApplicable;
 
         if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null)
@@ -33,10 +34,10 @@ public partial class MainWindow
 
         var token = _sessionCts.Token;
         var context = _systemContext.Capture();
-        if (!HasUsableForeground(context) || !IsSupportedLocalChoiceBrowser(context.ForegroundProcess))
+        if (!HasUsableForeground(context))
         {
-            KeepLocalAccountChoiceClarification(
-                "アカウント選択画面を端末内で確認できませんでした。選択画面を表示したまま、画面に出ている名前をもう一度入力してください。");
+            KeepLocalVisibleChoiceClarification(
+                "選択肢が表示されている画面を端末内で確認できませんでした。選択画面を表示したまま、見えている項目名をもう一度入力してください。");
             return LocalChoiceAnswerResult.Handled;
         }
 
@@ -48,23 +49,21 @@ public partial class MainWindow
         catch (OperationCanceledException) { return LocalChoiceAnswerResult.Handled; }
         catch
         {
-            KeepLocalAccountChoiceClarification(
-                "アカウント選択画面を端末内で読み取れませんでした。選択画面を表示したまま、もう一度同じ名前を入力してください。");
+            KeepLocalVisibleChoiceClarification(
+                "選択肢を端末内で読み取れませんでした。選択画面を表示したまま、もう一度同じ項目名を入力してください。");
             return LocalChoiceAnswerResult.Handled;
         }
 
-        if (!LooksLikeLocalAccountChoiceSurface(context, candidates))
-        {
-            KeepLocalAccountChoiceClarification(
-                "アカウント選択画面を端末内で確認できませんでした。選択画面を表示したまま、画面に出ている名前をもう一度入力してください。");
-            return LocalChoiceAnswerResult.Handled;
-        }
-
-        var match = FindUniqueLocalAccountChoice(candidates, answer);
+        var match = FindUniqueLocalVisibleChoice(candidates, answer);
         if (match is null)
         {
-            KeepLocalAccountChoiceClarification(
-                "回答と画面上のアカウントを1つに特定できませんでした。画面に表示されている名前またはメールアドレスを、そのまま1つ入力してください。");
+            // Only intercept when the current UI actually looks like a visible choice surface.
+            // Open-ended clarification answers continue through the normal planner path.
+            if (!LooksLikeVisibleChoiceSurface(candidates))
+                return LocalChoiceAnswerResult.NotApplicable;
+
+            KeepLocalVisibleChoiceClarification(
+                "回答と画面上の選択肢を1つに特定できませんでした。画面に表示されている項目名を、そのまま1つ入力してください。");
             return LocalChoiceAnswerResult.Handled;
         }
 
@@ -78,8 +77,8 @@ public partial class MainWindow
 
         if (fresh is null || HasSystemTransitionV3(context, _systemContext.Capture()))
         {
-            KeepLocalAccountChoiceClarification(
-                "選んだアカウントの表示位置が変わりました。現在の選択画面に出ている名前をもう一度入力してください。");
+            KeepLocalVisibleChoiceClarification(
+                "選んだ項目の位置または画面が変わりました。現在表示されている項目名をもう一度入力してください。");
             return LocalChoiceAnswerResult.Handled;
         }
 
@@ -87,43 +86,57 @@ public partial class MainWindow
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Capturing) ||
             !_sessionState.TryTransition(generation, GuidanceSessionState.Planning))
         {
-            KeepLocalAccountChoiceClarification(
-                "アカウント選択の案内状態を更新できませんでした。現在の選択画面に出ている名前をもう一度入力してください。");
+            KeepLocalVisibleChoiceClarification(
+                "選択案内の状態を更新できませんでした。現在表示されている項目名をもう一度入力してください。");
             return LocalChoiceAnswerResult.Handled;
         }
 
         _history.Add(new GuideHistoryItem(
             _stepNumber,
             "local_choice_answer",
-            "利用者が選んだアカウント",
-            "利用者の回答を端末内だけで現在の選択肢と照合し、回答内容を外部送信せず対象を確定した。"));
+            "利用者が選んだ項目",
+            "利用者の回答を端末内だけで現在の可視選択肢と照合し、回答内容を外部送信せず対象を確定した。"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
+        var accountSpecific = LooksLikeAccountChoiceQuestion(_clarificationQuestion);
         _clarificationQuestion = null;
         HideClarificationUiIfNeeded(force: true);
         RequestBox.Text = _originalRequest ?? _activeRequest;
         RequestBox.CaretIndex = RequestBox.Text.Length;
-        _localChoiceTargetActive = true;
+        _localChoiceTargetActive = accountSpecific;
         try { _actionObserver.Start(); } catch { }
+
+        // Generic visible choices must stay opaque in later cloud-bound history. Account choices
+        // already use the legacy opaque-history flag; other choices carry an intentionally generic
+        // local-only label while preserving geometry/automation identity for revalidation.
+        var trackedTarget = accountSpecific
+            ? fresh
+            : fresh with { Name = "利用者が選んだ項目" };
 
         var decision = new GuideDecision(
             "target",
             fresh.Id,
             "left_click",
-            "青い枠の、あなたが選んだアカウントで、マウスの左ボタンを1回押してください。",
+            "青い枠の、あなたが選んだ項目で、マウスの左ボタンを1回押してください。",
             null,
             null,
             0.99);
 
-        ShowStructuredTarget(decision, fresh, candidates, context, generation);
+        ShowStructuredTarget(decision, trackedTarget, candidates, context, generation);
         return LocalChoiceAnswerResult.Handled;
     }
 
-    private void KeepLocalAccountChoiceClarification(string question)
+    private void KeepLocalVisibleChoiceClarification(string question)
     {
         _localChoiceTargetActive = false;
         WaitForClarification(question);
         EnsureClarificationUi();
+    }
+
+    private static bool LooksLikeVisibleChoiceQuestion(string? question)
+    {
+        if (string.IsNullOrWhiteSpace(question)) return false;
+        return LocalVisibleChoiceQuestionRegex.IsMatch(question) || LooksLikeAccountChoiceQuestion(question);
     }
 
     private static bool LooksLikeAccountChoiceQuestion(string? question)
@@ -132,31 +145,22 @@ public partial class MainWindow
         return question.Contains("アカウント", StringComparison.OrdinalIgnoreCase) ||
                question.Contains("プロフィール", StringComparison.OrdinalIgnoreCase) ||
                question.Contains("プロファイル", StringComparison.OrdinalIgnoreCase) ||
-               question.Contains("使う人", StringComparison.OrdinalIgnoreCase);
+               question.Contains("使う人", StringComparison.OrdinalIgnoreCase) ||
+               question.Contains("account", StringComparison.OrdinalIgnoreCase) ||
+               question.Contains("profile", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsSupportedLocalChoiceBrowser(string processName) =>
-        processName.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
-        processName.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
-        processName.Equals("firefox", StringComparison.OrdinalIgnoreCase) ||
-        processName.Equals("brave", StringComparison.OrdinalIgnoreCase) ||
-        processName.Equals("opera", StringComparison.OrdinalIgnoreCase) ||
-        processName.Equals("vivaldi", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeLocalAccountChoiceSurface(
-        SystemContextSnapshot context,
-        IReadOnlyList<UiElementCandidate> candidates)
+    private static bool LooksLikeVisibleChoiceSurface(IReadOnlyList<UiElementCandidate> candidates)
     {
-        var builder = new StringBuilder(context.ForegroundTitle ?? string.Empty);
-        foreach (var candidate in candidates.Take(220))
-        {
-            if (!string.IsNullOrWhiteSpace(candidate.Name))
-                builder.Append(' ').Append(candidate.Name);
-        }
-        return LocalAccountChoiceSurfaceRegex.IsMatch(builder.ToString());
+        var interactable = candidates.Count(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty);
+        if (interactable >= 2) return true;
+
+        var visibleLabels = candidates.Count(x =>
+            !x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name));
+        return interactable >= 1 && visibleLabels >= 2;
     }
 
-    private static UiElementCandidate? FindUniqueLocalAccountChoice(
+    private static UiElementCandidate? FindUniqueLocalVisibleChoice(
         IReadOnlyList<UiElementCandidate> candidates,
         string answer)
     {
@@ -180,12 +184,12 @@ public partial class MainWindow
         var contextual = FindUniqueContainingLocalChoice(candidates, interactable, normalizedAnswer, exactOnly: false);
         if (contextual is not null) return contextual;
 
+        if (normalizedAnswer.Length < 2) return null;
         var partial = interactable
-            .Where(x => !LocalChoiceUtilityRegex.IsMatch(x.Name.Trim()))
             .Where(x =>
             {
                 var name = NormalizeLocalChoiceText(x.Name);
-                return name.Length > 0 &&
+                return name.Length >= 2 &&
                        (name.Contains(normalizedAnswer, StringComparison.Ordinal) ||
                         normalizedAnswer.Contains(name, StringComparison.Ordinal));
             })
@@ -200,12 +204,10 @@ public partial class MainWindow
         string normalizedAnswer,
         bool exactOnly)
     {
-        // Some browser account choosers expose the visible identity detail (for example an email
-        // address) as a non-interactive Text child while the clickable account card has only a
-        // duplicated display name. Keep the identity detail local and map it only to an interactable
-        // element that geometrically contains the matching Text/context node. No nearest-neighbour
-        // guessing is allowed: ambiguity fails closed and asks the user again.
-        if (normalizedAnswer.Length < 3) return null;
+        // Many applications expose a visible label as a non-interactive child while the clickable
+        // parent has no useful name. Map a matching label only to the smallest containing clickable
+        // element. Never use nearest-neighbour guessing; ambiguity fails closed.
+        if (normalizedAnswer.Length < 2) return null;
 
         var contextMatches = candidates
             .Where(x => !x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name))
@@ -230,14 +232,11 @@ public partial class MainWindow
                 context.Y + context.Height / 2d);
 
             var containers = interactable
-                .Where(x => !LocalChoiceUtilityRegex.IsMatch(x.Name.Trim()))
                 .Where(x => context.ProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ProcessId)
                 .Where(x => x.Bounds.Contains(center))
                 .OrderBy(x => x.Width * x.Height)
                 .ToArray();
 
-            // Prefer the smallest containing clickable card. If two candidates have effectively the
-            // same area, the UIA structure is ambiguous and we do not guess.
             if (containers.Length == 0) continue;
             var smallestArea = containers[0].Width * containers[0].Height;
             var smallest = containers
