@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
@@ -57,7 +58,9 @@ public sealed class UpdateService : IDisposable
         };
         _http = new HttpClient(handler, disposeHandler: true)
         {
-            Timeout = TimeSpan.FromSeconds(20)
+            // The self-contained package is roughly 80 MB. A short AI-request timeout is not
+            // appropriate here; package size and SHA-256 are independently bounded/verified.
+            Timeout = TimeSpan.FromMinutes(3)
         };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("HelpSys-Updater/1.0");
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
@@ -113,7 +116,7 @@ public sealed class UpdateService : IDisposable
         }
 
         if (latest is null)
-            throw new InvalidOperationException("署名検証に必要なSHA-256付きHelpSys更新ファイルが見つかりませんでした。");
+            throw new InvalidOperationException("SHA-256付きHelpSys更新ファイルが見つかりませんでした。");
 
         return string.Equals(latest.BuildId, CurrentBuildId, StringComparison.OrdinalIgnoreCase)
             ? null
@@ -182,7 +185,8 @@ public sealed class UpdateService : IDisposable
         start.ArgumentList.Add("/d");
         start.ArgumentList.Add("/c");
         start.ArgumentList.Add(prepared.ScriptPath);
-        Process.Start(start) ?? throw new InvalidOperationException("更新処理を開始できませんでした。");
+        if (Process.Start(start) is null)
+            throw new InvalidOperationException("更新処理を開始できませんでした。");
     }
 
     private async Task DownloadPackageAsync(UpdateInfo update, string destination, CancellationToken cancellationToken)
@@ -289,6 +293,9 @@ public sealed class UpdateService : IDisposable
         var lines = new[]
         {
             "@echo off",
+            // HelpSys paths can contain Japanese user/folder names. Switch cmd to UTF-8 before
+            // parsing the path-bearing lines written below.
+            "chcp 65001 >nul",
             "setlocal",
             ":wait_for_helpsys",
             $"tasklist /FI \"PID eq {processId}\" /NH | findstr /R /C:\"[ ]{processId}[ ]\" >nul",
