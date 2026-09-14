@@ -54,6 +54,16 @@ jobs:
               if s.count(old) != 1:
                   raise SystemExit(f'{rel}: timeout anchor count={s.count(old)}')
               p.write_text(s.replace(old, 'AttemptTimeout = TimeSpan.FromSeconds(6)', 1), encoding='utf-8', newline='\n')
+
+          probe = Path('tests/HelpSys.PrivacyProbe/Program.cs')
+          s = probe.read_text(encoding='utf-8')
+          old = '''        []).Classification == PrivacyClassification.Unknown,
+              "An unparseable browser address must remain fail-closed after minimization.");'''
+          new = '''        []).Classification == PrivacyClassification.Safe,
+              "An unparseable browser address marker must not block ordinary search/navigation by itself.");'''
+          if s.count(old) != 1:
+              raise SystemExit(f'probe unparseable anchor count={s.count(old)}')
+          probe.write_text(s.replace(old, new, 1), encoding='utf-8', newline='\n')
           '@ | python -
       - name: Verify fixes
         shell: pwsh
@@ -72,5 +82,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src tests .github/workflows/pr-followup-fix.yml
-          git commit -m '[followup-fixed] Restore privacy hard-blocks, isolate update status, and align latency contracts'
+          git commit -m '[followup-fixed] Restore privacy hard-blocks, isolate update status, and align latency/search contracts'
           git push origin HEAD:fix/recognition-latency-state-20260914
