@@ -137,7 +137,7 @@ assert(!capture.includes('return current.ControlType == ControlType.Edit || curr
 for (const requiredPattern of ['VisibleEmailRegex','VisibleJapanesePhoneRegex','VisiblePostalCodeRegex','VisibleBearerRegex','VisibleJwtRegex','VisibleApiKeyRegex','VisibleCardNumberRegex','VisibleSensitiveUrlRegex'])
   assert(capture.includes(requiredPattern), `Screenshot redaction is missing ${requiredPattern}.`);
 
-assert(updater.includes(LatestReleaseApi = 'https://api.github.com/repos/syouziroupc/helpsys/releases/latest'.replace(' = ', '')), '');
+assert(updater.includes('https://api.github.com/repos/syouziroupc/helpsys/releases/latest'), 'Updater must use the fixed HelpSys GitHub release endpoint.');
 assert(updater.includes('RequiredTag = "preview-latest"'), 'Updater must stay on the reviewed preview-latest channel.');
 assert(updater.includes('TryParseSha256') && updater.includes('VerifyDigestAsync'), 'Updater must require and verify SHA-256.');
 assert(updater.includes('AllowedDownloadHosts'), 'Updater must constrain package download hosts.');
