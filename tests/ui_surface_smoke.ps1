@@ -285,8 +285,8 @@ try {
   if ($diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -ne $true) {
     throw 'UI performance quality route lost its screenshot.'
   }
-  if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') {
-    throw 'UI performance smoke did not retain the current safe work surface.'
+  if ([int]$diagnostics.foregroundProcessId -ne $target.Id) {
+    throw "UI performance smoke analyzed the wrong process: $($diagnostics.foregroundProcessId), expected $($target.Id)."
   }
 
   $metrics = [ordered]@{
