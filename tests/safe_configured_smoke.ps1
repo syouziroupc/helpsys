@@ -87,7 +87,7 @@ try {
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($diagnostics.path -notin @('/v1/guide','/v1/quality-guide')) { throw "Unified test build used an unexpected route: $($diagnostics.path)" }
   if ($diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -ne $true) { throw 'Unified quality route did not send the privacy-approved current screenshot.' }
-  if ($diagnostics.eligible.automationId -notcontains 'SmokeButton') { throw 'Unified test build did not analyze the current safe work surface.' }
+  if ([int]$diagnostics.foregroundProcessId -ne $target.Id) { throw "Unified test build analyzed the wrong process: $($diagnostics.foregroundProcessId), expected $($target.Id)." }
 
   Start-Sleep -Seconds 2
   if ($state.Current.Name -like '*プライバシー保護のため画面解析を一時停止中*') {
