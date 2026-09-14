@@ -9,14 +9,20 @@ const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV
 
 if (!facade.includes('ScopeToForegroundWindow(processId, candidates)'))
   throw new Error('normal UI observation must pass through foreground-window scoping');
-if (!facade.includes('return scoped.Any(candidate => candidate.Interactable) ? scoped : candidates;'))
-  throw new Error('foreground scoping must retain a process-level compatibility fallback');
+if (!facade.includes('candidate.ProcessId <= 0 || candidate.ProcessId == processId'))
+  throw new Error('shell observation must stay bound to the foreground shell process instead of mixing PIDs');
+if (!facade.includes('RestoreLocalInputEvidence'))
+  throw new Error('non-secret input evidence must be restored locally for usable search/address guidance');
+if (!facade.includes('ValuePattern.Pattern'))
+  throw new Error('local input evidence must be able to inspect current non-password text');
+if (!facade.includes('candidate.Password'))
+  throw new Error('password inputs must remain excluded from local value restoration');
 if (!local.includes('TryHandleLocalVisibleChoiceAnswerAsync'))
   throw new Error('visible clarification choices must use the generic local resolver');
 if (local.includes('IsSupportedLocalChoiceBrowser'))
   throw new Error('generic local choice must not contain a browser allowlist');
-if (!replan.includes('MaximumAutomaticCurrentStateReplans = 2'))
-  throw new Error('transient UI uncertainty must get two bounded observations');
+if (!replan.includes('MaximumAutomaticCurrentStateReplans = 4'))
+  throw new Error('transient UI uncertainty must get four bounded observations');
 if (policy.includes('WaitForClarification('))
   throw new Error('technical observation uncertainty must not masquerade as a user clarification');
 if (!recovery.includes('MaximumRouteRecoveryAttempts = 3'))
