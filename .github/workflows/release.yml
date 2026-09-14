@@ -50,6 +50,7 @@ jobs:
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishReadyToRun=true `
+            -p:HelpSysBuildId=$shortSha `
             -o $out
 
           if (-not (Test-Path (Join-Path $out 'HelpSys.exe'))) { throw 'Unified HelpSys executable was not produced.' }
@@ -76,10 +77,10 @@ jobs:
           - Windows 10 / 11 (64-bit), self-contained
           - Stable download alias: $($env:HELPSYS_STABLE_ASSET)
           - Traceable build: $($env:HELPSYS_VERSIONED_ASSET)
+          - In-app update check and SHA-256 verified one-click replacement are supported
           - Normal/Safe editions are unified into one binary
-          - Safe Privacy Gate policy is the standard profile
-          - Password / OTP / token / API key / Cookie/Storage / financial-auth states fail closed
-          - Cloud transport rejects redirects/cookies/proxy inheritance and pins external traffic to the reviewed HelpSys origin
+          - Privacy Gate blocks secrets/auth/storage/financial transaction states while retaining sanitized ordinary UI context
+          - Cloud transport rejects redirects/cookies/proxy inheritance and pins external AI traffic to the reviewed HelpSys origin
           - Voice/Commander is available only after an explicit user action or local wake phrase
           - HelpSys remains guidance-only and does not click, type, pay, or enter credentials
           - This release is rebuilt automatically on every main-branch update
