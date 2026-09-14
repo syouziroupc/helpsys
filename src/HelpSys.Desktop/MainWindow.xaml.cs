@@ -611,8 +611,8 @@ public partial class MainWindow : Window
     {
         var message = error.Kind switch
         {
-            GuideFailureKind.Network => "ネットワークへの接続を確認できませんでした。画面認識の失敗とは区別して、案内を停止します。",
-            GuideFailureKind.ServiceUnavailable => "案内サービスが一時的に応答できませんでした。通信回線が切れているとは断定せず、案内を停止します。",
+            GuideFailureKind.Network => "案内サービスへの通信に一時的に失敗しました。もう一度「案内」を押すと現在の目的から再開できます。",
+            GuideFailureKind.ServiceUnavailable => "案内サービスの応答が一時的に遅れています。もう一度「案内」を押すと現在の目的から再開できます。",
             GuideFailureKind.Rejected => "案内サービスがこの要求を受け付けませんでした。現在の画面を推測せず、案内を停止します。",
             GuideFailureKind.InvalidResponse => "案内サービスから利用できる形式の応答を受け取れませんでした。現在の画面を推測せず、案内を停止します。",
             GuideFailureKind.ContextChanged => "操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。",

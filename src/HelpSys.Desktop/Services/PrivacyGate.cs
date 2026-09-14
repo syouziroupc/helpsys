@@ -282,7 +282,7 @@ public sealed class PrivacyGate
     private static object CompactElement(UiElementCandidate x) => new
     {
         id = x.Id,
-        name = SanitizeOutboundText(x.Name, 140),
+        name = SanitizeOutboundText(x.Name, x.Interactable ? 180 : 360),
         automationId = SanitizeOutboundText(x.AutomationId, 120),
         className = SanitizeOutboundText(x.ClassName, 120),
         controlType = x.ControlType,

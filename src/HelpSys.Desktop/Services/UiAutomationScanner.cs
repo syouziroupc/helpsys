@@ -267,7 +267,7 @@ public sealed class UiAutomationScanner
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        while (queue.Count > 0 && visited < 7500 && stopwatch.ElapsedMilliseconds < 2700)
+        while (queue.Count > 0 && visited < 7000 && stopwatch.ElapsedMilliseconds < 2200)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth) = queue.Dequeue();
@@ -283,7 +283,10 @@ public sealed class UiAutomationScanner
                     var isPassword = current.IsPassword;
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
                     var rawName = current.Name ?? string.Empty;
-                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : rawName;
+                    var readableText = isPassword || isInput
+                        ? rawName
+                        : ReadBoundedVisibleText(element, typeName, rawName);
+                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : readableText;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
                     var processName = GetProcessName(current.ProcessId, processNames);
@@ -305,7 +308,7 @@ public sealed class UiAutomationScanner
                     else if (isContext && context.Count < contextPoolLimit)
                     {
                         context.Add(new UiElementCandidate(
-                            $"c{context.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
+                            $"c{context.Count + 1}", Trim(name, 420), Trim(automationId, 120), Trim(className, 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             false, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
@@ -330,6 +333,45 @@ public sealed class UiAutomationScanner
             .ToArray();
 
         return rankedInteractive.Concat(rankedContext).ToArray();
+    }
+
+    private static string ReadBoundedVisibleText(AutomationElement element, string typeName, string fallback)
+    {
+        var normalizedFallback = NormalizeReadableText(fallback, 420);
+        var textBearing = typeName.EndsWith("Document", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Text", StringComparison.Ordinal) ||
+                          typeName.EndsWith("DataItem", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Table", StringComparison.Ordinal) ||
+                          typeName.EndsWith("List", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Pane", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Group", StringComparison.Ordinal);
+        if (!textBearing) return normalizedFallback;
+
+        try
+        {
+            if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pattern) && pattern is TextPattern textPattern)
+            {
+                var extracted = NormalizeReadableText(textPattern.DocumentRange.GetText(520), 420);
+                if (!string.IsNullOrWhiteSpace(extracted))
+                {
+                    if (string.IsNullOrWhiteSpace(normalizedFallback)) return extracted;
+                    if (extracted.Equals(normalizedFallback, StringComparison.OrdinalIgnoreCase)) return normalizedFallback;
+                    return NormalizeReadableText($"{normalizedFallback} | {extracted}", 420);
+                }
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
+
+        return normalizedFallback;
+    }
+
+    private static string NormalizeReadableText(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var normalized = string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= max ? normalized : normalized[..max];
     }
 
     private static ActionState ReadActionState(AutomationElement element, string typeName, bool isPassword)
@@ -440,6 +482,10 @@ public sealed class UiAutomationScanner
             else score += 120;
         }
         if (process is "chrome" or "msedge" or "firefox" or "brave" or "opera" or "vivaldi") score += 320;
+        if (process.Equals("excel", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("winword", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("powerpnt", StringComparison.OrdinalIgnoreCase)) score += 240;
+        if (item.ControlType is "Document" or "Text" or "DataItem" or "Hyperlink") score += 180;
         if (item.ControlType == "Edit") score += 160;
         if (!string.IsNullOrWhiteSpace(item.Name)) score += 45;
         return score;
@@ -457,7 +503,10 @@ public sealed class UiAutomationScanner
         if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8 || string.IsNullOrWhiteSpace(name)) return false;
         return typeName.EndsWith("Text", StringComparison.Ordinal) || typeName.EndsWith("Window", StringComparison.Ordinal) ||
                typeName.EndsWith("Pane", StringComparison.Ordinal) || typeName.EndsWith("Group", StringComparison.Ordinal) ||
-               typeName.EndsWith("TitleBar", StringComparison.Ordinal) || typeName.EndsWith("Document", StringComparison.Ordinal);
+               typeName.EndsWith("TitleBar", StringComparison.Ordinal) || typeName.EndsWith("Document", StringComparison.Ordinal) ||
+               typeName.EndsWith("DataItem", StringComparison.Ordinal) || typeName.EndsWith("Table", StringComparison.Ordinal) ||
+               typeName.EndsWith("Header", StringComparison.Ordinal) || typeName.EndsWith("HeaderItem", StringComparison.Ordinal) ||
+               typeName.EndsWith("List", StringComparison.Ordinal);
     }
 
     private static bool ShouldKeep(string name, string automationId, string className, Rect rect)

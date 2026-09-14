@@ -269,7 +269,7 @@ function compactElement(value) {
   if (!id) return null;
   return {
     id,
-    name: text(value.name, 180),
+    name: text(value.name, 360),
     automationId: text(value.automationId, 120),
     className: text(value.className, 120),
     controlType: text(value.controlType, 80),

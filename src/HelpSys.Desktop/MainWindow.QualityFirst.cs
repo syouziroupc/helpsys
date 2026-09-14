@@ -77,6 +77,13 @@ public partial class MainWindow
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
+            if (candidates.Count > 0)
+            {
+                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
+                if (await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
+                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Capturing)) return;
+            }
+
             ScreenCaptureFrame frame;
             try
             {
@@ -104,7 +111,7 @@ public partial class MainWindow
             if (!_sessionState.IsCurrent(generation)) return;
 
             var afterCaptureContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, afterCaptureContext) || HasSystemTransitionV3(systemContext, afterCaptureContext))
+            if (!HasSameCaptureIdentity(systemContext, afterCaptureContext))
             {
                 HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
@@ -137,13 +144,18 @@ public partial class MainWindow
                     return;
                 }
                 if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
+                if (_sessionState.IsCurrent(generation) && error.Kind is GuideFailureKind.Network or GuideFailureKind.ServiceUnavailable or GuideFailureKind.InvalidResponse)
+                {
+                    HandleTechnicalPlanningUncertainty("案内サービスの一時的な応答失敗", generation);
+                    return;
+                }
                 if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
                 return;
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
             var postPlanContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, postPlanContext) || HasSystemTransitionV3(systemContext, postPlanContext))
+            if (!HasSameCaptureIdentity(systemContext, postPlanContext))
             {
                 HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
@@ -233,7 +245,7 @@ public partial class MainWindow
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
             var prePresentContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, prePresentContext) || HasSystemTransitionV3(systemContext, prePresentContext))
+            if (!HasSameCaptureIdentity(systemContext, prePresentContext))
             {
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
@@ -269,6 +281,87 @@ public partial class MainWindow
         }
     }
 
+    private async Task<bool> TryFastStructuredPlanAsync(
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot expectedContext,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        if (_activeRequest is null || candidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
+
+        SetState("画面上の文字と操作できる場所から、次の手順を確認しています…", speak: false);
+        GuideDecision quick;
+        try
+        {
+            quick = await _cloudGuide.PlanAsync(_activeRequest, candidates, _history, expectedContext, cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (GuideServiceException)
+        {
+            // The multimodal path is an independent fallback. Do not turn one fast-path failure
+            // into a session stop or a second long retry of the same request.
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (!_sessionState.IsCurrent(generation)) return true;
+        var current = _systemContext.Capture();
+        if (!HasSameCaptureIdentity(expectedContext, current)) return false;
+
+        if (quick.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(quick.Question))
+        {
+            WaitForClarification(quick.Question, generation);
+            return true;
+        }
+
+        if (quick.Status.Equals("done", StringComparison.OrdinalIgnoreCase) &&
+            quick.Confidence >= 0.98 && IsSimpleForegroundGoalSatisfied(_activeRequest, expectedContext))
+        {
+            StopWithMessage(string.IsNullOrWhiteSpace(quick.Instruction) ? "目的のアプリまたはサイトを開けました。" : quick.Instruction);
+            return true;
+        }
+
+        if (!quick.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || quick.Confidence < 0.93)
+            return false;
+
+        if (quick.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(quick.TargetId))
+        {
+            ShowKeyboardGuide(quick, candidates, expectedContext, generation);
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(quick.TargetId)) return false;
+        var target = candidates.FirstOrDefault(x => string.Equals(x.Id, quick.TargetId, StringComparison.Ordinal));
+        if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty) return false;
+
+        var fresh = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
+        if (!_sessionState.IsCurrent(generation) || fresh is null) return false;
+        if (!HasSameCaptureIdentity(expectedContext, _systemContext.Capture())) return false;
+
+        ShowStructuredTarget(quick, fresh, candidates, expectedContext, generation);
+        return true;
+    }
+
+    private static bool IsSimpleForegroundGoalSatisfied(string request, SystemContextSnapshot context)
+    {
+        var goal = request.Trim();
+        var process = context.ForegroundProcess ?? string.Empty;
+        if (process.Equals("excel", StringComparison.OrdinalIgnoreCase) &&
+            (goal.Contains("Excel", StringComparison.OrdinalIgnoreCase) || goal.Contains("エクセル", StringComparison.OrdinalIgnoreCase))) return true;
+        if (process.Equals("winword", StringComparison.OrdinalIgnoreCase) &&
+            (goal.Contains("Word", StringComparison.OrdinalIgnoreCase) || goal.Contains("ワード", StringComparison.OrdinalIgnoreCase))) return true;
+        if (process.Equals("powerpnt", StringComparison.OrdinalIgnoreCase) &&
+            (goal.Contains("PowerPoint", StringComparison.OrdinalIgnoreCase) || goal.Contains("パワーポイント", StringComparison.OrdinalIgnoreCase) || goal.Contains("パワポ", StringComparison.OrdinalIgnoreCase))) return true;
+
+        var domain = context.Browser?.Domain ?? string.Empty;
+        if (domain.Contains("youtube.com", StringComparison.OrdinalIgnoreCase) &&
+            (goal.Contains("YouTube", StringComparison.OrdinalIgnoreCase) || goal.Contains("ユーチューブ", StringComparison.OrdinalIgnoreCase))) return true;
+        return false;
+    }
+
     private async Task<bool> TryStructuredFallbackAsync(
         IReadOnlyList<UiElementCandidate> previousCandidates,
         SystemContextSnapshot expectedContext,
@@ -277,7 +370,7 @@ public partial class MainWindow
     {
         if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
         var currentBeforeScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforeScan) || HasSystemTransitionV3(expectedContext, currentBeforeScan)) return false;
+        if (!HasSameCaptureIdentity(expectedContext, currentBeforeScan)) return false;
 
         SetState("画像だけでは確定できないため、Windowsの構造情報から次の操作を再確認しています…", speak: false);
 
@@ -291,7 +384,7 @@ public partial class MainWindow
 
         if (!_sessionState.IsCurrent(generation) || candidates.Count == 0) return false;
         var currentAfterScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterScan) || HasSystemTransitionV3(expectedContext, currentAfterScan)) return false;
+        if (!HasSameCaptureIdentity(expectedContext, currentAfterScan)) return false;
 
         GuideDecision fallback;
         try
@@ -303,7 +396,7 @@ public partial class MainWindow
 
         if (!_sessionState.IsCurrent(generation)) return false;
         var currentAfterPlan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterPlan) || HasSystemTransitionV3(expectedContext, currentAfterPlan)) return false;
+        if (!HasSameCaptureIdentity(expectedContext, currentAfterPlan)) return false;
 
         if (fallback.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(fallback.Question))
         {
@@ -322,7 +415,7 @@ public partial class MainWindow
         var freshTarget = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
         if (!_sessionState.IsCurrent(generation) || freshTarget is null) return false;
         var currentBeforePresent = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforePresent) || HasSystemTransitionV3(expectedContext, currentBeforePresent)) return false;
+        if (!HasSameCaptureIdentity(expectedContext, currentBeforePresent)) return false;
 
         ShowStructuredTarget(fallback, freshTarget, candidates, expectedContext, generation);
         return true;
@@ -413,7 +506,7 @@ public partial class MainWindow
 
         if (!_sessionState.IsCurrent(generation)) return;
         var currentContext = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(systemContext, currentContext) || HasSystemTransitionV3(systemContext, currentContext))
+        if (!HasSameCaptureIdentity(systemContext, currentContext))
         {
             HandleTechnicalPlanningUncertainty("画像候補確認中の画面変化が続いている", generation);
             return;
