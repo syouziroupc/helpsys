@@ -147,8 +147,8 @@ Assert(malformedBrowserContext.Url == "unparseable",
     "Unparseable browser addresses must retain only an invalid marker.");
 Assert(gate.EvaluateState(
         safeContext with { ForegroundProcess = "chrome", ForegroundProcessId = 9233, Browser = malformedBrowserContext },
-        []).Classification == PrivacyClassification.Unknown,
-    "An unparseable browser address must remain fail-closed after minimization.");
+        []).Classification == PrivacyClassification.Safe,
+    "An unparseable browser address marker must not block ordinary search/navigation by itself.");
 
 var editWithSecret = new UiElementCandidate(
     "edit", "Search", "searchBox", "TextBox", "Edit", "msedge",

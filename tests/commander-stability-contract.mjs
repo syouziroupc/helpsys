@@ -54,7 +54,7 @@ assert(qualityWindow.includes('string.IsNullOrWhiteSpace(fallback.TargetId)'), '
 assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'Structured fallback must revalidate the target immediately before showing guidance.');
 assert(qualityWindow.includes('_speechInput.HideOverlay();'), 'Screen capture must remove the speech overlay first.');
 
-assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(9)'), 'Cloud guidance calls must have a short per-attempt timeout.');
+assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(6)'), 'Cloud guidance calls must have a short per-attempt timeout.');
 assert(cloudAdapter.includes('x-helpsys-request-id'), 'Cloud AI adapter must attach request IDs for production debugging.');
 
 assert(!watcher.includes('pump.GetAwaiter().GetResult()'), 'Live watcher shutdown must never synchronously block the WPF thread.');
