@@ -5,7 +5,7 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private const int MaximumAutomaticCurrentStateReplans = 1;
+    private const int MaximumAutomaticCurrentStateReplans = 2;
     private int _automaticCurrentStateReplans;
 
     private bool TryQueueCurrentStateReplan(string reason, long generation)
@@ -20,28 +20,32 @@ public partial class MainWindow
             return false;
 
         _automaticCurrentStateReplans++;
+        var attempt = _automaticCurrentStateReplans;
         _history.Add(new GuideHistoryItem(
             _stepNumber,
             "current_state_replan",
             "現在の画面",
-            $"一時的な画面変化を検出したため、復帰経路ではなく現在状態を再取得する: {reason}"));
+            $"一時的または技術的な画面不確実性を検出したため、復帰経路ではなく現在状態を再取得する ({attempt}/{MaximumAutomaticCurrentStateReplans}): {reason}"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
         _speechOutput.Stop();
         ClearCurrentGuidanceV3();
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _liveReplanPending = true;
-        SetState("画面が変わったため、今の画面を確認し直しています…", speak: false);
-        Dispatcher.BeginInvoke(new Action(() => _ = RunQueuedCurrentStateReplanAsync()));
+        SetState("画面状態を取り直して、現在位置から案内を作り直しています…", speak: false);
+        Dispatcher.BeginInvoke(new Action(() => _ = RunQueuedCurrentStateReplanAsync(attempt)));
         return true;
     }
 
-    private async Task RunQueuedCurrentStateReplanAsync()
+    private async Task RunQueuedCurrentStateReplanAsync(int attempt)
     {
         if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
         try
         {
-            await Task.Delay(280, _sessionCts.Token);
+            // A second observation is intentionally farther apart so animations, browser navigation,
+            // dialogs and shell transitions have time to settle without invoking heavy route recovery.
+            var delayMs = attempt <= 1 ? 260 : 620;
+            await Task.Delay(delayMs, _sessionCts.Token);
             await TryRunPendingLiveReplanAsync();
         }
         catch (OperationCanceledException) { }
