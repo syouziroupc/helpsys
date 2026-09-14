@@ -5,7 +5,7 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private const int MaximumAutomaticCurrentStateReplans = 2;
+    private const int MaximumAutomaticCurrentStateReplans = 4;
     private int _automaticCurrentStateReplans;
 
     private bool TryQueueCurrentStateReplan(string reason, long generation)
@@ -42,9 +42,16 @@ public partial class MainWindow
         if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
         try
         {
-            // A second observation is intentionally farther apart so animations, browser navigation,
-            // dialogs and shell transitions have time to settle without invoking heavy route recovery.
-            var delayMs = attempt <= 1 ? 260 : 620;
+            // Different UI classes settle at different speeds. Keep the retry budget finite, but
+            // sample at increasing intervals so shell animations, browser navigation and modal
+            // creation are not mistaken for a permanent observer failure after only two snapshots.
+            var delayMs = attempt switch
+            {
+                1 => 180,
+                2 => 420,
+                3 => 850,
+                _ => 1400
+            };
             await Task.Delay(delayMs, _sessionCts.Token);
             await TryRunPendingLiveReplanAsync();
         }
