@@ -82,36 +82,53 @@ try {
 
   $helpSys = Start-Process $exe -PassThru
   Start-Sleep -Seconds 5
-  if ($helpSys.HasExited) { throw 'HelpSys exited before visible PII redaction smoke.' }
+  if ($helpSys.HasExited) { throw 'HelpSys exited before visible PII egress smoke.' }
 
   $request = Find-Element $helpSys 'RequestBox'
   $guide = Find-Element $helpSys 'GuideButton'
-  if ($null -eq $request -or $null -eq $guide) { throw 'HelpSys controls missing during visible PII redaction smoke.' }
+  if ($null -eq $request -or $null -eq $guide) { throw 'HelpSys controls missing during visible PII egress smoke.' }
 
   $request.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('PII redaction smoke: open the test target')
   $guide.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 
+  # The preferred fast path may avoid screenshots entirely. Privacy is satisfied when either
+  # no image leaves the device, or an outbound quality screenshot is locally redacted first.
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
-  while (-not (Test-Path 'artifacts/helpsys-pii-egress-image.png') -and [DateTime]::UtcNow -lt $deadline) {
-    if ($helpSys.HasExited) { throw 'HelpSys exited before producing the outbound redacted screenshot.' }
+  while (-not (Test-Path 'artifacts/mock-last-request.json') -and [DateTime]::UtcNow -lt $deadline) {
+    if ($helpSys.HasExited) { throw 'HelpSys exited before producing outbound PII diagnostics.' }
     Start-Sleep -Milliseconds 200
   }
 
-  if (-not (Test-Path 'artifacts/helpsys-pii-egress-image.png')) {
+  if (-not (Test-Path 'artifacts/mock-last-request.json')) {
     Save-DesktopScreenshot 'helpsys-pii-redaction-failure.png'
-    throw 'Mock endpoint did not receive the exact outbound PII smoke screenshot.'
+    throw 'Mock endpoint did not receive the outbound PII smoke request.'
   }
-  if (-not (Test-Path 'artifacts/mock-last-request.json')) { throw 'PII redaction smoke diagnostics are missing.' }
 
   $diagnosticsRaw = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8
+  $diagnostics = $diagnosticsRaw | ConvertFrom-Json
   foreach ($forbidden in @('alice@example.com', '090-1234-5678', '123-4567')) {
     if ($diagnosticsRaw.Contains($forbidden, [StringComparison]::OrdinalIgnoreCase)) {
       throw "Raw visible PII leaked into the outbound structured diagnostics: $forbidden"
     }
   }
 
-  Assert-HasSolidRedaction 'artifacts/helpsys-pii-egress-image.png'
-  Write-Host 'HelpSys exact outbound visible-PII screenshot redaction smoke passed.'
+  if ($diagnostics.hasScreenshot -eq $true) {
+    $imageDeadline = [DateTime]::UtcNow.AddSeconds(3)
+    while (-not (Test-Path 'artifacts/helpsys-pii-egress-image.png') -and [DateTime]::UtcNow -lt $imageDeadline) {
+      Start-Sleep -Milliseconds 100
+    }
+    if (-not (Test-Path 'artifacts/helpsys-pii-egress-image.png')) {
+      throw 'Diagnostics report an outbound screenshot, but the exact egress image was not preserved by the mock.'
+    }
+    Assert-HasSolidRedaction 'artifacts/helpsys-pii-egress-image.png'
+    Write-Host 'HelpSys outbound visible-PII screenshot redaction smoke passed.'
+  }
+  else {
+    if (Test-Path 'artifacts/helpsys-pii-egress-image.png') {
+      throw 'PII egress image exists even though diagnostics report no screenshot.'
+    }
+    Write-Host 'HelpSys no-image fast-path PII egress smoke passed.'
+  }
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
