@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Threading;
 using HelpSys.Models;
 using HelpSys.Services;
 
@@ -11,9 +12,19 @@ public partial class MainWindow
     private DateTime _stableLiveChangeSinceUtc = DateTime.MinValue;
     private int _stableLiveChangeSamples;
     private int _stablePulseQueued;
+    private readonly DispatcherTimer _interactionForegroundSampler = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(30)
+    };
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
     {
+        if (!_interactionForegroundSampler.IsEnabled)
+        {
+            _interactionForegroundSampler.Tick += InteractionForegroundSampler_Tick;
+            _interactionForegroundSampler.Start();
+        }
+
         AttachDeepAuditGuards();
         if (_liveWatcherStarted) return;
         _liveWatcherStarted = true;
@@ -25,8 +36,13 @@ public partial class MainWindow
         // independently, and SetForegroundProcessAsync can still establish a task-specific scope if
         // the user starts guidance before this low-priority callback runs.
         Dispatcher.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.ContextIdle,
+            DispatcherPriority.ContextIdle,
             new Action(StartLiveWatcherAfterInitialRender));
+    }
+
+    private void InteractionForegroundSampler_Tick(object? sender, EventArgs e)
+    {
+        _systemContext.CaptureExternalForegroundForAssistantInteraction();
     }
 
     private void StartLiveWatcherAfterInitialRender()
@@ -38,6 +54,8 @@ public partial class MainWindow
 
     private void MainWindow_StableClosing(object? sender, CancelEventArgs e)
     {
+        _interactionForegroundSampler.Stop();
+        _interactionForegroundSampler.Tick -= InteractionForegroundSampler_Tick;
         DetachDeepAuditGuards();
         if (!_liveWatcherStarted) return;
         _liveWatcherStarted = false;
@@ -145,6 +163,16 @@ public partial class MainWindow
             var semanticChange = HasSemanticLiveStateChanged(_liveElements, _liveSystem, nowElements, nowSystem);
             var topologyChange = semanticChange || HasStableLiveTopologyChanged(_liveElements, _liveSystem, nowElements, nowSystem);
 
+            // During planning, same-app focus/content churn is expected on browsers and Office.
+            // Keep the newest baseline but do not cancel an in-flight decision unless ownership/domain changed.
+            if (_sessionState.PlannerInFlight && !hardChange)
+            {
+                _liveElements = nowElements;
+                _liveSystem = nowSystem;
+                ClearStableLiveChangeCandidate();
+                return;
+            }
+
             if (!hardChange && !topologyChange)
             {
                 _liveElements = nowElements;
@@ -231,7 +259,7 @@ public partial class MainWindow
         }
 
         _liveReplanPending = true;
-        SetState("操作中の画面が切り替わったため、古い案内を破棄しました。新しい画面が落ち着いてから案内を作り直します…", speak: false);
+        SetState("画面の内容が更新されたため、現在の状態を確認し直しています…", speak: false);
     }
 
     private void ClearStableLiveChangeCandidate()
@@ -246,10 +274,10 @@ public partial class MainWindow
         if (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 && before.ForegroundProcessId != after.ForegroundProcessId) return true;
         if (!before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase)) return true;
 
-        var beforeUrl = before.Browser?.Url ?? string.Empty;
-        var afterUrl = after.Browser?.Url ?? string.Empty;
-        return !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase) &&
-               (!string.IsNullOrWhiteSpace(beforeUrl) || !string.IsNullOrWhiteSpace(afterUrl));
+        var beforeDomain = before.Browser?.Domain ?? string.Empty;
+        var afterDomain = after.Browser?.Domain ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(beforeDomain) && !string.IsNullOrWhiteSpace(afterDomain) &&
+               !beforeDomain.Equals(afterDomain, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasSemanticLiveStateChanged(
@@ -294,18 +322,18 @@ public partial class MainWindow
         var after = StableRelevantLiveKeys(afterElements, afterSystem.ForegroundProcess);
 
         if (before.Count == 0 || after.Count == 0) return before.Count != after.Count;
-        if (Math.Abs(before.Count - after.Count) >= 10) return true;
+        if (Math.Abs(before.Count - after.Count) >= 18) return true;
 
         var overlap = before.Count(x => after.Contains(x));
         var similarity = overlap / (double)Math.Max(before.Count, after.Count);
-        return similarity < 0.72;
+        return similarity < 0.58;
     }
 
     private static HashSet<string> StableRelevantLiveKeys(IReadOnlyList<UiElementCandidate> elements, string foregroundProcess)
     {
         return elements
             .Where(x => IsRelevantProcess(x.ProcessName, foregroundProcess))
-            .Where(x => x.Interactable || x.ControlType is "Window" or "Pane" or "Document" or "Text")
+            .Where(x => x.Interactable || x.ControlType is "Window" or "Pane")
             .Select(StableLiveElementKey)
             .Take(180)
             .ToHashSet(StringComparer.Ordinal);
@@ -325,7 +353,7 @@ public partial class MainWindow
     }
 
     private static string SemanticLiveState(UiElementCandidate x) => x.Interactable
-        ? $"focus={x.Focused};toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
+        ? $"toggle={x.ToggleState ?? string.Empty};selected={x.Selected?.ToString() ?? string.Empty};expand={x.ExpandCollapseState ?? string.Empty}"
         : string.Empty;
 
     private static bool IsStableNamedControl(string controlType) => controlType.ToLowerInvariant() is

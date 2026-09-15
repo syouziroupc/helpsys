@@ -11,6 +11,9 @@ public sealed class SystemContextService
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
     private const uint WineventSkipownprocess = 0x0002;
+    private const uint StableExternalForegroundDwellMilliseconds = 180;
+    private const uint InteractionCandidateMaximumAgeMilliseconds = 2500;
+    private const uint AutomaticInteractionHandoffMaximumAgeMilliseconds = 600;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private readonly int _selfProcessId = Environment.ProcessId;
@@ -27,6 +30,13 @@ public sealed class SystemContextService
     private string _browserCacheTitle = string.Empty;
     private DateTime _browserCacheUtc = DateTime.MinValue;
     private nint _lastExternalForeground;
+    private nint _observedExternalForeground;
+    private uint _observedExternalSinceTick;
+    private nint _interactionObservedForeground;
+    private int _interactionObservedSamples;
+    private nint _interactionForegroundCandidate;
+    private uint _interactionCandidateCapturedTick;
+    private nint _assistantInteractionForeground;
     private int _runningRefreshInFlight;
     private int _browserRefreshInFlight;
 
@@ -47,7 +57,7 @@ public sealed class SystemContextService
             0,
             WineventOutofcontext | WineventSkipownprocess);
 
-        RememberExternalForeground(GetForegroundWindow());
+        InitializeForegroundTracking(GetForegroundWindow(), CurrentTick());
     }
 
     ~SystemContextService()
@@ -84,6 +94,56 @@ public sealed class SystemContextService
         {
             ForegroundWindowHandle = hwnd
         };
+    }
+
+    public void CaptureExternalForegroundForAssistantInteraction()
+    {
+        var foreground = GetForegroundWindow();
+        if (!IsUsableExternalWindow(foreground)) return;
+        lock (_foregroundGate)
+        {
+            if (_interactionObservedForeground == foreground)
+                _interactionObservedSamples++;
+            else
+            {
+                _interactionObservedForeground = foreground;
+                _interactionObservedSamples = 1;
+            }
+
+            if (_interactionObservedSamples < 2) return;
+            _interactionForegroundCandidate = foreground;
+            _interactionCandidateCapturedTick = CurrentTick();
+        }
+    }
+
+    public void CommitStableForegroundForAssistantInteraction()
+    {
+        var nowTick = CurrentTick();
+        lock (_foregroundGate)
+        {
+            if (TryPromoteInteractionCandidateLocked(nowTick, InteractionCandidateMaximumAgeMilliseconds, out var interaction))
+            {
+                _assistantInteractionForeground = interaction;
+                return;
+            }
+
+            // A Guide/Enter action is an explicit user handoff, so the most recent real external
+            // foreground is stronger evidence than the ordinary background dwell filter. Keep the
+            // normal 180 ms dwell for passive tracking, but do not discard an intentional target
+            // merely because the user moved straight from that target to HelpSys in under 180 ms.
+            if (_observedExternalForeground != nint.Zero &&
+                unchecked(nowTick - _observedExternalSinceTick) <= InteractionCandidateMaximumAgeMilliseconds &&
+                IsUsableExternalWindow(_observedExternalForeground))
+            {
+                _assistantInteractionForeground = _observedExternalForeground;
+                _lastExternalForeground = _observedExternalForeground;
+                return;
+            }
+
+            PromoteObservedExternalIfStableLocked(nowTick);
+            if (IsUsableExternalWindow(_lastExternalForeground))
+                _assistantInteractionForeground = _lastExternalForeground;
+        }
     }
 
     private IReadOnlyList<string> GetCachedRunningProcesses(string foregroundProcess)
@@ -187,23 +247,44 @@ public sealed class SystemContextService
         var foreground = GetForegroundWindow();
         if (IsUsableExternalWindow(foreground))
         {
-            RememberExternalForeground(foreground);
+            ObserveForegroundWindow(foreground, CurrentTick());
             return foreground;
         }
 
         if (!BelongsToSelf(foreground))
             return ResolveVerifiedShellDesktopWindow();
 
-        // Do not infer the work surface from Z-order after HelpSys takes focus. A notification or
-        // unrelated topmost window can sit directly behind HelpSys. Prefer the last HWND that
-        // Windows actually reported through EVENT_SYSTEM_FOREGROUND. If that does not exist, use
-        // only the OS-provided shell desktop HWND, whose process identity is verified as Explorer.
+        // Once the user explicitly starts guidance, keep the selected external HWND stable while
+        // HelpSys owns foreground. Exact HWND/PID checks later in the pipeline should validate the
+        // same work surface instead of re-guessing a different background window on every capture.
         lock (_foregroundGate)
         {
+            if (IsUsableExternalWindow(_assistantInteractionForeground))
+                return _assistantInteractionForeground;
+            _assistantInteractionForeground = nint.Zero;
+
+            if (TryPromoteInteractionCandidateLocked(CurrentTick(), AutomaticInteractionHandoffMaximumAgeMilliseconds, out var interaction))
+            {
+                _assistantInteractionForeground = interaction;
+                return interaction;
+            }
             if (IsUsableExternalWindow(_lastExternalForeground)) return _lastExternalForeground;
         }
 
         return ResolveVerifiedShellDesktopWindow();
+    }
+
+    private bool TryPromoteInteractionCandidateLocked(uint nowTick, uint maximumAgeMilliseconds, out nint hwnd)
+    {
+        hwnd = nint.Zero;
+        if (_interactionForegroundCandidate == nint.Zero) return false;
+        if (unchecked(nowTick - _interactionCandidateCapturedTick) > maximumAgeMilliseconds) return false;
+        if (!IsUsableExternalWindow(_interactionForegroundCandidate)) return false;
+
+        hwnd = _interactionForegroundCandidate;
+        _lastExternalForeground = hwnd;
+        _interactionForegroundCandidate = nint.Zero;
+        return true;
     }
 
     private nint ResolveVerifiedShellDesktopWindow()
@@ -237,14 +318,60 @@ public sealed class SystemContextService
         uint eventThread,
         uint eventTime)
     {
-        if (eventType == EventSystemForeground) RememberExternalForeground(hwnd);
+        if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd, eventTime);
     }
 
-    private void RememberExternalForeground(nint hwnd)
+    private void InitializeForegroundTracking(nint hwnd, uint observedTick)
     {
         if (!IsUsableExternalWindow(hwnd)) return;
-        lock (_foregroundGate) _lastExternalForeground = hwnd;
+        lock (_foregroundGate)
+        {
+            _lastExternalForeground = hwnd;
+            _observedExternalForeground = hwnd;
+            _observedExternalSinceTick = observedTick;
+        }
     }
+
+    private void ObserveForegroundWindow(nint hwnd, uint observedTick)
+    {
+        lock (_foregroundGate)
+        {
+            if (BelongsToSelf(hwnd))
+            {
+                PromoteObservedExternalIfStableLocked(observedTick);
+                return;
+            }
+
+            if (!IsUsableExternalWindow(hwnd)) return;
+
+            // A genuine new external foreground supersedes any HelpSys-side interaction pin. This
+            // preserves live navigation/replanning while preventing HelpSys focus alone from changing
+            // the work surface.
+            if (_assistantInteractionForeground != nint.Zero && hwnd != _assistantInteractionForeground)
+                _assistantInteractionForeground = nint.Zero;
+
+            if (_observedExternalForeground == hwnd)
+            {
+                PromoteObservedExternalIfStableLocked(observedTick);
+                return;
+            }
+
+            PromoteObservedExternalIfStableLocked(observedTick);
+            _observedExternalForeground = hwnd;
+            _observedExternalSinceTick = observedTick;
+        }
+    }
+
+    private void PromoteObservedExternalIfStableLocked(uint nowTick)
+    {
+        if (_observedExternalForeground == nint.Zero) return;
+        var elapsed = unchecked(nowTick - _observedExternalSinceTick);
+        if (elapsed < StableExternalForegroundDwellMilliseconds) return;
+        if (!IsUsableExternalWindow(_observedExternalForeground)) return;
+        _lastExternalForeground = _observedExternalForeground;
+    }
+
+    private static uint CurrentTick() => unchecked((uint)Environment.TickCount);
 
     private bool IsUsableExternalWindow(nint hwnd)
     {

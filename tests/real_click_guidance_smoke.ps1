@@ -141,13 +141,17 @@ try {
   $timer.Stop()
 
   if (-not (Test-Path 'artifacts/mock-last-request.json')) {
+    $stateText = Find-Element $helpSys 'StateText'
+    $stateValue = if ($null -eq $stateText) { '<missing>' } else { $stateText.Current.Name }
     Save-Screenshot 'helpsys-real-click-planner-failure.png'
-    throw 'A real mouse click on Guide did not reach the local planner within 8 seconds.'
+    throw "A real mouse click on Guide did not reach the local planner within 8 seconds. State=$stateValue"
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($diagnostics.path -ne '/v1/quality-guide' -or $diagnostics.hasScreenshot -ne $true) {
-    throw 'Real-click smoke reached the wrong planner route or lost its screenshot.'
+  $qualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
+  $structuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
+  if (-not ($qualityRoute -or $structuredRoute)) {
+    throw "Real-click smoke reached an unexpected planner route. path=$($diagnostics.path) screenshot=$($diagnostics.hasScreenshot)"
   }
   if ([int]$diagnostics.foregroundProcessId -ne $target.Id) {
     Save-Screenshot 'helpsys-real-click-wrong-foreground.png'
@@ -179,11 +183,12 @@ try {
     foregroundBeforeClickPid = $foregroundBefore
     foregroundAfterPhysicalClickPid = $foregroundAfterClick
     plannerForegroundPid = [int]$diagnostics.foregroundProcessId
+    plannerRoute = $diagnostics.path
     clickToPlannerMilliseconds = [math]::Round($timer.Elapsed.TotalMilliseconds)
     finalState = $stateText.Current.Name
   } | ConvertTo-Json | Set-Content 'artifacts/helpsys-real-click-metrics.json' -Encoding UTF8
 
-  Write-Host "HelpSys real mouse click smoke passed. Click foreground=$foregroundAfterClick; planner foreground=$($diagnostics.foregroundProcessId); latency=$([math]::Round($timer.Elapsed.TotalMilliseconds)) ms."
+  Write-Host "HelpSys real mouse click smoke passed. Route=$($diagnostics.path); click foreground=$foregroundAfterClick; planner foreground=$($diagnostics.foregroundProcessId); latency=$([math]::Round($timer.Elapsed.TotalMilliseconds)) ms."
 }
 finally {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue

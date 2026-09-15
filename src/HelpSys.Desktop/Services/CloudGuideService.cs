@@ -7,13 +7,13 @@ namespace HelpSys.Services;
 
 public sealed class CloudGuideService : IDisposable
 {
-    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(9);
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(6);
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
 
-    private readonly SystemContextService _contextVerifier = new();
+    private SystemContextService _contextVerifier = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly PrivacyGate _privacyGate;
     private readonly CloudAiAdapter _adapter;
@@ -29,6 +29,11 @@ public sealed class CloudGuideService : IDisposable
     public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
     public bool CloudEndpointConfigured => _adapter.IsConfigured;
+
+    public void UseContextVerifier(SystemContextService contextVerifier)
+    {
+        _contextVerifier = contextVerifier ?? throw new ArgumentNullException(nameof(contextVerifier));
+    }
 
     /// <summary>
     /// Lightweight local check used before a screenshot is even created. A blocked, unknown, or
@@ -176,7 +181,10 @@ public sealed class CloudGuideService : IDisposable
 
         relevant = FilterWindowChromeForTask(relevant, request);
 
-        var contextBudget = systemContext.Browser is null ? 45 : 80;
+        var office = foregroundName.Equals("excel", StringComparison.OrdinalIgnoreCase) ||
+                     foregroundName.Equals("winword", StringComparison.OrdinalIgnoreCase) ||
+                     foregroundName.Equals("powerpnt", StringComparison.OrdinalIgnoreCase);
+        var contextBudget = systemContext.Browser is not null ? 110 : office ? 100 : 60;
         var interactiveBudget = 280 - contextBudget;
 
         var selected = new List<UiElementCandidate>(280);
@@ -264,8 +272,11 @@ public sealed class CloudGuideService : IDisposable
     {
         var score = item.ControlType switch
         {
-            "Document" => 90,
-            "Text" => 80,
+            "Document" => 120,
+            "Text" => 105,
+            "DataItem" => 100,
+            "Table" => 90,
+            "Hyperlink" => 90,
             "Group" => 60,
             "Pane" => 50,
             "Window" => 40,
@@ -282,13 +293,16 @@ public sealed class CloudGuideService : IDisposable
         var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
                                 expected.ForegroundProcessId != current.ForegroundProcessId ||
                                 !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
+        var windowChanged = expected.ForegroundWindowHandle == nint.Zero ||
+                            current.ForegroundWindowHandle == nint.Zero ||
+                            expected.ForegroundWindowHandle != current.ForegroundWindowHandle;
 
-        var expectedUrl = expected.Browser?.Url ?? string.Empty;
-        var currentUrl = current.Browser?.Url ?? string.Empty;
-        var browserChanged = !string.IsNullOrWhiteSpace(expectedUrl) && !string.IsNullOrWhiteSpace(currentUrl) &&
-                             !expectedUrl.Equals(currentUrl, StringComparison.OrdinalIgnoreCase);
+        var expectedDomain = expected.Browser?.Domain ?? string.Empty;
+        var currentDomain = current.Browser?.Domain ?? string.Empty;
+        var browserChanged = !string.IsNullOrWhiteSpace(expectedDomain) && !string.IsNullOrWhiteSpace(currentDomain) &&
+                             !expectedDomain.Equals(currentDomain, StringComparison.OrdinalIgnoreCase);
 
-        if (foregroundChanged || browserChanged)
+        if (foregroundChanged || windowChanged || browserChanged)
             throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
@@ -296,7 +310,7 @@ public sealed class CloudGuideService : IDisposable
     {
         GuideServiceException? lastTransientError = null;
 
-        for (var attempt = 0; attempt < 2; attempt++)
+        for (var attempt = 0; attempt < 1; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -326,7 +340,7 @@ public sealed class CloudGuideService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が9秒を超えました。");
+                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が6秒を超えました。");
                 if (attempt > 0) throw timeoutError;
                 lastTransientError = timeoutError;
             }

@@ -101,7 +101,7 @@ public partial class MainWindow
 
             UpdateButton.Content = "更新する";
             UpdateButton.ToolTip = $"HelpSys {update.BuildId} へ更新します";
-            SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);
+            if (announceWhenCurrent) SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);
         }
         catch (Exception ex)
         {

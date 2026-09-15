@@ -162,8 +162,14 @@ public partial class MainWindow
         PositionNearBottomRight();
     }
 
+    private void MainWindow_InteractionMouseMove(object sender, MouseEventArgs e)
+    {
+        _systemContext.CaptureExternalForegroundForAssistantInteraction();
+    }
+
     private void GuideButton_PreviewMouseLeftButtonDown_Extended(object sender, MouseButtonEventArgs e)
     {
+        _systemContext.CommitStableForegroundForAssistantInteraction();
         if (!_awaitingClarification) return;
         e.Handled = true;
         EnsureClarificationUi();
@@ -171,6 +177,7 @@ public partial class MainWindow
 
     private void RequestBox_PreviewKeyDown_Extended(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Enter) _systemContext.CommitStableForegroundForAssistantInteraction();
         if (!_awaitingClarification || e.Key != Key.Enter) return;
         e.Handled = true;
         EnsureClarificationUi();

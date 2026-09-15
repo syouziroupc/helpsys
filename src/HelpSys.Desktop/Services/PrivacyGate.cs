@@ -164,7 +164,7 @@ public sealed class PrivacyGate
             var browserUrl = systemContext.Browser?.Url ?? string.Empty;
             var hasOrdinaryInput = elements.Any(IsNonSearchInput);
 
-            if (ContainsAny(texts, PasswordManagerTerms))
+            if (browserUrl.Contains("://password", StringComparison.OrdinalIgnoreCase) || ContainsAny(texts, PasswordManagerTerms))
                 return Remember(Block("password_manager", "パスワード管理画面ではクラウド画面解析を停止します。"));
 
             // A security word in documentation/help text is not itself secret material. Stop when
@@ -172,7 +172,7 @@ public sealed class PrivacyGate
             if (ContainsHighConfidenceSecretValue(texts))
                 return Remember(Block("secret_material", "トークン・APIキー・秘密鍵等の秘密情報を検出したため、クラウド画面解析を停止します。"));
 
-            if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms)))
+            if (ContainsAny(texts, OtpTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, OtpTerms) || (ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, OtpTerms) && ContainsAny(new[] { systemContext.ForegroundTitle ?? string.Empty }, new[] { "enter", "type", "verify", "入力", "認証", "確認" }))))
                 return Remember(Block("otp_or_mfa", "認証コード・二段階認証の入力画面ではクラウド画面解析を停止します。"));
 
             if (ContainsAny(texts, SecretTerms) && (hasOrdinaryInput || HasSensitiveInputSemantic(elements, SecretTerms)))
@@ -282,7 +282,7 @@ public sealed class PrivacyGate
     private static object CompactElement(UiElementCandidate x) => new
     {
         id = x.Id,
-        name = SanitizeOutboundText(x.Name, 140),
+        name = SanitizeOutboundText(x.Name, x.Interactable ? 180 : 360),
         automationId = SanitizeOutboundText(x.AutomationId, 120),
         className = SanitizeOutboundText(x.ClassName, 120),
         controlType = x.ControlType,

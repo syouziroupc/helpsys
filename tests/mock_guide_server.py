@@ -101,6 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/v1/guide", "/v1/quality-guide"):
             system_context = field(payload, "systemContext", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
+            request = str(field(payload, "request", "") or "")
             eligible = eligible_elements(payload)
             has_image = str(field(payload, "image", "") or "").startswith("data:image/png;base64,")
 
@@ -137,6 +138,24 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     self._json({"error": "smoke_image_decode_failed"}, 500)
                     return
+
+            # The occluder smoke is specifically an image-egress redaction test. Make the cheap
+            # structured route deliberately inconclusive so production must exercise its normal
+            # quality/screenshot fallback instead of allowing a successful /v1/guide response to
+            # skip the redaction path entirely.
+            if self.path == "/v1/guide" and "OCCLUDER redaction smoke" in request:
+                self._json(
+                    {
+                        "status": "not_found",
+                        "targetId": None,
+                        "action": "none",
+                        "instruction": "画像確認へフォールバックします。",
+                        "question": None,
+                        "key": None,
+                        "confidence": 0,
+                    }
+                )
+                return
 
             target = next(
                 (

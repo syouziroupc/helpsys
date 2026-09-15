@@ -44,7 +44,7 @@ The human operates the computer. Return only ONE immediate next operation by cal
 MULTI-SOURCE EVIDENCE FUSION:
 - The screenshot is ONE source, not the master source. Do not make the whole decision depend on image recognition alone.
 - screenshot: evidence for what is visibly drawn now, visual layout, warnings, custom-rendered controls and whether the user can actually see the target.
-- uiElements: evidence for control identity, Name, AutomationId, ControlType, input-presence/state, focus, actionability and exact Windows bounds. Raw input values are intentionally unavailable.
+- uiElements: evidence for control identity, Name, AutomationId, ControlType, input-presence/state, focus, actionability and exact Windows bounds. Context-only Text/Document/DataItem nodes may also contain a bounded snapshot of visible screen text from Windows accessibility APIs. Raw secret input values are intentionally unavailable.
 - systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser domain-level context. Full browser URLs are intentionally unavailable.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
 - completedSteps: sequence evidence. It explains how the current state may have been reached and which actions already failed, but never overrides current state.
@@ -381,7 +381,7 @@ function compactElement(value) {
   if (!id) return null;
   return {
     id,
-    name: text(value.name, 180), automationId: text(value.automationId, 120), className: text(value.className, 120),
+    name: text(value.name, 360), automationId: text(value.automationId, 120), className: text(value.className, 120),
     controlType: text(value.controlType, 80), processName: text(value.processName, 80),
     interactable: value.interactable !== false, enabled: value.enabled !== false,
     keyboardFocusable: value.keyboardFocusable === true, focused: value.focused === true, password: value.password === true,
