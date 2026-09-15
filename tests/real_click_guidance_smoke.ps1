@@ -141,8 +141,10 @@ try {
   $timer.Stop()
 
   if (-not (Test-Path 'artifacts/mock-last-request.json')) {
+    $stateText = Find-Element $helpSys 'StateText'
+    $stateValue = if ($null -eq $stateText) { '<missing>' } else { $stateText.Current.Name }
     Save-Screenshot 'helpsys-real-click-planner-failure.png'
-    throw 'A real mouse click on Guide did not reach the local planner within 8 seconds.'
+    throw "A real mouse click on Guide did not reach the local planner within 8 seconds. State=$stateValue"
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
