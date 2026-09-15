@@ -36,6 +36,7 @@ public sealed class SystemContextService
     private int _interactionObservedSamples;
     private nint _interactionForegroundCandidate;
     private uint _interactionCandidateCapturedTick;
+    private nint _assistantInteractionForeground;
     private int _runningRefreshInFlight;
     private int _browserRefreshInFlight;
 
@@ -120,10 +121,28 @@ public sealed class SystemContextService
         var nowTick = CurrentTick();
         lock (_foregroundGate)
         {
-            if (TryPromoteInteractionCandidateLocked(nowTick, InteractionCandidateMaximumAgeMilliseconds, out _))
+            if (TryPromoteInteractionCandidateLocked(nowTick, InteractionCandidateMaximumAgeMilliseconds, out var interaction))
+            {
+                _assistantInteractionForeground = interaction;
                 return;
+            }
+
+            // A Guide/Enter action is an explicit user handoff, so the most recent real external
+            // foreground is stronger evidence than the ordinary background dwell filter. Keep the
+            // normal 180 ms dwell for passive tracking, but do not discard an intentional target
+            // merely because the user moved straight from that target to HelpSys in under 180 ms.
+            if (_observedExternalForeground != nint.Zero &&
+                unchecked(nowTick - _observedExternalSinceTick) <= InteractionCandidateMaximumAgeMilliseconds &&
+                IsUsableExternalWindow(_observedExternalForeground))
+            {
+                _assistantInteractionForeground = _observedExternalForeground;
+                _lastExternalForeground = _observedExternalForeground;
+                return;
+            }
 
             PromoteObservedExternalIfStableLocked(nowTick);
+            if (IsUsableExternalWindow(_lastExternalForeground))
+                _assistantInteractionForeground = _lastExternalForeground;
         }
     }
 
@@ -235,13 +254,20 @@ public sealed class SystemContextService
         if (!BelongsToSelf(foreground))
             return ResolveVerifiedShellDesktopWindow();
 
-        // HelpSys taking focus must not let a transient notification/terminal/helper window steal
-        // the work surface. A recent external HWND sampled repeatedly immediately before activation
-        // is the strongest local handoff signal; otherwise fall back to the normal dwell-filtered HWND.
+        // Once the user explicitly starts guidance, keep the selected external HWND stable while
+        // HelpSys owns foreground. Exact HWND/PID checks later in the pipeline should validate the
+        // same work surface instead of re-guessing a different background window on every capture.
         lock (_foregroundGate)
         {
+            if (IsUsableExternalWindow(_assistantInteractionForeground))
+                return _assistantInteractionForeground;
+            _assistantInteractionForeground = nint.Zero;
+
             if (TryPromoteInteractionCandidateLocked(CurrentTick(), AutomaticInteractionHandoffMaximumAgeMilliseconds, out var interaction))
+            {
+                _assistantInteractionForeground = interaction;
                 return interaction;
+            }
             if (IsUsableExternalWindow(_lastExternalForeground)) return _lastExternalForeground;
         }
 
@@ -317,6 +343,13 @@ public sealed class SystemContextService
             }
 
             if (!IsUsableExternalWindow(hwnd)) return;
+
+            // A genuine new external foreground supersedes any HelpSys-side interaction pin. This
+            // preserves live navigation/replanning while preventing HelpSys focus alone from changing
+            // the work surface.
+            if (_assistantInteractionForeground != nint.Zero && hwnd != _assistantInteractionForeground)
+                _assistantInteractionForeground = nint.Zero;
+
             if (_observedExternalForeground == hwnd)
             {
                 PromoteObservedExternalIfStableLocked(observedTick);
