@@ -36,7 +36,14 @@ public partial class MainWindow
 
     private static void BackgroundForegroundSampler_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is not MainWindow window || window._backgroundForegroundSampler is not null) return;
+        if (sender is not MainWindow window) return;
+
+        // Cloud send-time TOCTOU validation must observe the same verified/pinned work surface as
+        // the UI scanner and screenshot pipeline. A second independent SystemContextService sees
+        // HelpSys itself after activation and falsely reports ContextChanged.
+        window._cloudGuide.UseContextVerifier(window._systemContext);
+
+        if (window._backgroundForegroundSampler is not null) return;
 
         // Foreground ownership must keep being sampled even while the WPF dispatcher is busy with
         // UI Automation, rendering, speech UI, or planning. A ThreadPool timer prevents those UI
