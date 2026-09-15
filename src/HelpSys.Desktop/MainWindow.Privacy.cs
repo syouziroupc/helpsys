@@ -143,6 +143,11 @@ public partial class MainWindow
             return;
         }
 
+        // Resuming a preserved request needs the same verified work-surface handoff as a fresh
+        // Guide action. Sample the real external foreground and pin only an OS-observed candidate;
+        // Privacy Gate and the exact PID/HWND recheck below still decide whether cloud work may resume.
+        _systemContext.CaptureExternalForegroundForAssistantInteraction();
+        _systemContext.CommitStableForegroundForAssistantInteraction();
         var context = _systemContext.Capture();
         if (!HasUsableForeground(context)) return;
 
