@@ -13,7 +13,7 @@ public sealed class CloudGuideService : IDisposable
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
 
-    private readonly SystemContextService _contextVerifier = new();
+    private SystemContextService _contextVerifier = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly PrivacyGate _privacyGate;
     private readonly CloudAiAdapter _adapter;
@@ -29,6 +29,11 @@ public sealed class CloudGuideService : IDisposable
     public event Action<PrivacyAssessment>? PrivacyBlocked;
     public PrivacyGate PrivacyGate => _privacyGate;
     public bool CloudEndpointConfigured => _adapter.IsConfigured;
+
+    public void UseContextVerifier(SystemContextService contextVerifier)
+    {
+        _contextVerifier = contextVerifier ?? throw new ArgumentNullException(nameof(contextVerifier));
+    }
 
     /// <summary>
     /// Lightweight local check used before a screenshot is even created. A blocked, unknown, or
@@ -288,13 +293,16 @@ public sealed class CloudGuideService : IDisposable
         var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
                                 expected.ForegroundProcessId != current.ForegroundProcessId ||
                                 !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
+        var windowChanged = expected.ForegroundWindowHandle == nint.Zero ||
+                            current.ForegroundWindowHandle == nint.Zero ||
+                            expected.ForegroundWindowHandle != current.ForegroundWindowHandle;
 
         var expectedDomain = expected.Browser?.Domain ?? string.Empty;
         var currentDomain = current.Browser?.Domain ?? string.Empty;
         var browserChanged = !string.IsNullOrWhiteSpace(expectedDomain) && !string.IsNullOrWhiteSpace(currentDomain) &&
                              !expectedDomain.Equals(currentDomain, StringComparison.OrdinalIgnoreCase);
 
-        if (foregroundChanged || browserChanged)
+        if (foregroundChanged || windowChanged || browserChanged)
             throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
