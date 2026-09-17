@@ -1,7 +1,8 @@
 import base, { sanitizeScreenBody } from './reliability-v4-guard.js';
 import geminiGuide from './gemini-guide.js';
+import geminiVision from './gemini-vision.js';
 
-const GEMINI_ROUTES = new Set(['/v1/guide', '/v1/quality-guide']);
+const GEMINI_ROUTES = new Set(['/v1/guide', '/v1/quality-guide', '/v1/vision-guide']);
 
 export default {
   async fetch(request, env, ctx) {
@@ -10,36 +11,32 @@ export default {
     catch { return base.fetch(request, env, ctx); }
 
     if (request.method === 'GET' && url.pathname === '/health') {
-      const response = await base.fetch(request, env, ctx);
-      if (response.status !== 200) return response;
-      try {
-        const value = await response.clone().json();
-        return json({
-          ...value,
-          primaryPlanner: configured(env) ? (env.HELPSYS_GEMINI_MODEL || 'gemini-3.8-flash') : 'cloudflare-glm-fallback',
-          geminiConfigured: configured(env)
-        });
-      } catch {
-        return response;
-      }
+      return json({
+        ok: true,
+        service: 'helpsys',
+        planner: env.HELPSYS_GEMINI_MODEL || 'gemini-3.8-flash',
+        plannerProvider: 'gemini',
+        geminiConfigured: configured(env)
+      });
     }
 
-    if (request.method !== 'POST' || !GEMINI_ROUTES.has(url.pathname) || !configured(env))
+    if (request.method !== 'POST' || !GEMINI_ROUTES.has(url.pathname))
       return base.fetch(request, env, ctx);
+
+    if (!configured(env))
+      return json({ error: 'gemini_unconfigured' }, 503);
 
     let body;
     try { body = sanitizeScreenBody(await request.clone().json()); }
-    catch { return base.fetch(request, env, ctx); }
+    catch { return json({ error: 'invalid_json' }, 400); }
 
     const safeRequest = rebuildJsonRequest(request, body);
-    const geminiResponse = await geminiGuide.fetch(safeRequest.clone(), env, ctx);
+    if (url.pathname === '/v1/vision-guide')
+      return geminiVision.fetch(safeRequest, env, ctx);
 
-    // Semantic uncertainty is a valid Gemini result and must not silently fall back to GLM.
-    // GLM is retained only as a provider/transport fallback so one model's outage does not stop HelpSys.
-    if (geminiResponse.status < 500) return geminiResponse;
-
-    console.error('gemini_primary_unavailable_using_glm_fallback');
-    return base.fetch(safeRequest, env, ctx);
+    // Guidance model failures stay failures. Never route a Gemini failure or low-confidence result
+    // into the old GLM planner, because that silently reintroduces the weaker behavior we removed.
+    return geminiGuide.fetch(safeRequest, env, ctx);
   }
 };
 
