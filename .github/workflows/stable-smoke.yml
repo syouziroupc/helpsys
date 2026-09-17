@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/HelpSys.Stable/**"
+      - "HelpSys.sln"
       - "worker/stable-gemini.js"
       - "worker/education-gemini.js"
       - "worker/stable-router.js"
