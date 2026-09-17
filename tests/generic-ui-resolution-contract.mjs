@@ -22,12 +22,16 @@ if (!local.includes('TryHandleLocalVisibleChoiceAnswerAsync'))
 if (local.includes('IsSupportedLocalChoiceBrowser'))
   throw new Error('generic local choice must not contain a browser allowlist');
 if (!replan.includes('MaximumAutomaticCurrentStateReplans = 4'))
-  throw new Error('transient UI uncertainty must get four bounded observations');
-if (policy.includes('WaitForClarification('))
-  throw new Error('technical observation uncertainty must not masquerade as a user clarification');
+  throw new Error('transient UI uncertainty must get four bounded observations before escalation');
+if (!policy.includes('TryRouteRecoveryAsync'))
+  throw new Error('technical observation uncertainty must be allowed to use alternate route recovery instead of becoming a dead stop');
+if (!policy.includes('WaitForClarification('))
+  throw new Error('technical recovery must preserve a human-assisted continuation path after automatic recovery is exhausted');
+if (policy.includes('StopWithMessage('))
+  throw new Error('technical observation uncertainty must not terminate the active guidance task');
 if (!recovery.includes('MaximumRouteRecoveryAttempts = 3'))
   throw new Error('heavy route recovery must remain separately bounded');
 if (!reliability.includes('_consecutiveFailures == 2') || !reliability.includes('routeRecoveryIssue ='))
-  throw new Error('heavy route recovery must remain tied to confirmed repeated action failure');
+  throw new Error('confirmed repeated action failure must still use the reliability recovery trigger');
 
 console.log('HelpSys generic UI resolution integration contract passed.');
