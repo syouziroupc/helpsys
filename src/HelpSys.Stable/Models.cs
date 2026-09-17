@@ -26,6 +26,7 @@ public sealed record ScreenObservation(
     int ProcessId,
     string ProcessName,
     string WindowTitle,
+    string? BrowserDomain,
     int X,
     int Y,
     int Width,
