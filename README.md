@@ -48,3 +48,4 @@ Releaseは `preview-latest` に以下を公開します。
 - `HelpSys-Stable-3.0.0-<commit>-win-x64.zip`
 - `HelpSys-latest-win-x64.zip`
 - `HelpSys-latest-win-x64.sha256`
+- `HelpSys-Unified-<commit>-win-x64.zip`（旧v8 UpdaterからStable 3.0へ移行するための互換パッケージ）
