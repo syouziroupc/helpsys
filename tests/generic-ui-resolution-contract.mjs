@@ -21,12 +21,14 @@ if (!local.includes('TryHandleLocalVisibleChoiceAnswerAsync'))
   throw new Error('visible clarification choices must use the generic local resolver');
 if (local.includes('IsSupportedLocalChoiceBrowser'))
   throw new Error('generic local choice must not contain a browser allowlist');
-if (!replan.includes('MaximumAutomaticCurrentStateReplans = 4'))
-  throw new Error('transient UI uncertainty must get four bounded observations before escalation');
+if (!replan.includes('MaximumAutomaticCurrentStateReplans = 1'))
+  throw new Error('technical uncertainty must not recapture the same screen four times');
+if (!policy.includes('ShouldReobserveCurrentState(reason)'))
+  throw new Error('only actual UI volatility may trigger the one current-state retry');
 if (!policy.includes('TryRouteRecoveryAsync'))
-  throw new Error('technical observation uncertainty must be allowed to use alternate route recovery instead of becoming a dead stop');
+  throw new Error('semantic/model uncertainty must use the integrated recovery planner instead of becoming a dead stop');
 if (!policy.includes('WaitForClarification('))
-  throw new Error('technical recovery must preserve a human-assisted continuation path after automatic recovery is exhausted');
+  throw new Error('genuine unresolved ambiguity must retain a human continuation path');
 if (policy.includes('StopWithMessage('))
   throw new Error('technical observation uncertainty must not terminate the active guidance task');
 if (!recovery.includes('MaximumRouteRecoveryAttempts = 3'))
