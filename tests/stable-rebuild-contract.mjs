@@ -52,5 +52,7 @@ assert(wrangler.includes('"/v1/*"'), 'API routes must run Worker-first while sta
 assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'versioned release asset must expose Stable version');
 assert(release.includes('HelpSys-latest-win-x64.zip'), 'public stable alias must remain compatible');
 assert(release.includes('HelpSys-latest-win-x64.sha256'), 'release must publish update integrity hash');
+assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'release must preserve legacy updater migration asset');
+assert(release.includes("Copy-Item (Join-Path $out 'HelpSys.Stable.exe') (Join-Path $legacyOut 'HelpSys.exe')"), 'migration package must expose HelpSys.exe for old updater');
 
 console.log('HelpSys Stable 3.0 architecture contract passed.');
