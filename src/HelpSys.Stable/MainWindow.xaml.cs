@@ -35,8 +35,12 @@ public partial class MainWindow : Window
         _source = HwndSource.FromHwnd(_windowHandle);
         _source?.AddHook(WindowProc);
 
-        if (!NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyId, NativeMethods.ModNoRepeat, NativeMethods.VkF8))
+        var guideRegistered = NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyGuideId, NativeMethods.ModNoRepeat, NativeMethods.VkF8);
+        var voiceRegistered = NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyVoiceId, NativeMethods.ModNoRepeat, NativeMethods.VkF9);
+        if (!guideRegistered)
             SetStatus("F8ショートカットを登録できませんでした。ボタンからは案内できます。");
+        else if (!voiceRegistered && _speech.RecognitionAvailable)
+            SetStatus("F9音声ショートカットを登録できませんでした。音声入力ボタンは利用できます。");
     }
 
     private nint WindowProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
@@ -67,10 +71,14 @@ public partial class MainWindow : Window
     }
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+        => await StartVoiceInputAsync();
+
+    private async Task StartVoiceInputAsync()
     {
-        if (_closing || _phase != AppPhase.Idle) return;
+        if (_closing || _phase != AppPhase.Idle || !_speech.RecognitionAvailable) return;
         try
         {
+            RestoreMainWindow();
             _phase = AppPhase.Listening;
             SetStatus("8秒以内で、やりたいことを話してください…");
             var text = await _speech.ListenOnceAsync(_lifetimeCts.Token);
@@ -334,7 +342,9 @@ public partial class MainWindow : Window
         _speech.StopSpeaking();
         CloseOverlay();
         if (_windowHandle != nint.Zero)
-            _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyId);
+            _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyGuideId);
+        if (_windowHandle != nint.Zero)
+            _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyVoiceId);
         _source?.RemoveHook(WindowProc);
         try { _speech.Dispose(); } catch { }
         try { _planner.Dispose(); } catch { }

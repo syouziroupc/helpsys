@@ -5,9 +5,11 @@ namespace HelpSys.Stable;
 
 internal static class NativeMethods
 {
-    public const int HotKeyId = 0x4853;
+    public const int HotKeyGuideId = 0x4853;
+    public const int HotKeyVoiceId = 0x4854;
     public const uint ModNoRepeat = 0x4000;
     public const uint VkF8 = 0x77;
+    public const uint VkF9 = 0x78;
     public const int WmHotKey = 0x0312;
     public const int GwlExStyle = -20;
     public const nint WsExTransparent = 0x00000020;

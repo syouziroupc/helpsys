@@ -83,7 +83,7 @@
                  HorizontalAlignment="Right"
                  VerticalAlignment="Center"
                  Foreground="#FF6B7280"
-                 Text="F8 = 案内開始" />
+                 Text="F8 = 案内 / F9 = 音声入力" />
     </Grid>
 
     <Grid Grid.Row="4" Margin="0,18,0,0">
