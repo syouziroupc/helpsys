@@ -17,9 +17,11 @@ public partial class App : Application
             LogException("task_unobserved", e.Exception);
             e.SetObserved();
         };
+
+        DispatcherUnhandledException += App_DispatcherUnhandledException;
     }
 
-    protected override void OnDispatcherUnhandledException(System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
         LogException("dispatcher_unhandled", e.Exception);
         MessageBox.Show(
