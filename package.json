@@ -11,7 +11,9 @@
     "test:site": "node tests/site-release-contract.mjs",
     "dev:education": "wrangler dev --config wrangler.education.jsonc",
     "deploy:education": "wrangler deploy --config wrangler.education.jsonc",
-    "test:education": "node --check worker/education.js && node --check worker/education-selftest.mjs && node worker/education-selftest.mjs"
+    "test:education": "node --check worker/education.js && node --check worker/education-selftest.mjs && node worker/education-selftest.mjs",
+    "check:stable": "node --check worker/stable-gemini.js && node --check worker/education-gemini.js && node --check worker/stable-router.js && node --check tests/stable-worker-selftest.mjs && node --check tests/stable-education-selftest.mjs && node --check tests/stable-rebuild-contract.mjs",
+    "test:stable": "node tests/stable-worker-selftest.mjs && node tests/stable-education-selftest.mjs && node tests/stable-rebuild-contract.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.69.0"

@@ -1,4 +1,4 @@
-name: Publish Windows preview
+name: Publish HelpSys Stable
 
 on:
   push:
@@ -9,12 +9,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: helpsys-preview-latest
+  group: helpsys-stable-release
   cancel-in-progress: true
 
 jobs:
   publish:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -22,45 +23,82 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore
-        run: dotnet restore HelpSys.sln
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
-      - name: Verify release and privacy contracts
+      - name: Verify Stable contracts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          node tests/site-release-contract.mjs
-          node tests/privacy-contract.mjs
-          node tests/privacy-capability-contract.mjs
-          node tests/worker-data-handling-contract.mjs
+          node --check worker/stable-gemini.js
+          node --check worker/education-gemini.js
+          node --check worker/stable-router.js
+          node tests/stable-worker-selftest.mjs
+          node tests/stable-education-selftest.mjs
+          node tests/stable-rebuild-contract.mjs
 
-      - name: Publish unified Windows build
+      - name: Restore Stable
+        run: dotnet restore src/HelpSys.Stable/HelpSys.Stable.csproj
+
+      - name: Build Stable
+        run: dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+
+      - name: Publish Stable package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = Join-Path $PWD 'publish\win-x64'
+          $out = Join-Path $PWD 'publish\stable-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $versionedName = "HelpSys-Unified-$shortSha-win-x64.zip"
+          $version = '3.0.0'
+          $versionedName = "HelpSys-Stable-$version-$shortSha-win-x64.zip"
+          $legacyName = "HelpSys-Unified-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-latest-win-x64.zip'
+          $shaName = 'HelpSys-latest-win-x64.sha256'
 
-          dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
+          dotnet publish src/HelpSys.Stable/HelpSys.Stable.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:PublishReadyToRun=true `
-            -p:HelpSysBuildId=$shortSha `
+            -p:PublishReadyToRun=false `
             -o $out
 
-          if (-not (Test-Path (Join-Path $out 'HelpSys.exe'))) { throw 'Unified HelpSys executable was not produced.' }
-          Copy-Item README.md (Join-Path $out 'README.md')
+          $exe = Join-Path $out 'HelpSys.Stable.exe'
+          if (-not (Test-Path $exe)) { throw 'HelpSys.Stable.exe was not produced.' }
+
           Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $versionedName) -Force
           Copy-Item (Join-Path $PWD $versionedName) (Join-Path $PWD $stableName) -Force
-          "HELPSYS_VERSIONED_ASSET=$versionedName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "HELPSYS_STABLE_ASSET=$stableName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Update preview-latest release atomically
+          # Migration package for existing HelpSys updater. Old clients only accept
+          # HelpSys-Unified-<sha>-win-x64.zip and require HelpSys.exe inside.
+          $legacyOut = Join-Path $PWD 'publish\legacy-migration'
+          New-Item -ItemType Directory -Path $legacyOut -Force | Out-Null
+          Copy-Item "$out\*" $legacyOut -Recurse -Force
+          Copy-Item (Join-Path $out 'HelpSys.Stable.exe') (Join-Path $legacyOut 'HelpSys.exe') -Force
+          Remove-Item (Join-Path $legacyOut 'HelpSys.Stable.exe') -Force
+          Compress-Archive -Path "$legacyOut\*" -DestinationPath (Join-Path $PWD $legacyName) -Force
+
+          $hash = (Get-FileHash (Join-Path $PWD $stableName) -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $stableName" | Set-Content -Encoding ASCII (Join-Path $PWD $shaName)
+
+          "HELPSYS_VERSIONED_ASSET=$versionedName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_LEGACY_ASSET=$legacyName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_STABLE_ASSET=$stableName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_SHA_ASSET=$shaName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Startup smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'publish\stable-win-x64\HelpSys.Stable.exe'
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "HelpSys Stable exited during startup smoke with code $($p.ExitCode)." }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Publish preview-latest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -68,43 +106,47 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = 'preview-latest'
           $versioned = Join-Path $PWD $env:HELPSYS_VERSIONED_ASSET
+          $legacy = Join-Path $PWD $env:HELPSYS_LEGACY_ASSET
           $stable = Join-Path $PWD $env:HELPSYS_STABLE_ASSET
-          $allowedAssets = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET)
+          $sha = Join-Path $PWD $env:HELPSYS_SHA_ASSET
+          $allowed = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_LEGACY_ASSET, $env:HELPSYS_STABLE_ASSET, $env:HELPSYS_SHA_ASSET)
 
           $notes = @"
-          HelpSys Windows Preview — Unified secure build
+          HelpSys Stable 3.0.0 — Gemini Edition
 
-          - Windows 10 / 11 (64-bit), self-contained
-          - Stable download alias: $($env:HELPSYS_STABLE_ASSET)
-          - Traceable build: $($env:HELPSYS_VERSIONED_ASSET)
-          - In-app update check and SHA-256 verified one-click replacement are supported
-          - Normal/Safe editions are unified into one binary
-          - Privacy Gate blocks secrets/auth/storage/financial transaction states while retaining sanitized ordinary UI context
-          - Cloud transport rejects redirects/cookies/proxy inheritance and pins external AI traffic to the reviewed HelpSys origin
-          - Voice/Commander is available only after an explicit user action or local wake phrase
-          - HelpSys remains guidance-only and does not click, type, pay, or enter credentials
-          - This release is rebuilt automatically on every main-branch update
+          - Windows 10 / 11 x64, self-contained
+          - Gemini 3.8 Flash only; no GLM fallback
+          - F8: current-screen one-step guidance
+          - F9 / Voice button: bounded one-shot Windows speech recognition
+          - UI Automation + screenshot with current-target revalidation
+          - Per-monitor DPI aware overlay
+          - Local safety gate before screenshot capture
+          - Password/authentication/security-warning screens are not sent
+          - No always-on foreground sampler, automatic retry loop, or background guidance watcher
+          - SHA-256 verified in-app updater
+          - Stable alias: $($env:HELPSYS_STABLE_ASSET)
+          - Traceable asset: $($env:HELPSYS_VERSIONED_ASSET)
+          - Existing v8 clients can migrate through: $($env:HELPSYS_LEGACY_ASSET)
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             $oldAssets = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
-            foreach ($oldAsset in $oldAssets) {
-              if ($oldAsset -like 'HelpSys*.zip' -and $allowedAssets -notcontains $oldAsset) {
-                gh release delete-asset $tag $oldAsset --yes --repo $env:GITHUB_REPOSITORY
-                if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $oldAsset" }
+            foreach ($old in $oldAssets) {
+              if (($old -like 'HelpSys*.zip' -or $old -like 'HelpSys*.sha256') -and $allowed -notcontains $old) {
+                gh release delete-asset $tag $old --yes --repo $env:GITHUB_REPOSITORY
+                if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale release asset: $old" }
               }
             }
-            gh release upload $tag $versioned $stable --clobber --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload unified preview assets.' }
-            gh release edit $tag --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
-          }
-          else {
-            gh release create $tag $versioned $stable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
-            if ($LASTEXITCODE -ne 0) { throw 'Failed to create unified preview release.' }
+            gh release upload $tag $versioned $legacy $stable $sha --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Stable assets.' }
+            gh release edit $tag --target main --title "HelpSys Stable 3.0.0 — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $tag $versioned $legacy $stable $sha --target main --title "HelpSys Stable 3.0.0 — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create Stable release.' }
           }
 
           $published = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
-          foreach ($expected in $allowedAssets) {
+          foreach ($expected in $allowed) {
             if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
           }

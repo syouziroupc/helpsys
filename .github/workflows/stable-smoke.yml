@@ -1,0 +1,80 @@
+name: HelpSys Stable smoke
+
+on:
+  pull_request:
+    paths:
+      - "src/HelpSys.Stable/**"
+      - "HelpSys.sln"
+      - "worker/stable-gemini.js"
+      - "worker/education-gemini.js"
+      - "worker/stable-router.js"
+      - "wrangler.jsonc"
+      - "wrangler.education.jsonc"
+      - "tests/stable-*.mjs"
+      - ".github/workflows/stable-smoke.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+jobs:
+  stable-build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check Gemini worker syntax
+        shell: pwsh
+        run: |
+          node --check worker/stable-gemini.js
+          node --check worker/education-gemini.js
+          node --check worker/stable-router.js
+          node --check tests/stable-worker-selftest.mjs
+          node --check tests/stable-education-selftest.mjs
+          node --check tests/stable-rebuild-contract.mjs
+
+      - name: Run Stable contracts
+        shell: pwsh
+        run: |
+          node tests/stable-worker-selftest.mjs
+          node tests/stable-education-selftest.mjs
+          node tests/stable-rebuild-contract.mjs
+
+      - name: Restore Stable project
+        run: dotnet restore src/HelpSys.Stable/HelpSys.Stable.csproj
+
+      - name: Build Stable project
+        run: dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+
+      - name: Publish and startup smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish src/HelpSys.Stable/HelpSys.Stable.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishReadyToRun=false `
+            -o publish\stable-win-x64
+
+          $exe = Join-Path $PWD 'publish\stable-win-x64\HelpSys.Stable.exe'
+          if (-not (Test-Path $exe)) { throw 'HelpSys.Stable.exe was not published.' }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "HelpSys Stable exited during startup smoke with code $($p.ExitCode)." }
+          Stop-Process -Id $p.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HelpSys-Stable-3.0.0-win-x64
+          path: publish/stable-win-x64/
+          if-no-files-found: error

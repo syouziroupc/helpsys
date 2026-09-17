@@ -1,0 +1,30 @@
+<Window x:Class="HelpSys.Stable.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        ResizeMode="NoResize">
+  <Canvas x:Name="RootCanvas" IsHitTestVisible="False">
+    <Border x:Name="TargetBorder"
+            BorderBrush="#FF1976D2"
+            BorderThickness="4"
+            CornerRadius="8"
+            Background="#221976D2"
+            Visibility="Collapsed" />
+    <Border x:Name="InstructionPanel"
+            Background="#EE111827"
+            CornerRadius="10"
+            Padding="14"
+            MaxWidth="520">
+      <TextBlock x:Name="InstructionText"
+                 Foreground="White"
+                 FontSize="18"
+                 FontWeight="SemiBold"
+                 TextWrapping="Wrap" />
+    </Border>
+  </Canvas>
+</Window>
