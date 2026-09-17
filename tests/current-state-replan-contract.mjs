@@ -8,7 +8,7 @@ const policy = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RecoveryPolicy.cs
 if (!helper.includes('using HelpSys.Models;') || !helper.includes('using HelpSys.Services;'))
   throw new Error('current-state replan partial must import model and session-state namespaces');
 if (!helper.includes('MaximumAutomaticCurrentStateReplans = 4'))
-  throw new Error('automatic current-state replan must allow four bounded observations before stopping');
+  throw new Error('automatic current-state replan must allow four bounded observations before escalating');
 if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPendingLiveReplanAsync()'))
   throw new Error('current-state replan must use the established live replan pipeline');
 if (helper.includes('await AdvanceGuideAsync()'))
@@ -17,12 +17,16 @@ for (const delay of ['1 => 180', '2 => 420', '3 => 850', '_ => 1400'])
   if (!helper.includes(delay)) throw new Error(`adaptive settle delay missing: ${delay}`);
 if (!policy.includes('TryQueueCurrentStateReplan(reason, generation)'))
   throw new Error('technical uncertainty must first use bounded current-state replan');
-if (!policy.includes('StopWithMessage('))
-  throw new Error('technical uncertainty must still fail closed after the bounded re-observation budget');
-if (policy.includes('WaitForClarification('))
-  throw new Error('technical observer failure must not be converted into a user clarification question');
-if (policy.includes('TryRouteRecoveryAsync'))
-  throw new Error('technical uncertainty must not invoke heavy route recovery without confirmed action failure');
+if (!policy.includes('TryRouteRecoveryAsync(reason, generation'))
+  throw new Error('technical uncertainty must escalate into alternate route recovery after bounded re-observation');
+if (!policy.includes('WaitForClarification('))
+  throw new Error('technical recovery must retain a human-assisted continuation path if automatic recovery still cannot resolve the screen');
+if (policy.includes('現在の画面を安全に自動判定できませんでした'))
+  throw new Error('technical uncertainty must not end with the old useless safe-stop message');
+if (policy.includes('StopWithMessage('))
+  throw new Error('technical observer uncertainty must not stop the active task merely because automatic screen resolution was inconclusive');
+if (!policy.includes('_privacyPaused'))
+  throw new Error('technical continuation must respect Privacy Mode and never override a protected-screen pause');
 
 for (const reason of [
   '再確認しても前面ウィンドウを特定できない',
@@ -49,4 +53,4 @@ if (!keyboardBlock.includes('ResetCurrentStateReplanBudget();'))
 if (!quality.includes('ResetCurrentStateReplanBudget();'))
   throw new Error('successful visual target guidance must reset the replan budget');
 
-console.log('HelpSys adaptive bounded current-state replan contract passed.');
+console.log('HelpSys adaptive current-state replan and continuation contract passed.');
