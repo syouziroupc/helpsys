@@ -5,16 +5,15 @@ namespace HelpSys.Stable;
 
 internal sealed class GeminiPlannerClient : IDisposable
 {
-    private static readonly Uri DefaultEndpoint = new("https://helpsys-stable.syouziroupc.workers.dev/v1/plan");
+    private static readonly Uri DefaultEndpoint = new("https://helpsys.syouziroupc.workers.dev/v1/plan");
     private readonly HttpClient _http;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
 
     public GeminiPlannerClient()
     {
-        _http = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(28)
-        };
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("HelpSys-Stable/" + VersionInfo.Version);
+        _http.DefaultRequestHeaders.Add("x-helpsys-version", VersionInfo.Version);
     }
 
     public async Task<PlanResult> PlanAsync(
@@ -22,9 +21,9 @@ internal sealed class GeminiPlannerClient : IDisposable
         ScreenObservation observation,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(goal)) throw new PlannerException("やりたいことを入力してください。");
+        if (string.IsNullOrWhiteSpace(goal))
+            throw new PlannerException("やりたいことを入力してください。");
 
-        var endpoint = ResolveEndpoint();
         var body = new
         {
             goal = goal.Trim(),
@@ -35,6 +34,8 @@ internal sealed class GeminiPlannerClient : IDisposable
             {
                 id = x.Id,
                 name = x.Name,
+                automationId = x.AutomationId,
+                className = x.ClassName,
                 controlType = x.ControlType,
                 enabled = x.Enabled,
                 focused = x.Focused,
@@ -50,7 +51,7 @@ internal sealed class GeminiPlannerClient : IDisposable
         HttpResponseMessage response;
         try
         {
-            response = await _http.PostAsJsonAsync(endpoint, body, _json, cancellationToken);
+            response = await _http.PostAsJsonAsync(ResolveEndpoint(), body, _json, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -58,7 +59,7 @@ internal sealed class GeminiPlannerClient : IDisposable
         }
         catch (TaskCanceledException ex)
         {
-            throw new PlannerException("Geminiの応答が時間内に完了しませんでした。操作は実行されていません。", ex);
+            throw new PlannerException("Gemini 3.8 Flashの応答が30秒以内に完了しませんでした。操作は実行されていません。", ex);
         }
         catch (HttpRequestException ex)
         {
@@ -67,7 +68,11 @@ internal sealed class GeminiPlannerClient : IDisposable
 
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
+        {
+            if ((int)response.StatusCode == 503 && text.Contains("gemini_unconfigured", StringComparison.OrdinalIgnoreCase))
+                throw new PlannerException("Gemini APIがサーバー側で未設定です。旧モデルへは切り替えません。");
             throw new PlannerException($"Gemini案内サービスが応答できませんでした (HTTP {(int)response.StatusCode})。操作は実行されていません。");
+        }
 
         PlanResult? plan;
         try
@@ -89,21 +94,36 @@ internal sealed class GeminiPlannerClient : IDisposable
         if (plan.Status is not ("target" or "clarify" or "done"))
             throw new PlannerException("Geminiの案内状態が不正です。");
 
+        if (plan.Status == "done" && plan.Confidence < 0.85)
+            throw new PlannerException("完了判定の確度が不足しているため、完了扱いにしません。");
+
         if (plan.Status == "target")
         {
             if (string.IsNullOrWhiteSpace(plan.Instruction))
                 throw new PlannerException("Geminiの操作説明が空です。");
 
-            if (!string.IsNullOrWhiteSpace(plan.TargetId) && controls.All(x => x.Id != plan.TargetId))
-                throw new PlannerException("Geminiが現在画面に存在しない操作対象を返したため、案内を表示しませんでした。");
+            UiControlSnapshot? target = null;
+            if (!string.IsNullOrWhiteSpace(plan.TargetId))
+            {
+                target = controls.FirstOrDefault(x => x.Id == plan.TargetId);
+                if (target is null || !target.Enabled)
+                    throw new PlannerException("Geminiが現在操作できない対象を返したため、案内を表示しませんでした。");
+            }
 
             if (plan.Action is "left_click" or "double_click" or "type_text")
             {
-                var hasStructured = !string.IsNullOrWhiteSpace(plan.TargetId);
+                var hasStructured = target is not null;
                 var hasVisual = plan.Width > 0 && plan.Height > 0;
                 if (!hasStructured && !hasVisual)
                     throw new PlannerException("Geminiが操作位置を特定できていないため、案内を表示しませんでした。");
+                if (hasStructured && plan.Confidence < 0.65)
+                    throw new PlannerException("操作対象の確度が低すぎるため、案内を表示しませんでした。");
+                if (!hasStructured && plan.Confidence < 0.85)
+                    throw new PlannerException("画像だけの操作位置の確度が不足しているため、案内を表示しませんでした。");
             }
+
+            if (plan.Action == "press_key" && (string.IsNullOrWhiteSpace(plan.Key) || plan.Confidence < 0.72))
+                throw new PlannerException("キーボード操作の根拠が不足しているため、案内を表示しませんでした。");
         }
 
         if (plan.Status == "clarify" && string.IsNullOrWhiteSpace(plan.Question))

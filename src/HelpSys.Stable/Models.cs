@@ -5,12 +5,17 @@ public enum AppPhase
     Idle,
     Capturing,
     Planning,
-    ShowingResult
+    Validating,
+    ShowingResult,
+    Listening,
+    Updating
 }
 
 public sealed record UiControlSnapshot(
     string Id,
     string Name,
+    string AutomationId,
+    string ClassName,
     string ControlType,
     bool Enabled,
     bool Focused,
@@ -46,6 +51,11 @@ public sealed record PlanResult(
     double Y,
     double Width,
     double Height);
+
+public sealed record UpdateInfo(
+    System.Version Version,
+    Uri ZipUrl,
+    Uri Sha256Url);
 
 public sealed class PrivacyBlockedException(string message) : Exception(message);
 public sealed class ObservationChangedException(string message) : Exception(message);

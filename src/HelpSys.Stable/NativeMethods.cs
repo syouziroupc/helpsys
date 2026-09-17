@@ -36,6 +36,9 @@ internal static class NativeMethods
     public static extern bool IsWindowVisible(nint hWnd);
 
     [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool RegisterHotKey(nint hWnd, int id, uint modifiers, uint virtualKey);
 
