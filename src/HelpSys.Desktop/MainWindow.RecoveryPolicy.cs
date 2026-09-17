@@ -16,16 +16,35 @@ public partial class MainWindow
             !_sessionState.IsCurrent(generation))
             return;
 
-        if (TryQueueCurrentStateReplan(reason, generation)) return;
+        // Re-observation only helps when the observed Windows state itself is moving. A model
+        // uncertainty on an unchanged screen must go to the stronger Gemini recovery path instead
+        // of repeatedly scanning/capturing the same evidence.
+        if (ShouldReobserveCurrentState(reason) && TryQueueCurrentStateReplan(reason, generation)) return;
 
         _history.Add(new GuideHistoryItem(
             _stepNumber,
             "technical_planning_uncertainty",
             "現在の画面",
-            $"通常の現在状態再取得だけでは確定できなかったため、別経路で画面を再解析する: {reason}"));
+            $"現在の証拠を同じまま再取得せず、Geminiの統合判定で別経路を解析する: {reason}"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
         QueueTechnicalRecovery(reason, generation);
+    }
+
+    private static bool ShouldReobserveCurrentState(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        string[] volatileReasons =
+        [
+            "前面ウィンドウを特定できない",
+            "画面切替",
+            "画面状態が変化",
+            "画面変化",
+            "表示直前の画面変化",
+            "操作対象ウィンドウが変わった",
+            "ContextChanged"
+        ];
+        return volatileReasons.Any(term => reason.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private void QueueTechnicalRecovery(string reason, long generation)
@@ -46,7 +65,7 @@ public partial class MainWindow
                         return;
 
                     SetState(
-                        "通常の画面判定で確定できなかったため、画像と画面構造を使って別経路から案内を続けています…",
+                        "現在の画面情報をGeminiで統合し直して、次の操作を決めています…",
                         speak: false);
 
                     var recovered = await TryRouteRecoveryAsync(reason, generation, _sessionCts.Token);
@@ -57,7 +76,7 @@ public partial class MainWindow
                         return;
 
                     WaitForClarification(
-                        "自動認識だけでは現在位置を1つに絞れませんでした。今いちばん手前に出ている画面の大きな見出しか、目立つボタン名を1つだけ教えてください。そこで案内を止めずに続けます。",
+                        "現在の画面だけでは操作対象を一意に決められませんでした。今いちばん手前に出ている画面の大きな見出しか、目立つボタン名を1つだけ教えてください。",
                         generation);
                 }
                 catch (OperationCanceledException)
@@ -73,7 +92,7 @@ public partial class MainWindow
                         return;
 
                     WaitForClarification(
-                        "画面の自動再解析が完了しませんでした。今いちばん手前に出ている画面の大きな見出しか、目立つボタン名を1つだけ教えてください。現在位置から案内を続けます。",
+                        "画面判定サービスの処理を完了できませんでした。今いちばん手前に出ている画面の大きな見出しか、目立つボタン名を1つだけ教えてください。",
                         generation);
                 }
                 finally
