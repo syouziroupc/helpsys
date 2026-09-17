@@ -7,26 +7,26 @@ const policy = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RecoveryPolicy.cs
 
 if (!helper.includes('using HelpSys.Models;') || !helper.includes('using HelpSys.Services;'))
   throw new Error('current-state replan partial must import model and session-state namespaces');
-if (!helper.includes('MaximumAutomaticCurrentStateReplans = 4'))
-  throw new Error('automatic current-state replan must allow four bounded observations before escalating');
+if (!helper.includes('MaximumAutomaticCurrentStateReplans = 1'))
+  throw new Error('unchanged evidence must not be recaptured repeatedly');
 if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPendingLiveReplanAsync()'))
-  throw new Error('current-state replan must use the established live replan pipeline');
+  throw new Error('the single real-state retry must use the established live replan pipeline');
 if (helper.includes('await AdvanceGuideAsync()'))
   throw new Error('current-state replan helper must not recursively start the planner directly');
-for (const delay of ['1 => 180', '2 => 420', '3 => 850', '_ => 1400'])
-  if (!helper.includes(delay)) throw new Error(`adaptive settle delay missing: ${delay}`);
-if (!policy.includes('TryQueueCurrentStateReplan(reason, generation)'))
-  throw new Error('technical uncertainty must first use bounded current-state replan');
+if (!helper.includes('Task.Delay(300'))
+  throw new Error('single state retry must allow a short UI settle interval');
+if (!policy.includes('ShouldReobserveCurrentState(reason) && TryQueueCurrentStateReplan(reason, generation)'))
+  throw new Error('re-observation must be limited to actual foreground/window volatility');
 if (!policy.includes('TryRouteRecoveryAsync(reason, generation'))
-  throw new Error('technical uncertainty must escalate into alternate route recovery after bounded re-observation');
+  throw new Error('semantic/model uncertainty must go to the stronger integrated recovery planner');
 if (!policy.includes('WaitForClarification('))
-  throw new Error('technical recovery must retain a human-assisted continuation path if automatic recovery still cannot resolve the screen');
+  throw new Error('genuine unresolved ambiguity must retain a human continuation path');
 if (policy.includes('現在の画面を安全に自動判定できませんでした'))
-  throw new Error('technical uncertainty must not end with the old useless safe-stop message');
+  throw new Error('old useless safe-stop message must not return');
 if (policy.includes('StopWithMessage('))
-  throw new Error('technical observer uncertainty must not stop the active task merely because automatic screen resolution was inconclusive');
+  throw new Error('technical observer uncertainty must not terminate the active task');
 if (!policy.includes('_privacyPaused'))
-  throw new Error('technical continuation must respect Privacy Mode and never override a protected-screen pause');
+  throw new Error('technical continuation must respect Privacy Mode');
 
 for (const reason of [
   '再確認しても前面ウィンドウを特定できない',
@@ -53,4 +53,4 @@ if (!keyboardBlock.includes('ResetCurrentStateReplanBudget();'))
 if (!quality.includes('ResetCurrentStateReplanBudget();'))
   throw new Error('successful visual target guidance must reset the replan budget');
 
-console.log('HelpSys adaptive current-state replan and continuation contract passed.');
+console.log('HelpSys single-state-retry and Gemini recovery contract passed.');
