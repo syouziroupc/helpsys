@@ -11,7 +11,6 @@
         Background="Transparent"
         AllowsTransparency="True"
         WindowStartupLocation="Manual"
-        PreviewMouseMove="MainWindow_InteractionMouseMove"
         Loaded="MainWindow_PrivacyLoaded"
         Closing="MainWindow_CombinedClosing"
         Closed="MainWindow_PrivacyClosed">
