@@ -9,8 +9,10 @@ namespace HelpSys.Stable;
 internal sealed class ObservationService
 {
     private const int MaxControls = 240;
+    private const int MaxVisitedNodes = 800;
     private const int MaxImageDimension = 1600;
     private static readonly TimeSpan UiAutomationTimeout = TimeSpan.FromSeconds(2.5);
+    private readonly SemaphoreSlim _uiaGate = new(1, 1);
 
     public async Task<ScreenObservation> CaptureAsync(CancellationToken cancellationToken)
     {
@@ -32,14 +34,17 @@ internal sealed class ObservationService
         UiScanResult scan;
         try
         {
-            scan = await Task.Run(() => ScanUi(hwnd, processName, rect), cancellationToken)
-                .WaitAsync(UiAutomationTimeout, cancellationToken);
+            scan = await RunUiScanAsync(hwnd, processName, rect, cancellationToken);
         }
         catch (TimeoutException ex)
         {
             throw new PlannerException("Windowsの画面構造取得が応答しなかったため、画像を送信せず中止しました。", ex);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (PlannerException)
         {
             throw;
         }
@@ -76,20 +81,85 @@ internal sealed class ObservationService
         return checked((int)rawPid) == observation.ProcessId;
     }
 
+    private async Task<UiScanResult> RunUiScanAsync(
+        nint hwnd,
+        string processName,
+        NativeMethods.Rect windowRect,
+        CancellationToken cancellationToken)
+    {
+        if (!await _uiaGate.WaitAsync(0, cancellationToken))
+            throw new PlannerException("前回のWindows画面構造取得がまだ終了していないため、新しい取得を重ねません。");
+
+        Task<UiScanResult>? scanTask = null;
+        var releaseHere = true;
+        try
+        {
+            scanTask = Task.Run(() => ScanUi(hwnd, processName, windowRect), CancellationToken.None);
+            return await scanTask.WaitAsync(UiAutomationTimeout, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            if (scanTask is not null && !scanTask.IsCompleted)
+            {
+                releaseHere = false;
+                ReleaseGateWhenComplete(scanTask);
+            }
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            if (scanTask is not null && !scanTask.IsCompleted)
+            {
+                releaseHere = false;
+                ReleaseGateWhenComplete(scanTask);
+            }
+            throw;
+        }
+        finally
+        {
+            if (releaseHere) _uiaGate.Release();
+        }
+    }
+
+    private void ReleaseGateWhenComplete(Task scanTask)
+    {
+        _ = scanTask.ContinueWith(
+            _ => _uiaGate.Release(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     private static UiScanResult ScanUi(nint hwnd, string processName, NativeMethods.Rect windowRect)
     {
         var root = AutomationElement.FromHandle(hwnd)
                    ?? throw new InvalidOperationException("UI Automation root unavailable.");
 
-        var items = root.FindAll(TreeScope.Descendants, Condition.TrueCondition);
-        var controls = new List<UiControlSnapshot>(Math.Min(items.Count, MaxControls));
-        string? browserDomain = null;
+        var walker = TreeWalker.ControlViewWalker;
+        var queue = new Queue<AutomationElement>();
+        var first = walker.GetFirstChild(root);
+        if (first is not null) queue.Enqueue(first);
 
-        for (var i = 0; i < items.Count && controls.Count < MaxControls; i++)
+        var controls = new List<UiControlSnapshot>(MaxControls);
+        string? browserDomain = null;
+        var visited = 0;
+
+        while (queue.Count > 0 && controls.Count < MaxControls && visited < MaxVisitedNodes)
         {
-            var item = items[i];
+            var item = queue.Dequeue();
+            visited++;
+
             try
             {
+                var child = walker.GetFirstChild(item);
+                var siblingBudget = 0;
+                while (child is not null && queue.Count < MaxVisitedNodes && siblingBudget < MaxVisitedNodes)
+                {
+                    queue.Enqueue(child);
+                    siblingBudget++;
+                    child = walker.GetNextSibling(child);
+                }
+
                 var current = item.Current;
                 var bounds = current.BoundingRectangle;
                 if (bounds.IsEmpty || bounds.Width < 2 || bounds.Height < 2) continue;
@@ -122,11 +192,11 @@ internal sealed class ObservationService
             }
             catch (ElementNotAvailableException)
             {
-                // A control disappearing during enumeration is normal UI churn; skip only that node.
+                // Normal UI churn: skip only the vanished node.
             }
             catch (InvalidOperationException)
             {
-                // Unsupported patterns on one node must not abort the whole observation.
+                // Unsupported property/pattern on one node must not abort the whole observation.
             }
         }
 
