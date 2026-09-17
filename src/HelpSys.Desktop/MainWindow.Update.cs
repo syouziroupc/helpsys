@@ -46,7 +46,11 @@ public partial class MainWindow
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (Interlocked.CompareExchange(ref _updateBusy, 0, 0) != 0) return;
+        if (Interlocked.CompareExchange(ref _updateBusy, 0, 0) != 0)
+        {
+            SetState("更新情報を確認中です。確認完了後にボタン表示が切り替わります。", speak: false);
+            return;
+        }
 
         if (_availableUpdate is null)
         {
@@ -89,7 +93,7 @@ public partial class MainWindow
 
         try
         {
-            var update = await _updateService.CheckAsync();
+            var update = await _updateService.CheckAsync().WaitAsync(TimeSpan.FromSeconds(15));
             _availableUpdate = update;
             if (update is null)
             {
@@ -102,6 +106,13 @@ public partial class MainWindow
             UpdateButton.Content = "更新する";
             UpdateButton.ToolTip = $"HelpSys {update.BuildId} へ更新します";
             if (announceWhenCurrent) SetState("新しいHelpSysがあります。「更新する」を押すと自動で入れ替えて再起動します。", speak: false);
+        }
+        catch (TimeoutException)
+        {
+            _availableUpdate = null;
+            UpdateButton.Content = "更新確認";
+            UpdateButton.ToolTip = "最新版をもう一度確認します";
+            if (announceWhenCurrent) SetState("更新確認が15秒以内に完了しませんでした。通信状態を確認してもう一度実行してください。", speak: false);
         }
         catch (Exception ex)
         {
