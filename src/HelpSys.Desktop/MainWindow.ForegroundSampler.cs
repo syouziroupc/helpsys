@@ -7,7 +7,6 @@ namespace HelpSys;
 public partial class MainWindow
 {
     private static readonly bool ForegroundSamplerClassHandlersRegistered = RegisterForegroundSamplerClassHandlers();
-    private System.Threading.Timer? _backgroundForegroundSampler;
 
     private static bool RegisterForegroundSamplerClassHandlers()
     {
@@ -15,11 +14,6 @@ public partial class MainWindow
             typeof(MainWindow),
             FrameworkElement.LoadedEvent,
             new RoutedEventHandler(BackgroundForegroundSampler_Loaded),
-            true);
-        EventManager.RegisterClassHandler(
-            typeof(MainWindow),
-            FrameworkElement.UnloadedEvent,
-            new RoutedEventHandler(BackgroundForegroundSampler_Unloaded),
             true);
         EventManager.RegisterClassHandler(
             typeof(Button),
@@ -38,33 +32,10 @@ public partial class MainWindow
     {
         if (sender is not MainWindow window) return;
 
-        // Cloud send-time TOCTOU validation must observe the same verified/pinned work surface as
-        // the UI scanner and screenshot pipeline. A second independent SystemContextService sees
-        // HelpSys itself after activation and falsely reports ContextChanged.
+        // Cloud send-time validation must use the same pinned work surface as the desktop planner.
+        // Passive foreground tracking already exists in SystemContextService and StableGuidance;
+        // do not add another high-frequency ThreadPool timer here.
         window._cloudGuide.UseContextVerifier(window._systemContext);
-
-        if (window._backgroundForegroundSampler is not null) return;
-
-        // Foreground ownership must keep being sampled even while the WPF dispatcher is busy with
-        // UI Automation, rendering, speech UI, or planning. A ThreadPool timer prevents those UI
-        // workloads from creating a blind spot immediately before the user clicks HelpSys.
-        window._backgroundForegroundSampler = new System.Threading.Timer(
-            static state =>
-            {
-                if (state is not MainWindow current) return;
-                try { current._systemContext.CaptureExternalForegroundForAssistantInteraction(); }
-                catch { }
-            },
-            window,
-            TimeSpan.Zero,
-            TimeSpan.FromMilliseconds(25));
-    }
-
-    private static void BackgroundForegroundSampler_Unloaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not MainWindow window) return;
-        var timer = Interlocked.Exchange(ref window._backgroundForegroundSampler, null);
-        try { timer?.Dispose(); } catch { }
     }
 
     private static void BackgroundForegroundSampler_ButtonClick(object sender, RoutedEventArgs e)
