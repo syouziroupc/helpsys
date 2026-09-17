@@ -45,11 +45,19 @@ public partial class MainWindow : Window
 
     private nint WindowProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
-        if (msg == NativeMethods.WmHotKey && wParam.ToInt32() == NativeMethods.HotKeyId)
+        if (msg != NativeMethods.WmHotKey) return nint.Zero;
+
+        if (wParam.ToInt32() == NativeMethods.HotKeyGuideId)
         {
             handled = true;
             _ = RunGuidanceAsync();
         }
+        else if (wParam.ToInt32() == NativeMethods.HotKeyVoiceId)
+        {
+            handled = true;
+            _ = StartVoiceInputAsync();
+        }
+
         return nint.Zero;
     }
 
