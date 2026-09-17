@@ -7,7 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class CloudGuideService : IDisposable
 {
-    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(30);
     private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
@@ -35,11 +35,6 @@ public sealed class CloudGuideService : IDisposable
         _contextVerifier = contextVerifier ?? throw new ArgumentNullException(nameof(contextVerifier));
     }
 
-    /// <summary>
-    /// Lightweight local check used before a screenshot is even created. A blocked, unknown, or
-    /// unconfigured Safe cloud state enters Privacy Mode immediately. The send-time gate still runs
-    /// again as a TOCTOU guard.
-    /// </summary>
     public PrivacyAssessment PreflightPrivacy(
         SystemContextSnapshot systemContext,
         IReadOnlyList<UiElementCandidate> elements)
@@ -94,9 +89,9 @@ public sealed class CloudGuideService : IDisposable
         var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
         EnsureApproved(approval);
 
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: true);
         var decision = await SendAsync<QualityGuideDecision>("/v1/quality-guide", approval.Body!, cancellationToken);
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: false);
         return decision;
     }
 
@@ -115,9 +110,9 @@ public sealed class CloudGuideService : IDisposable
         var approval = _privacyGate.ApproveStructured(request, relevantElements, history, systemContext);
         EnsureApproved(approval);
 
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: true);
         var decision = await SendAsync<GuideDecision>("/v1/guide", approval.Body!, cancellationToken);
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: false);
         return decision;
     }
 
@@ -142,9 +137,9 @@ public sealed class CloudGuideService : IDisposable
         var approval = _privacyGate.ApproveVision(request, frame, relevantElements, history, systemContext);
         EnsureApproved(approval);
 
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: true);
         var decision = await SendAsync<VisionGuideDecision>("/v1/vision-guide", approval.Body!, cancellationToken);
-        EnsurePlanningContextCurrent(systemContext);
+        EnsurePlanningContextCurrent(systemContext, requireSameWindow: false);
         return decision;
     }
 
@@ -233,10 +228,6 @@ public sealed class CloudGuideService : IDisposable
     {
         if (!item.Interactable || item.ProcessId <= 0 || item.Bounds.IsEmpty) return false;
         if (!topByProcess.TryGetValue(item.ProcessId, out var top)) return false;
-
-        // Standard non-client controls live in the title band. Requiring both a canonical
-        // automation identity and the top band avoids suppressing an application's own
-        // content-level Close/Restore buttons.
         if (item.Y > top + 72) return false;
 
         var automationId = item.AutomationId?.Trim() ?? string.Empty;
@@ -287,15 +278,17 @@ public sealed class CloudGuideService : IDisposable
         return score;
     }
 
-    private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
+    private void EnsurePlanningContextCurrent(SystemContextSnapshot expected, bool requireSameWindow)
     {
         var current = _contextVerifier.Capture();
         var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
                                 expected.ForegroundProcessId != current.ForegroundProcessId ||
                                 !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
-        var windowChanged = expected.ForegroundWindowHandle == nint.Zero ||
-                            current.ForegroundWindowHandle == nint.Zero ||
-                            expected.ForegroundWindowHandle != current.ForegroundWindowHandle;
+
+        var windowChanged = requireSameWindow &&
+                            (expected.ForegroundWindowHandle == nint.Zero ||
+                             current.ForegroundWindowHandle == nint.Zero ||
+                             expected.ForegroundWindowHandle != current.ForegroundWindowHandle);
 
         var expectedDomain = expected.Browser?.Domain ?? string.Empty;
         var currentDomain = current.Browser?.Domain ?? string.Empty;
@@ -308,53 +301,38 @@ public sealed class CloudGuideService : IDisposable
 
     private async Task<T> SendAsync<T>(string path, object body, CancellationToken cancellationToken)
     {
-        GuideServiceException? lastTransientError = null;
-
-        for (var attempt = 0; attempt < 1; attempt++)
+        cancellationToken.ThrowIfCancellationRequested();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
+            if (response.IsSuccessStatusCode)
             {
-                var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
-                if (response.IsSuccessStatusCode)
+                try
                 {
-                    try
-                    {
-                        return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions)
-                               ?? throw new JsonException("empty response");
-                    }
-                    catch (JsonException ex)
-                    {
-                        throw new GuideServiceException(GuideFailureKind.InvalidResponse, "案内サービスの応答形式が不正です。", ex);
-                    }
+                    return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions)
+                           ?? throw new JsonException("empty response");
                 }
-
-                var kind = IsTransientStatus(response.StatusCode) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
-                var apiError = new GuideServiceException(kind, $"HelpSys API {response.StatusCode}: {Short(response.Body)}");
-                if (!IsTransientStatus(response.StatusCode) || attempt > 0) throw apiError;
-                lastTransientError = apiError;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw new OperationCanceledException(cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が6秒を超えました。");
-                if (attempt > 0) throw timeoutError;
-                lastTransientError = timeoutError;
-            }
-            catch (HttpRequestException ex)
-            {
-                var networkError = new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
-                if (attempt > 0) throw networkError;
-                lastTransientError = networkError;
+                catch (JsonException ex)
+                {
+                    throw new GuideServiceException(GuideFailureKind.InvalidResponse, "案内サービスの応答形式が不正です。", ex);
+                }
             }
 
-            await Task.Delay(250, cancellationToken);
+            var kind = IsTransientStatus(response.StatusCode) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
+            throw new GuideServiceException(kind, $"HelpSys API {response.StatusCode}: {Short(response.Body)}");
         }
-
-        throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new GuideServiceException(GuideFailureKind.ServiceUnavailable, "Gemini案内モデルの応答が30秒を超えました。");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
+        }
     }
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
