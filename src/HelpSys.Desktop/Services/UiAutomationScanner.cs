@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using HelpSys.Models;
@@ -47,7 +48,7 @@ public sealed class UiAutomationScanner
         var controlCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var stopwatch = Stopwatch.StartNew();
 
-        while (queue.Count > 0 && visited < 7500 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(2200))
+        while (queue.Count > 0 && visited < 5000 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(1500))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth) = queue.Dequeue();
@@ -72,6 +73,7 @@ public sealed class UiAutomationScanner
             }
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
+            catch (COMException) { }
         }
 
         var pidSummary = processIds.Count == 0
@@ -215,6 +217,7 @@ public sealed class UiAutomationScanner
             }
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
+            catch (COMException) { }
         }
 
         if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
@@ -259,15 +262,18 @@ public sealed class UiAutomationScanner
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildren(walker, root, 0, queue);
 
-        var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
-        var contextPoolLimit = Math.Max(180, maxCandidates / 2);
+        var interactivePoolLimit = Math.Max(360, maxCandidates * 2);
+        var contextPoolLimit = Math.Max(90, maxCandidates / 3);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);
         var context = new List<UiElementCandidate>(contextPoolLimit);
         var processNames = new Dictionary<int, string>();
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
+        var maxVisited = maxCandidates >= 600 ? 4200 : maxCandidates >= 400 ? 3200 : 2200;
+        var maxScanMilliseconds = maxCandidates >= 600 ? 1300 : maxCandidates >= 400 ? 850 : 650;
+        var textPatternBudget = maxCandidates >= 400 ? 18 : 10;
 
-        while (queue.Count > 0 && visited < 7000 && stopwatch.ElapsedMilliseconds < 2200)
+        while (queue.Count > 0 && visited < maxVisited && stopwatch.ElapsedMilliseconds < maxScanMilliseconds)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth) = queue.Dequeue();
@@ -283,9 +289,13 @@ public sealed class UiAutomationScanner
                     var isPassword = current.IsPassword;
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
                     var rawName = current.Name ?? string.Empty;
+                    var allowTextPattern = !isPassword && !isInput && textPatternBudget > 0 &&
+                                           stopwatch.ElapsedMilliseconds < Math.Min(600, maxScanMilliseconds - 80) &&
+                                           ShouldReadTextPattern(typeName, rawName);
+                    if (allowTextPattern) textPatternBudget--;
                     var readableText = isPassword || isInput
                         ? rawName
-                        : ReadBoundedVisibleText(element, typeName, rawName);
+                        : ReadBoundedVisibleText(element, typeName, rawName, allowTextPattern);
                     var name = isPassword ? "[password field]" : isInput ? "[input field]" : readableText;
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
@@ -317,8 +327,10 @@ public sealed class UiAutomationScanner
             }
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
+            catch (COMException) { }
 
             if (depth < 10) EnqueueChildren(walker, element, depth + 1, queue);
+            if (interactive.Count >= interactivePoolLimit && context.Count >= contextPoolLimit) break;
         }
 
         var contextBudget = Math.Min(context.Count, Math.Max(45, maxCandidates / 6));
@@ -335,17 +347,18 @@ public sealed class UiAutomationScanner
         return rankedInteractive.Concat(rankedContext).ToArray();
     }
 
-    private static string ReadBoundedVisibleText(AutomationElement element, string typeName, string fallback)
+    private static bool ShouldReadTextPattern(string typeName, string fallback)
+    {
+        if (typeName.EndsWith("Document", StringComparison.Ordinal)) return true;
+        if (!string.IsNullOrWhiteSpace(fallback)) return false;
+        return typeName.EndsWith("Text", StringComparison.Ordinal) ||
+               typeName.EndsWith("DataItem", StringComparison.Ordinal);
+    }
+
+    private static string ReadBoundedVisibleText(AutomationElement element, string typeName, string fallback, bool allowTextPattern)
     {
         var normalizedFallback = NormalizeReadableText(fallback, 420);
-        var textBearing = typeName.EndsWith("Document", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Text", StringComparison.Ordinal) ||
-                          typeName.EndsWith("DataItem", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Table", StringComparison.Ordinal) ||
-                          typeName.EndsWith("List", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Pane", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Group", StringComparison.Ordinal);
-        if (!textBearing) return normalizedFallback;
+        if (!allowTextPattern) return normalizedFallback;
 
         try
         {
@@ -363,6 +376,7 @@ public sealed class UiAutomationScanner
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
         catch (NotSupportedException) { }
+        catch (COMException) { }
 
         return normalizedFallback;
     }
@@ -393,6 +407,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
 
         try
         {
@@ -402,6 +417,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
 
         try
         {
@@ -410,6 +426,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
 
         try
         {
@@ -418,6 +435,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
 
         return new ActionState(value, toggleState, selected, expandCollapseState);
     }
@@ -565,6 +583,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
     }
 
     private static void EnqueueChildren(TreeWalker walker, AutomationElement parent, int depth, Queue<(AutomationElement Element, int Depth)> queue)
@@ -576,6 +595,7 @@ public sealed class UiAutomationScanner
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (COMException) { }
     }
 
     private readonly record struct ActionState(string? Value, string? ToggleState, bool? Selected, string? ExpandCollapseState);
