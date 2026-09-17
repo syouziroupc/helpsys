@@ -9,6 +9,10 @@ internal static class NativeMethods
     public const uint ModNoRepeat = 0x4000;
     public const uint VkF8 = 0x77;
     public const int WmHotKey = 0x0312;
+    public const int GwlExStyle = -20;
+    public const nint WsExTransparent = 0x00000020;
+    public const nint WsExToolWindow = 0x00000080;
+    public const nint WsExNoActivate = 0x08000000;
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
@@ -38,6 +42,12 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool UnregisterHotKey(nint hWnd, int id);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern nint GetWindowLongPtr(nint hWnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtr(nint hWnd, int index, nint newLong);
 
     public static string GetTitle(nint hWnd)
     {
