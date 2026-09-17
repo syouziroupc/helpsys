@@ -5,7 +5,7 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private const int MaximumAutomaticCurrentStateReplans = 4;
+    private const int MaximumAutomaticCurrentStateReplans = 1;
     private int _automaticCurrentStateReplans;
 
     private bool TryQueueCurrentStateReplan(string reason, long generation)
@@ -13,49 +13,54 @@ public partial class MainWindow
         if (_activeRequest is null ||
             _sessionCts is null ||
             _sessionCts.IsCancellationRequested ||
-            !_sessionState.IsCurrent(generation))
+            !_sessionState.IsCurrent(generation) ||
+            !ShouldReobserveCurrentState(reason))
             return false;
 
         if (_automaticCurrentStateReplans >= MaximumAutomaticCurrentStateReplans)
             return false;
 
         _automaticCurrentStateReplans++;
-        var attempt = _automaticCurrentStateReplans;
         _history.Add(new GuideHistoryItem(
             _stepNumber,
             "current_state_replan",
             "現在の画面",
-            $"一時的または技術的な画面不確実性を検出したため、復帰経路ではなく現在状態を再取得する ({attempt}/{MaximumAutomaticCurrentStateReplans}): {reason}"));
+            $"実際の画面遷移が疑われるため、短時間だけ現在状態を再取得する: {reason}"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
         _speechOutput.Stop();
         ClearCurrentGuidanceV3();
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _liveReplanPending = true;
-        SetState("画面状態を取り直して、現在位置から案内を作り直しています…", speak: false);
-        Dispatcher.BeginInvoke(new Action(() => _ = RunQueuedCurrentStateReplanAsync(attempt)));
+        SetState("画面の切り替わりを1回だけ確認して、現在位置から案内を続けます…", speak: false);
+        Dispatcher.BeginInvoke(new Action(() => _ = RunQueuedCurrentStateReplanAsync()));
         return true;
     }
 
-    private async Task RunQueuedCurrentStateReplanAsync(int attempt)
+    private async Task RunQueuedCurrentStateReplanAsync()
     {
         if (_sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
         try
         {
-            // Different UI classes settle at different speeds. Keep the retry budget finite, but
-            // sample at increasing intervals so shell animations, browser navigation and modal
-            // creation are not mistaken for a permanent observer failure after only two snapshots.
-            var delayMs = attempt switch
-            {
-                1 => 180,
-                2 => 420,
-                3 => 850,
-                _ => 1400
-            };
-            await Task.Delay(delayMs, _sessionCts.Token);
+            await Task.Delay(320, _sessionCts.Token);
             await TryRunPendingLiveReplanAsync();
         }
         catch (OperationCanceledException) { }
+    }
+
+    private static bool ShouldReobserveCurrentState(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return false;
+        string[] transientMarkers =
+        [
+            "前面ウィンドウ",
+            "画面切替",
+            "画面変化",
+            "画面状態が変化",
+            "案内表示直前の画面変化",
+            "画像候補確認中の画面変化"
+        ];
+        return transientMarkers.Any(marker => reason.Contains(marker, StringComparison.Ordinal));
     }
 
     private void ResetCurrentStateReplanBudget() => _automaticCurrentStateReplans = 0;
