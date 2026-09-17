@@ -1,4 +1,5 @@
 const MODEL = 'gemini-3.8-flash';
+const VERSION = '3.0.0';
 const MAX_BODY_BYTES = 7_000_000;
 const MAX_CONTROLS = 240;
 
@@ -21,47 +22,57 @@ const responseSchema = {
   additionalProperties: false
 };
 
-const systemPrompt = `You are the only planning model for HelpSys Stable, a Windows guidance application for complete beginners.
+const systemPrompt = `You are the only planning model for HelpSys Stable 3.0, a Windows guidance application for complete beginners.
 The human performs every action. HelpSys never clicks, types, submits, installs, purchases, deletes, or changes settings itself.
 Return exactly one immediate next step in the required JSON schema.
 
-CURRENT-STATE RULES:
-- screenshot is the current visible foreground window.
-- controls are current Windows UI Automation elements. Their x/y/width/height are normalized 0..1000 relative to the screenshot/window.
-- browserDomain, when present, is locally extracted from the browser address field with path/query discarded.
-- Choose a real current action that advances the user's stated goal. Do not require a canonical or imagined route.
-- Prefer an existing enabled control targetId when one is suitable. If no reliable UIA control exists but the screenshot clearly shows the target, use targetId=null and return a tight visual rectangle.
-- A desktop Explorer ListItem used to launch an app/shortcut normally requires double_click.
-- press_key may use targetId=null when the current screen clearly supports that keyboard action.
-- type_text is only guidance: the user types. Never include or infer the text of passwords, PINs, OTPs, private keys, API keys, payment-card authentication data, or other secrets.
+CURRENT STATE:
+- The screenshot is the current visible foreground window.
+- controls are current Windows UI Automation elements with stable fields for this observation only.
+- browserDomain, when present, is locally extracted from the address field with path/query removed.
+- Choose one real current action that advances the user's stated goal. Do not require a canonical or imagined route.
+- Prefer an existing enabled control targetId when one is suitable.
+- If no reliable UIA control exists but the screenshot clearly shows the target, targetId may be null and you must return a tight visual rectangle.
+- A desktop Explorer ListItem used to launch an app or shortcut normally requires double_click.
+- press_key may use targetId=null only when the current screen clearly supports that key.
+- type_text is guidance only; the human types.
 
 DO NOT BECOME PASSIVE:
-- Do not return a refusal merely because the current screen differs from a standard route.
-- Do not ask the user to diagnose HelpSys, describe the screen, or name a visible button just because recognition is difficult.
-- Use clarify only when the USER must make a genuine choice: account/identity, overwrite/delete, purchase/payment, permission/default selection, or another materially different outcome.
+- Do not refuse merely because the screen differs from a standard route.
+- Do not ask the user to diagnose HelpSys, describe the screen, or name a visible button because recognition is difficult.
+- clarify is only for a genuine USER decision: account/identity, overwrite/delete, purchase/payment, permission/default selection, or materially different outcomes.
 - Otherwise choose the best grounded next operation from current evidence.
 
-SAFETY BOUNDARY:
-- Never tell the user to bypass browser certificate/phishing/malware/privacy warnings.
-- Never instruct the user to reveal secrets to HelpSys.
+SAFETY:
+- Never ask for passwords, PINs, OTPs, verification codes, recovery keys, private keys, API keys, CVV/CVC, card authentication data, or other secrets.
+- Never tell the user to bypass browser certificate, phishing, malware, SmartScreen, or privacy warnings.
 - For known websites, do not select sponsored results or lookalike domains. Use browserDomain when available.
-- Never claim an action already happened unless it is visible now.
-- done is allowed only when the user's requested goal is visibly achieved now.
+- Never claim an action already happened unless current evidence supports it.
+- done is allowed only when the requested goal is visibly achieved now.
+- Final destructive, purchase/payment, permission, identity/account, overwrite, or default-selection choices should be clarify unless the user's current instruction already unambiguously specifies that exact choice.
 
 OUTPUT QUALITY:
 - One action only.
-- Short concrete Japanese for a PC beginner.
+- Short concrete Japanese suitable for a PC beginner.
 - confidence is confidence in this exact next action on the current screen.
 - If targetId is present, it must exactly match one current control id.
-- If targetId is null for a mouse action, rectangle width and height must both be > 0.`;
+- If targetId is null for a mouse action, rectangle width and height must both be greater than zero.`;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health') {
-      return json({ ok: true, service: 'helpsys-stable', model: MODEL, geminiConfigured: hasKey(env) });
+      return json({
+        ok: true,
+        service: 'helpsys',
+        version: VERSION,
+        planner: MODEL,
+        plannerProvider: 'gemini',
+        geminiConfigured: hasKey(env)
+      });
     }
-    if (request.method !== 'POST' || url.pathname !== '/v1/plan') return json({ error: 'not_found' }, 404);
+    if (request.method !== 'POST' || url.pathname !== '/v1/plan')
+      return json({ error: 'not_found' }, 404);
     if (!hasKey(env)) return json({ error: 'gemini_unconfigured' }, 503);
 
     const declaredLength = Number(request.headers.get('content-length') || 0);
@@ -80,6 +91,7 @@ export default {
     const controls = Array.isArray(body?.controls)
       ? body.controls.slice(0, MAX_CONTROLS).map(compactControl).filter(Boolean)
       : [];
+
     const context = {
       goal,
       processName: text(body?.processName, 80),
@@ -110,7 +122,7 @@ async function callGemini(apiKey, context, image) {
     }],
     generationConfig: {
       temperature: 0.05,
-      maxOutputTokens: 1000,
+      maxOutputTokens: 900,
       responseMimeType: 'application/json',
       responseJsonSchema: responseSchema,
       thinkingConfig: { thinkingLevel: 'medium' }
@@ -118,7 +130,7 @@ async function callGemini(apiKey, context, image) {
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22_000);
+  const timeout = setTimeout(() => controller.abort(), 24_000);
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -151,7 +163,8 @@ function validatePlan(value, controls) {
   const actions = new Set(['left_click', 'double_click', 'type_text', 'press_key', 'none']);
   const status = String(value?.status || '');
   const action = String(value?.action || '');
-  if (!statuses.has(status) || !actions.has(action)) return { ok: false, error: 'invalid_plan_shape' };
+  if (!statuses.has(status) || !actions.has(action))
+    return { ok: false, error: 'invalid_plan_shape' };
 
   const targetId = nullableText(value?.targetId, 80);
   const instruction = text(value?.instruction, 420);
@@ -163,18 +176,44 @@ function validatePlan(value, controls) {
   const width = clamp1000(value?.width);
   const height = clamp1000(value?.height);
 
-  if (!instruction && status !== 'clarify') return { ok: false, error: 'empty_instruction' };
-  if (status === 'clarify' && !question) return { ok: false, error: 'empty_question' };
-  if (status === 'target') {
-    if (targetId && !controls.some(c => c.id === targetId)) return { ok: false, error: 'unknown_target' };
-    if (['left_click', 'double_click', 'type_text'].includes(action) && !targetId && (width <= 0 || height <= 0))
-      return { ok: false, error: 'missing_target_geometry' };
-    if (action === 'press_key' && !key) return { ok: false, error: 'missing_key' };
+  if (containsSecretRequest(instruction) || containsSecretRequest(question || ''))
+    return { ok: false, error: 'secret_request_rejected' };
+
+  if (status === 'clarify') {
+    if (!question) return { ok: false, error: 'empty_question' };
+    return { ok: true, value: { status, action: 'none', instruction, question, targetId: null, key: null, confidence, x: 0, y: 0, width: 0, height: 0 } };
   }
+
+  if (!instruction) return { ok: false, error: 'empty_instruction' };
+
+  if (status === 'done') {
+    if (confidence < 0.85) return { ok: false, error: 'done_confidence_too_low' };
+    return { ok: true, value: { status, action: 'none', instruction, question: null, targetId: null, key: null, confidence, x: 0, y: 0, width: 0, height: 0 } };
+  }
+
+  let target = null;
+  if (targetId) {
+    target = controls.find(c => c.id === targetId) || null;
+    if (!target || !target.enabled) return { ok: false, error: 'unknown_or_disabled_target' };
+  }
+
+  if (['left_click', 'double_click', 'type_text'].includes(action)) {
+    if (!target && (width <= 0 || height <= 0)) return { ok: false, error: 'missing_target_geometry' };
+    if (target && confidence < 0.65) return { ok: false, error: 'structured_confidence_too_low' };
+    if (!target && confidence < 0.85) return { ok: false, error: 'visual_confidence_too_low' };
+  }
+
+  if (action === 'type_text' && (!target || !target.focused || !target.keyboardFocusable))
+    return { ok: false, error: 'unsafe_text_target' };
+
+  if (action === 'press_key' && (!key || confidence < 0.72))
+    return { ok: false, error: 'unsafe_key_action' };
+
+  if (action === 'none') return { ok: false, error: 'target_without_action' };
 
   return {
     ok: true,
-    value: { status, action, instruction, question, targetId, key, confidence, x, y, width, height }
+    value: { status, action, instruction, question: null, targetId, key, confidence, x, y, width, height }
   };
 }
 
@@ -185,6 +224,8 @@ function compactControl(value) {
   return {
     id,
     name: text(value.name, 180),
+    automationId: text(value.automationId, 120),
+    className: text(value.className, 120),
     controlType: text(value.controlType, 80),
     enabled: value.enabled !== false,
     focused: value.focused === true,
@@ -194,6 +235,10 @@ function compactControl(value) {
     width: clamp1000(value.width),
     height: clamp1000(value.height)
   };
+}
+
+function containsSecretRequest(value) {
+  return /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,28}(教え|送|貼|入力してhelp|tell|send|paste)/i.test(value || '');
 }
 
 function parseDataImage(value) {
@@ -215,9 +260,16 @@ function extractJson(payload) {
   return null;
 }
 
-function hasKey(env) { return typeof env?.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0; }
+function hasKey(env) {
+  return typeof env?.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0;
+}
 function text(value, max) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function nullableText(value, max) { const v = text(value, max); return v || null; }
 function clamp01(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; }
 function clamp1000(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1000, n)) : 0; }
-function json(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }); }
+function json(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+  });
+}
