@@ -165,6 +165,7 @@ public partial class MainWindow : Window
         finally
         {
             _phase = AppPhase.Idle;
+            GuideButton.IsEnabled = true;
             if (ReferenceEquals(_runCts, ownedCts)) _runCts = null;
             ownedCts?.Dispose();
             _runGate.Release();
