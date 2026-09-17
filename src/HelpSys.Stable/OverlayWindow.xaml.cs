@@ -5,27 +5,32 @@ namespace HelpSys.Stable;
 
 public partial class OverlayWindow : Window
 {
+    private readonly double _dpiScale;
+
     public OverlayWindow(ScreenObservation observation, PlanResult plan)
     {
         InitializeComponent();
 
-        Left = observation.X;
-        Top = observation.Y;
-        Width = observation.Width;
-        Height = observation.Height;
+        var dpi = NativeMethods.GetDpiForWindow(observation.WindowHandle);
+        _dpiScale = dpi > 0 ? 96d / dpi : 1d;
+
+        Left = observation.X * _dpiScale;
+        Top = observation.Y * _dpiScale;
+        Width = observation.Width * _dpiScale;
+        Height = observation.Height * _dpiScale;
         InstructionText.Text = BuildInstruction(plan);
 
         var target = ResolveTarget(observation, plan);
         if (target is not null)
         {
             TargetBorder.Visibility = Visibility.Visible;
-            TargetBorder.Width = Math.Max(18, target.Value.Width);
-            TargetBorder.Height = Math.Max(18, target.Value.Height);
-            Canvas.SetLeft(TargetBorder, Math.Clamp(target.Value.X, 0, Math.Max(0, observation.Width - TargetBorder.Width)));
-            Canvas.SetTop(TargetBorder, Math.Clamp(target.Value.Y, 0, Math.Max(0, observation.Height - TargetBorder.Height)));
+            TargetBorder.Width = Math.Max(18, target.Value.Width * _dpiScale);
+            TargetBorder.Height = Math.Max(18, target.Value.Height * _dpiScale);
+            Canvas.SetLeft(TargetBorder, Math.Clamp(target.Value.X * _dpiScale, 0, Math.Max(0, Width - TargetBorder.Width)));
+            Canvas.SetTop(TargetBorder, Math.Clamp(target.Value.Y * _dpiScale, 0, Math.Max(0, Height - TargetBorder.Height)));
         }
 
-        Loaded += (_, _) => PositionInstruction(observation, target);
+        Loaded += (_, _) => PositionInstruction(target);
         SourceInitialized += (_, _) => MakeClickThrough();
     }
 
@@ -39,14 +44,14 @@ public partial class OverlayWindow : Window
             style | NativeMethods.WsExTransparent | NativeMethods.WsExNoActivate | NativeMethods.WsExToolWindow);
     }
 
-    private void PositionInstruction(ScreenObservation observation, RectD? target)
+    private void PositionInstruction(RectD? target)
     {
-        InstructionPanel.Measure(new Size(Math.Min(520, observation.Width - 24), double.PositiveInfinity));
+        InstructionPanel.Measure(new Size(Math.Min(520, Math.Max(260, Width - 24)), double.PositiveInfinity));
         var desired = InstructionPanel.DesiredSize;
         var left = 14d;
-        var top = Math.Max(14d, observation.Height - desired.Height - 18d);
+        var top = Math.Max(14d, Height - desired.Height - 18d);
 
-        if (target is not null && target.Value.Y + target.Value.Height > top - 20)
+        if (target is not null && (target.Value.Y + target.Value.Height) * _dpiScale > top - 20)
             top = 14d;
 
         Canvas.SetLeft(InstructionPanel, left);

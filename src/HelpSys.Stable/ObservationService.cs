@@ -38,19 +38,15 @@ internal sealed class ObservationService
         }
         catch (TimeoutException ex)
         {
-            throw new PlannerException("Windowsの画面構造取得が応答しなかったため、画像を送信せず中止しました。", ex);
+            throw new PlannerException("Windowsの画面構造取得が2.5秒以内に完了しませんでした。画像送信はしていません。", ex);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (PlannerException)
+        catch (Exception ex) when (ex is not PlannerException)
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            throw new PlannerException("Windowsの画面構造を安全に取得できなかったため、画像を送信せず中止しました。", ex);
+            throw new PlannerException("Windowsの画面構造取得に失敗したため、画像送信はしていません。", ex);
         }
 
         SafetyGate.EnsureSafeToCapture(processName, title, scan.Controls);
@@ -81,6 +77,43 @@ internal sealed class ObservationService
         return checked((int)rawPid) == observation.ProcessId;
     }
 
+    public async Task<bool> IsPlanStillApplicableAsync(
+        ScreenObservation observation,
+        PlanResult plan,
+        CancellationToken cancellationToken)
+    {
+        if (!IsStillCurrent(observation)) return false;
+        if (plan.Status != "target" || string.IsNullOrWhiteSpace(plan.TargetId)) return true;
+
+        var original = observation.Controls.FirstOrDefault(x => x.Id == plan.TargetId);
+        if (original is null || !original.Enabled) return false;
+        if (!NativeMethods.GetWindowRect(observation.WindowHandle, out var rect) || rect.Width < 40 || rect.Height < 40)
+            return false;
+
+        try
+        {
+            var scan = await RunUiScanAsync(
+                observation.WindowHandle,
+                observation.ProcessName,
+                rect,
+                cancellationToken);
+            if (!IsStillCurrent(observation)) return false;
+            return scan.Controls.Any(candidate => SameControlIdentity(original, candidate));
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task<UiScanResult> RunUiScanAsync(
         nint hwnd,
         string processName,
@@ -88,7 +121,7 @@ internal sealed class ObservationService
         CancellationToken cancellationToken)
     {
         if (!await _uiaGate.WaitAsync(0, cancellationToken))
-            throw new PlannerException("前回のWindows画面構造取得がまだ終了していないため、新しい取得を重ねません。");
+            throw new PlannerException("Windows画面構造取得がすでに実行中のため、二重実行しません。");
 
         Task<UiScanResult>? scanTask = null;
         var releaseHere = true;
@@ -102,7 +135,11 @@ internal sealed class ObservationService
             if (scanTask is not null && !scanTask.IsCompleted)
             {
                 releaseHere = false;
-                ReleaseGateWhenComplete(scanTask);
+                _ = scanTask.ContinueWith(
+                    _ => _uiaGate.Release(),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             }
             throw;
         }
@@ -111,7 +148,11 @@ internal sealed class ObservationService
             if (scanTask is not null && !scanTask.IsCompleted)
             {
                 releaseHere = false;
-                ReleaseGateWhenComplete(scanTask);
+                _ = scanTask.ContinueWith(
+                    _ => _uiaGate.Release(),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             }
             throw;
         }
@@ -119,15 +160,6 @@ internal sealed class ObservationService
         {
             if (releaseHere) _uiaGate.Release();
         }
-    }
-
-    private void ReleaseGateWhenComplete(Task scanTask)
-    {
-        _ = scanTask.ContinueWith(
-            _ => _uiaGate.Release(),
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
     }
 
     private static UiScanResult ScanUi(nint hwnd, string processName, NativeMethods.Rect windowRect)
@@ -152,11 +184,11 @@ internal sealed class ObservationService
             try
             {
                 var child = walker.GetFirstChild(item);
-                var siblingBudget = 0;
-                while (child is not null && queue.Count < MaxVisitedNodes && siblingBudget < MaxVisitedNodes)
+                var siblings = 0;
+                while (child is not null && queue.Count < MaxVisitedNodes && siblings < 250)
                 {
                     queue.Enqueue(child);
-                    siblingBudget++;
+                    siblings++;
                     child = walker.GetNextSibling(child);
                 }
 
@@ -164,39 +196,40 @@ internal sealed class ObservationService
                 var bounds = current.BoundingRectangle;
                 if (bounds.IsEmpty || bounds.Width < 2 || bounds.Height < 2) continue;
 
-                var clippedLeft = Math.Max(bounds.Left, windowRect.Left);
-                var clippedTop = Math.Max(bounds.Top, windowRect.Top);
-                var clippedRight = Math.Min(bounds.Right, windowRect.Right);
-                var clippedBottom = Math.Min(bounds.Bottom, windowRect.Bottom);
-                if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) continue;
+                var left = Math.Max(bounds.Left, windowRect.Left);
+                var top = Math.Max(bounds.Top, windowRect.Top);
+                var right = Math.Min(bounds.Right, windowRect.Right);
+                var bottom = Math.Min(bounds.Bottom, windowRect.Bottom);
+                if (right <= left || bottom <= top) continue;
 
-                var name = (current.Name ?? string.Empty).Trim();
-                var type = current.ControlType?.ProgrammaticName ?? string.Empty;
-                var id = $"u{controls.Count + 1}";
+                var name = Trim(current.Name, 180);
+                var automationId = Trim(current.AutomationId, 120);
+                var className = Trim(current.ClassName, 120);
+                var type = Trim(current.ControlType?.ProgrammaticName, 80);
 
                 controls.Add(new UiControlSnapshot(
-                    id,
-                    name.Length <= 180 ? name : name[..180],
-                    type.Length <= 80 ? type : type[..80],
+                    $"u{controls.Count + 1}",
+                    name,
+                    automationId,
+                    className,
+                    type,
                     current.IsEnabled,
                     current.HasKeyboardFocus,
                     current.IsKeyboardFocusable,
                     current.IsPassword,
-                    Normalize(clippedLeft - windowRect.Left, windowRect.Width),
-                    Normalize(clippedTop - windowRect.Top, windowRect.Height),
-                    Normalize(clippedRight - clippedLeft, windowRect.Width),
-                    Normalize(clippedBottom - clippedTop, windowRect.Height)));
+                    Normalize(left - windowRect.Left, windowRect.Width),
+                    Normalize(top - windowRect.Top, windowRect.Height),
+                    Normalize(right - left, windowRect.Width),
+                    Normalize(bottom - top, windowRect.Height)));
 
                 if (browserDomain is null && IsBrowser(processName) && LooksLikeAddressBar(name, type))
                     browserDomain = TryReadDomain(item);
             }
             catch (ElementNotAvailableException)
             {
-                // Normal UI churn: skip only the vanished node.
             }
             catch (InvalidOperationException)
             {
-                // Unsupported property/pattern on one node must not abort the whole observation.
             }
         }
 
@@ -207,9 +240,7 @@ internal sealed class ObservationService
     {
         using var source = new Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb);
         using (var graphics = Graphics.FromImage(source))
-        {
             graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, new Size(rect.Width, rect.Height), CopyPixelOperation.SourceCopy);
-        }
 
         Bitmap output = source;
         var scale = Math.Min(1d, MaxImageDimension / (double)Math.Max(source.Width, source.Height));
@@ -227,15 +258,30 @@ internal sealed class ObservationService
         {
             using var stream = new MemoryStream();
             var encoder = ImageCodecInfo.GetImageEncoders().First(x => x.FormatID == ImageFormat.Jpeg.Guid);
-            using var quality = new EncoderParameters(1);
-            quality.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
-            output.Save(stream, encoder, quality);
+            using var parameters = new EncoderParameters(1);
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
+            output.Save(stream, encoder, parameters);
             return "data:image/jpeg;base64," + Convert.ToBase64String(stream.ToArray());
         }
         finally
         {
             if (!ReferenceEquals(output, source)) output.Dispose();
         }
+    }
+
+    private static bool SameControlIdentity(UiControlSnapshot a, UiControlSnapshot b)
+    {
+        if (!a.ControlType.Equals(b.ControlType, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrWhiteSpace(a.AutomationId) && !string.IsNullOrWhiteSpace(b.AutomationId))
+            return a.AutomationId.Equals(b.AutomationId, StringComparison.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(a.Name) && !a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return Math.Abs(a.X - b.X) <= 45 &&
+               Math.Abs(a.Y - b.Y) <= 45 &&
+               Math.Abs(a.Width - b.Width) <= 70 &&
+               Math.Abs(a.Height - b.Height) <= 70;
     }
 
     private static void EnsureSameWindow(nint expectedHwnd, int expectedPid)
@@ -257,6 +303,12 @@ internal sealed class ObservationService
 
     private static double Normalize(double value, double total)
         => total <= 0 ? 0 : Math.Clamp(value / total * 1000d, 0d, 1000d);
+
+    private static string Trim(string? value, int max)
+    {
+        var text = value?.Trim() ?? string.Empty;
+        return text.Length <= max ? text : text[..max];
+    }
 
     private static bool IsBrowser(string processName)
         => processName.Equals("chrome", StringComparison.OrdinalIgnoreCase) ||
