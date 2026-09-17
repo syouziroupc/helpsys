@@ -95,17 +95,22 @@ internal sealed partial class UpdateService : IDisposable
             var log = Path.Combine(root, "update.log");
             var currentPid = Environment.ProcessId;
 
-            var scriptText = $"""
-$ErrorActionPreference = 'Stop'
-try {{
-  Wait-Process -Id {currentPid} -ErrorAction SilentlyContinue
-  Start-Sleep -Milliseconds 500
-  Copy-Item -Path '{EscapePowerShell(extracted)}\*' -Destination '{EscapePowerShell(appDirectory)}' -Recurse -Force
-  Start-Process -FilePath '{EscapePowerShell(Path.Combine(appDirectory, "HelpSys.Stable.exe"))}'
-}} catch {{
-  $_ | Out-String | Set-Content -Encoding UTF8 '{EscapePowerShell(log)}'
-}}
-""";
+            var escapedExtracted = EscapePowerShell(extracted);
+            var escapedDirectory = EscapePowerShell(appDirectory);
+            var escapedExe = EscapePowerShell(Path.Combine(appDirectory, "HelpSys.Stable.exe"));
+            var escapedLog = EscapePowerShell(log);
+            var scriptText = string.Join(Environment.NewLine,
+            [
+                "$ErrorActionPreference = 'Stop'",
+                "try {",
+                $"  Wait-Process -Id {currentPid} -ErrorAction SilentlyContinue",
+                "  Start-Sleep -Milliseconds 500",
+                $"  Copy-Item -Path '{escapedExtracted}\\*' -Destination '{escapedDirectory}' -Recurse -Force",
+                $"  Start-Process -FilePath '{escapedExe}'",
+                "} catch {",
+                $"  $_ | Out-String | Set-Content -Encoding UTF8 '{escapedLog}'",
+                "}"
+            ]) + Environment.NewLine;
             await File.WriteAllTextAsync(script, scriptText, cancellationToken);
 
             Process.Start(new ProcessStartInfo
