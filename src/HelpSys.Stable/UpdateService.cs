@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -114,7 +115,7 @@ internal sealed partial class UpdateService : IDisposable
             ]) + Environment.NewLine;
             await File.WriteAllTextAsync(script, scriptText, cancellationToken);
 
-            Process.Start(new ProcessStartInfo
+            _ = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe",
                 Arguments = $"-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
