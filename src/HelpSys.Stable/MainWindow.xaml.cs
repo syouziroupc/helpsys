@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private HwndSource? _source;
     private nint _windowHandle;
     private AppPhase _phase = AppPhase.Idle;
+    private bool _closing;
 
     public MainWindow()
     {
@@ -55,6 +56,8 @@ public partial class MainWindow : Window
 
     private async Task RunGuidanceAsync()
     {
+        if (_closing) return;
+
         if (!await _runGate.WaitAsync(0))
         {
             SetStatus("現在の案内処理が完了するまで待ってください。二重実行はしません。");
@@ -139,33 +142,48 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            RestoreMainWindow();
-            SetStatus("中止しました。HelpSysは操作を実行していません。");
+            if (!_closing)
+            {
+                RestoreMainWindow();
+                SetStatus("中止しました。HelpSysは操作を実行していません。");
+            }
         }
         catch (PrivacyBlockedException ex)
         {
-            RestoreMainWindow();
-            SetStatus(ex.Message);
+            if (!_closing)
+            {
+                RestoreMainWindow();
+                SetStatus(ex.Message);
+            }
         }
         catch (ObservationChangedException ex)
         {
-            RestoreMainWindow();
-            SetStatus(ex.Message + " 画面が落ち着いた状態でF8を押してください。");
+            if (!_closing)
+            {
+                RestoreMainWindow();
+                SetStatus(ex.Message + " 画面が落ち着いた状態でF8を押してください。");
+            }
         }
         catch (PlannerException ex)
         {
-            RestoreMainWindow();
-            SetStatus(ex.Message);
+            if (!_closing)
+            {
+                RestoreMainWindow();
+                SetStatus(ex.Message);
+            }
         }
         catch (Exception ex)
         {
-            RestoreMainWindow();
-            SetStatus("予期しないエラーが発生したため案内を中止しました。操作は実行されていません。 " + ex.Message);
+            if (!_closing)
+            {
+                RestoreMainWindow();
+                SetStatus("予期しないエラーが発生したため案内を中止しました。操作は実行されていません。 " + ex.Message);
+            }
         }
         finally
         {
             _phase = AppPhase.Idle;
-            GuideButton.IsEnabled = true;
+            if (!_closing) GuideButton.IsEnabled = true;
             if (ReferenceEquals(_runCts, ownedCts)) _runCts = null;
             ownedCts?.Dispose();
             _runGate.Release();
@@ -174,6 +192,7 @@ public partial class MainWindow : Window
 
     private void RestoreMainWindow()
     {
+        if (_closing) return;
         if (!IsVisible) Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
@@ -188,19 +207,18 @@ public partial class MainWindow : Window
 
     private void SetStatus(string message)
     {
+        if (_closing) return;
         StatusText.Text = message;
         GuideButton.IsEnabled = _phase == AppPhase.Idle || _phase == AppPhase.ShowingResult;
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
+        _closing = true;
         _runCts?.Cancel();
         CloseOverlay();
         if (_windowHandle != nint.Zero)
             _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyId);
         _source?.RemoveHook(WindowProc);
-        _planner.Dispose();
-        _runGate.Dispose();
-        _runCts?.Dispose();
     }
 }
