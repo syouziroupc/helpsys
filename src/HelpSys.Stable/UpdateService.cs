@@ -23,7 +23,7 @@ internal sealed partial class UpdateService : IDisposable
 
     public async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken)
     {
-        using var response = await _http.GetAsync(ReleaseApi, cancellationToken);
+        using var response = await _http.GetAsync(ResolveReleaseApi(), cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new PlannerException($"更新情報を取得できませんでした (HTTP {(int)response.StatusCode})。");
 
@@ -153,9 +153,22 @@ internal sealed partial class UpdateService : IDisposable
 
     private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
+    private static Uri ResolveReleaseApi()
+    {
+        var configured = Environment.GetEnvironmentVariable("HELPSYS_UPDATE_API")?.Trim();
+        if (Uri.TryCreate(configured, UriKind.Absolute, out var uri) &&
+            uri.IsLoopback &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            return uri;
+        return ReleaseApi;
+    }
+
     internal static bool IsTrustedReleaseUri(Uri uri)
         => uri.Scheme == Uri.UriSchemeHttps &&
-           uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
+           uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+           uri.AbsolutePath.StartsWith(
+               "/syouziroupc/helpsys/releases/download/preview-latest/",
+               StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"^HelpSys-Stable-(?<version>\d+\.\d+\.\d+)-(?<build>[0-9a-fA-F]{8})-win-x64\.zip$",
         RegexOptions.CultureInvariant)]
