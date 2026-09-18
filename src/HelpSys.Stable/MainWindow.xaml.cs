@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly CancellationTokenSource _lifetimeCts = new();
     private CancellationTokenSource? _runCts;
+    private CancellationTokenSource? _voiceCts;
+    private CancellationTokenSource? _updateCts;
     private OverlayWindow? _overlay;
     private HwndSource? _source;
     private nint _windowHandle;
@@ -67,9 +69,11 @@ public partial class MainWindow : Window
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
         _runCts?.Cancel();
+        _voiceCts?.Cancel();
+        _updateCts?.Cancel();
         _speech.StopSpeaking();
         CloseOverlay();
-        if (_phase is AppPhase.Capturing or AppPhase.Planning or AppPhase.Validating)
+        if (_phase is AppPhase.Capturing or AppPhase.Planning or AppPhase.Validating or AppPhase.Listening or AppPhase.Updating)
             SetStatus("中止要求を受け付けました。現在の処理を安全に終了しています…");
         else
         {
@@ -84,12 +88,16 @@ public partial class MainWindow : Window
     private async Task StartVoiceInputAsync()
     {
         if (_closing || _phase != AppPhase.Idle || !_speech.RecognitionAvailable) return;
+        CancellationTokenSource? ownedCts = null;
         try
         {
+            ownedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            _voiceCts = ownedCts;
             RestoreMainWindow();
             _phase = AppPhase.Listening;
             SetStatus("8秒以内で、やりたいことを話してください…");
-            var text = await _speech.ListenOnceAsync(_lifetimeCts.Token);
+            var text = await _speech.ListenOnceAsync(ownedCts.Token);
+            ownedCts.Token.ThrowIfCancellationRequested();
             if (_closing) return;
             _phase = AppPhase.Idle;
             if (string.IsNullOrWhiteSpace(text))
@@ -102,8 +110,13 @@ public partial class MainWindow : Window
             GoalBox.CaretIndex = GoalBox.Text.Length;
             SetStatus($"「{text}」として認識しました。操作したい画面を前面に出してF8を押してください。");
         }
-        catch (OperationCanceledException) when (_closing)
+        catch (OperationCanceledException)
         {
+            if (!_closing)
+            {
+                _phase = AppPhase.Idle;
+                SetStatus("音声入力を中止しました。");
+            }
         }
         catch (Exception ex)
         {
@@ -111,16 +124,25 @@ public partial class MainWindow : Window
             _phase = AppPhase.Idle;
             SetStatus(ex is PlannerException ? ex.Message : "音声入力を開始できませんでした。文字入力を使ってください。");
         }
+        finally
+        {
+            if (ReferenceEquals(_voiceCts, ownedCts)) _voiceCts = null;
+            ownedCts?.Dispose();
+            if (!_closing) RefreshControls();
+        }
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (_closing || _phase != AppPhase.Idle) return;
+        CancellationTokenSource? ownedCts = null;
         try
         {
+            ownedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            _updateCts = ownedCts;
             _phase = AppPhase.Updating;
             SetStatus($"{VersionInfo.ProductName} の更新を確認しています…");
-            var update = await _updates.CheckAsync(_lifetimeCts.Token);
+            var update = await _updates.CheckAsync(ownedCts.Token);
             if (_closing) return;
 
             if (update is null)
@@ -145,13 +167,18 @@ public partial class MainWindow : Window
 
             _phase = AppPhase.Updating;
             SetStatus($"HelpSys Stable {update.Version} をダウンロードして検証しています…");
-            await _updates.InstallAsync(update, _lifetimeCts.Token);
+            await _updates.InstallAsync(update, ownedCts.Token);
             if (_closing) return;
             SetStatus("更新の検証が完了しました。HelpSysを再起動して入れ替えます。");
             Application.Current.Shutdown();
         }
-        catch (OperationCanceledException) when (_closing)
+        catch (OperationCanceledException)
         {
+            if (!_closing)
+            {
+                _phase = AppPhase.Idle;
+                SetStatus("更新処理を中止しました。現在のHelpSysはそのまま利用できます。");
+            }
         }
         catch (Exception ex)
         {
@@ -160,6 +187,12 @@ public partial class MainWindow : Window
             SetStatus(ex is PlannerException
                 ? ex.Message
                 : "更新確認に失敗しました。現在のHelpSysはそのまま利用できます。");
+        }
+        finally
+        {
+            if (ReferenceEquals(_updateCts, ownedCts)) _updateCts = null;
+            ownedCts?.Dispose();
+            if (!_closing) RefreshControls();
         }
     }
 
@@ -347,6 +380,8 @@ public partial class MainWindow : Window
         _closing = true;
         try { _lifetimeCts.Cancel(); } catch { }
         try { _runCts?.Cancel(); } catch { }
+        try { _voiceCts?.Cancel(); } catch { }
+        try { _updateCts?.Cancel(); } catch { }
         _speech.StopSpeaking();
         CloseOverlay();
         if (_windowHandle != nint.Zero)
