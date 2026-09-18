@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: helpsys-stable-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -27,6 +27,10 @@ jobs:
         with:
           node-version: 24
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Verify Stable contracts
         shell: pwsh
         run: |
@@ -37,12 +41,24 @@ jobs:
           node tests/stable-worker-selftest.mjs
           node tests/stable-education-selftest.mjs
           node tests/stable-rebuild-contract.mjs
+          node tests/stable-adversarial-selftest.mjs
+          node tests/stable-worker-fuzz-selftest.mjs
+          python -m py_compile tests/mock_stable_server.py
 
       - name: Restore Stable
         run: dotnet restore src/HelpSys.Stable/HelpSys.Stable.csproj
 
+      - name: Restore Stable tests
+        run: dotnet restore tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj
+
       - name: Build Stable
-        run: dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+        shell: pwsh
+        run: |
+          dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+          dotnet build tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj -c Release --no-restore
+
+      - name: Run Stable C# safety and validation tests
+        run: dotnet run --project tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj -c Release --no-build
 
       - name: Publish Stable package
         shell: pwsh
@@ -103,6 +119,10 @@ jobs:
           if ($p.HasExited) { throw "HelpSys Stable exited during startup smoke with code $($p.ExitCode)." }
           Stop-Process -Id $p.Id -Force
 
+      - name: Run Stable GUI/F8/privacy/cancellation smoke
+        shell: pwsh
+        run: ./tests/stable_gui_smoke.ps1
+
       - name: Publish preview-latest
         shell: pwsh
         env:
@@ -155,3 +175,11 @@ jobs:
           foreach ($expected in $allowed) {
             if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
           }
+
+          # gh release edit --target does not move an already-existing Git tag.
+          # Move preview-latest only after every asset is verified so the tag and
+          # traceable package always identify the same tested commit.
+          git tag -f $tag $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to update preview-latest tag locally.' }
+          git push origin "refs/tags/$tag" --force
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to move preview-latest tag to the published commit.' }

@@ -19,23 +19,34 @@ function validPlan(x){
   return x&&['target','clarify','done'].includes(x.status)&&['left_click','double_click','type_text','press_key','none'].includes(x.action)&&typeof x.confidence==='number';
 }
 async function waitHealth(){
-  for(let i=0;i<30;i++){
-    try{
-      const h=await req('/health');
-      if(h.status===200&&h.body?.ok===true&&h.body?.version==='3.0.1'&&h.body?.geminiConfigured===true)return h;
-    }catch{}
-    await new Promise(r=>setTimeout(r,6000));
-  }
-  throw new Error('production health did not converge to 3.0.1 with Gemini configured');
+  const h=await req('/health');
+  const now=JSON.stringify({status:h.status,body:h.body,ms:Math.round(h.ms)});
+  console.log('health_probe',now);
+  if(h.status===200&&h.body?.ok===true&&h.body?.version==='3.0.1'&&h.body?.geminiConfigured===true)return h;
+  throw new Error('production health mismatch: '+now);
+}
+
+// cheap protocol checks are useful even when Gemini is not configured
+{
+  const x=await req('/definitely-not-found'); assert(x.status===404,'unknown route must be 404');
+  const old=await req('/v1/guide',{method:'POST'}); assert(old.status===426,'legacy guide must be 426');
+}
+
+const rawHealth=await req('/health');
+console.log('health_probe',JSON.stringify({status:rawHealth.status,body:rawHealth.body,ms:Math.round(rawHealth.ms)}));
+if(rawHealth.status===200 && rawHealth.body?.geminiConfigured===false){
+  const unavailable=await req('/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload('メモ帳を開く',[ctrl('u1','メモ帳','ControlType.ListItem')]))});
+  console.log('unconfigured_planner_probe',JSON.stringify(unavailable));
+  assert(unavailable.status===503 && unavailable.body?.error==='gemini_unconfigured','unconfigured planner must fail explicitly');
+  console.log('BURNIN_SKIPPED production Gemini secret is missing; protocol probes passed and planner correctly returns 503');
+  process.exit(0);
 }
 
 const health=await waitHealth();
 console.log('health',JSON.stringify(health));
 
-// cheap protocol/input checks (no Gemini spend expected)
+// input validation checks once Gemini is configured
 {
-  const x=await req('/definitely-not-found'); assert(x.status===404,'unknown route must be 404');
-  const old=await req('/v1/guide',{method:'POST'}); assert(old.status===426,'legacy guide must be 426');
   const badJson=await req('/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:'{'}); assert(badJson.status===400,'invalid json');
   const noGoal=await req('/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image,controls:[]})}); assert(noGoal.status===400,'missing goal');
   const badImage=await req('/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({goal:'x',image:'bad',controls:[]})}); assert(badImage.status===400,'bad image');

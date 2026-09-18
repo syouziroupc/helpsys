@@ -79,10 +79,14 @@ export default {
     if (declaredLength > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
 
     let body;
-    try { body = await request.json(); }
+    try {
+      const raw = await request.arrayBuffer();
+      if (raw.byteLength > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
+      body = JSON.parse(new TextDecoder().decode(raw));
+    }
     catch { return json({ error: 'invalid_json' }, 400); }
 
-    const goal = text(body?.goal, 1000);
+    const goal = sanitizeOutboundText(text(body?.goal, 1000));
     const image = typeof body?.image === 'string' ? body.image : '';
     if (!goal) return json({ error: 'invalid_goal' }, 400);
     const parsedImage = parseDataImage(image);
@@ -95,7 +99,7 @@ export default {
     const context = {
       goal,
       processName: text(body?.processName, 80),
-      windowTitle: text(body?.windowTitle, 260),
+      windowTitle: sanitizeOutboundText(text(body?.windowTitle, 260)),
       browserDomain: nullableText(body?.browserDomain, 220),
       controls
     };
@@ -166,18 +170,29 @@ function validatePlan(value, controls) {
   if (!statuses.has(status) || !actions.has(action))
     return { ok: false, error: 'invalid_plan_shape' };
 
+  if (typeof value?.instruction !== 'string' ||
+      !isNullableString(value?.question) ||
+      !isNullableString(value?.targetId) ||
+      !isNullableString(value?.key))
+    return { ok: false, error: 'invalid_plan_shape' };
+
+  const confidence = strictNumber(value?.confidence, 0, 1);
+  const x = strictNumber(value?.x, 0, 1000);
+  const y = strictNumber(value?.y, 0, 1000);
+  const width = strictNumber(value?.width, 0, 1000);
+  const height = strictNumber(value?.height, 0, 1000);
+  if ([confidence, x, y, width, height].some(v => v === null))
+    return { ok: false, error: 'invalid_plan_shape' };
+
   const targetId = nullableText(value?.targetId, 80);
   const instruction = text(value?.instruction, 420);
   const question = nullableText(value?.question, 320);
   const key = nullableText(value?.key, 80);
-  const confidence = clamp01(value?.confidence);
-  const x = clamp1000(value?.x);
-  const y = clamp1000(value?.y);
-  const width = clamp1000(value?.width);
-  const height = clamp1000(value?.height);
 
   if (containsSecretRequest(instruction) || containsSecretRequest(question || ''))
     return { ok: false, error: 'secret_request_rejected' };
+  if (containsWarningBypass(instruction) || containsWarningBypass(question || ''))
+    return { ok: false, error: 'warning_bypass_rejected' };
 
   if (status === 'clarify') {
     if (!question) return { ok: false, error: 'empty_question' };
@@ -223,11 +238,11 @@ function compactControl(value) {
   if (!id) return null;
   return {
     id,
-    name: text(value.name, 180),
-    automationId: text(value.automationId, 120),
-    className: text(value.className, 120),
+    name: sanitizeOutboundText(text(value.name, 180)),
+    automationId: sanitizeOutboundText(text(value.automationId, 120)),
+    className: sanitizeOutboundText(text(value.className, 120)),
     controlType: text(value.controlType, 80),
-    enabled: value.enabled !== false,
+    enabled: value.enabled === true,
     focused: value.focused === true,
     keyboardFocusable: value.keyboardFocusable === true,
     x: clamp1000(value.x),
@@ -237,8 +252,32 @@ function compactControl(value) {
   };
 }
 
+const EMAIL = /(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![\w.-])/gi;
+const JP_PHONE = /(?<!\d)0\d{1,4}[-‐‑–—ー]?\d{1,4}[-‐‑–—ー]?\d{3,4}(?!\d)/g;
+const JP_POSTAL = /〒?\s*\d{3}[-‐‑–—ー]?\d{4}/g;
+const LABELED_SECRET = /(api[_ -]?key|token|secret|password|パスワード|秘密鍵|apiキー)\s*[:=]\s*\S{4,}/gi;
+const BEARER = /bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+const JWT = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
+const CARD = /\b(?:\d[ -]?){13,19}\b/g;
+
+function sanitizeOutboundText(value) {
+  let result = String(value || '');
+  result = result.replace(EMAIL, '<email>');
+  result = result.replace(JP_PHONE, '<phone>');
+  result = result.replace(JP_POSTAL, '<postal-code>');
+  result = result.replace(BEARER, '<redacted-secret>');
+  result = result.replace(JWT, '<redacted-secret>');
+  result = result.replace(LABELED_SECRET, '<redacted-secret>');
+  result = result.replace(CARD, '<redacted-card>');
+  return result;
+}
+
 function containsSecretRequest(value) {
-  return /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,28}(教え|送|貼|入力してhelp|tell|send|paste)/i.test(value || '');
+  return /(?:(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)|(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide).{0,36}(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード))/i.test(value || '');
+}
+
+function containsWarningBypass(value) {
+  return /(proceed\s+anyway|continue\s+to\s+(?:the\s+)?site|ignore.{0,24}warning|bypass.{0,24}(warning|certificate|smartscreen)|advanced.{0,24}proceed|警告.{0,24}無視|無視して.{0,24}(続|進)|詳細設定.{0,24}(続行|アクセス|進)|安全ではありません.{0,24}(続|進)|危険.{0,24}続行|このサイトに進む)/i.test(value || '');
 }
 
 function parseDataImage(value) {
@@ -265,7 +304,10 @@ function hasKey(env) {
 }
 function text(value, max) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function nullableText(value, max) { const v = text(value, max); return v || null; }
-function clamp01(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; }
+function isNullableString(value) { return value === null || typeof value === 'string'; }
+function strictNumber(value, min, max) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : null;
+}
 function clamp1000(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1000, n)) : 0; }
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {

@@ -7,18 +7,20 @@ namespace HelpSys.Stable;
 public partial class OverlayWindow : Window
 {
     private readonly double _dpiScale;
+    private readonly ScreenObservation _observation;
 
     public OverlayWindow(ScreenObservation observation, PlanResult plan)
     {
         InitializeComponent();
+        _observation = observation;
 
         var dpi = NativeMethods.GetDpiForWindow(observation.WindowHandle);
         _dpiScale = dpi > 0 ? 96d / dpi : 1d;
 
-        Left = observation.X * _dpiScale;
-        Top = observation.Y * _dpiScale;
-        Width = observation.Width * _dpiScale;
-        Height = observation.Height * _dpiScale;
+        // Size is expressed in WPF DIPs. Absolute desktop position is applied later
+        // with SetWindowPos in physical pixels so mixed-DPI monitor origins remain correct.
+        Width = PixelsToDips(observation.Width, dpi);
+        Height = PixelsToDips(observation.Height, dpi);
         InstructionText.Text = BuildInstruction(plan);
 
         var target = ResolveTarget(observation, plan);
@@ -32,7 +34,28 @@ public partial class OverlayWindow : Window
         }
 
         Loaded += (_, _) => PositionInstruction(target);
-        SourceInitialized += (_, _) => MakeClickThrough();
+        SourceInitialized += (_, _) =>
+        {
+            PositionPhysicalWindow();
+            MakeClickThrough();
+        };
+    }
+
+    internal static double PixelsToDips(double pixels, uint dpi)
+        => pixels * 96d / (dpi > 0 ? dpi : 96d);
+
+    private void PositionPhysicalWindow()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (!NativeMethods.SetWindowPos(
+                hwnd,
+                NativeMethods.HwndTopmost,
+                _observation.X,
+                _observation.Y,
+                _observation.Width,
+                _observation.Height,
+                NativeMethods.SwpNoActivate | NativeMethods.SwpShowWindow))
+            throw new InvalidOperationException("Overlay window could not be positioned.");
     }
 
     private void MakeClickThrough()

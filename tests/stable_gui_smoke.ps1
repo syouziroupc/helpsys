@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -13,7 +14,7 @@ public static class StableSmokeNative {
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'publish/stable-win-x64/HelpSys.Stable.exe'
-$server=$null; $target=$null; $privacy=$null; $app=$null
+$server=$null; $target=$null; $privacy=$null; $matrix=$null; $stale=$null; $pii=$null; $occluder=$null; $app=$null
 $log='artifacts/stable-mock-requests.jsonl'
 
 function Find-Element($process,[string]$id) {
@@ -57,6 +58,30 @@ function Wait-Request([int]$seconds=8) {
   } while([DateTime]::UtcNow -lt $deadline)
   throw 'Stable planner request did not arrive'
 }
+
+function Assert-HasSolidRedaction([string]$path,[int]$minRun=80,[int]$minRows=8) {
+  if(-not(Test-Path $path)){throw "Redaction image missing: $path"}
+  $bitmap=[System.Drawing.Bitmap]::new((Resolve-Path $path).Path)
+  try {
+    $rows=0; $maxRun=0
+    for($y=0;$y -lt $bitmap.Height;$y+=2){
+      $run=0; $rowMax=0
+      for($x=0;$x -lt $bitmap.Width;$x+=2){
+        $p=$bitmap.GetPixel($x,$y)
+        if($p.R -le 12 -and $p.G -le 12 -and $p.B -le 12){
+          $run+=2
+          if($run -gt $rowMax){$rowMax=$run}
+        } else {$run=0}
+      }
+      if($rowMax -gt $maxRun){$maxRun=$rowMax}
+      if($rowMax -ge $minRun){$rows+=2}
+    }
+    if($maxRun -lt $minRun -or $rows -lt $minRows){
+      throw "Expected solid redaction block not found. maxRun=$maxRun rows=$rows"
+    }
+  } finally {$bitmap.Dispose()}
+}
+
 function Request-Count {
   if(-not(Test-Path $log)){return 0}
   return @(Get-Content $log | Where-Object { $_.Trim() }).Count
@@ -65,6 +90,7 @@ function Request-Count {
 try {
   Remove-Item $log -Force -ErrorAction SilentlyContinue
   $env:HELPSYS_STABLE_ENDPOINT='http://127.0.0.1:8766/v1/plan'
+  $env:HELPSYS_UPDATE_API='http://127.0.0.1:8766/release'
   $server=Start-Process python -ArgumentList 'tests/mock_stable_server.py' -PassThru -WindowStyle Hidden
   Start-Sleep -Seconds 1
   $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
@@ -126,9 +152,150 @@ try {
     Start-Sleep -Milliseconds 500
   }
 
-  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger smoke passed.'
+  # Visible contact PII must be removed from structured evidence and blacked out in the exact outbound screenshot.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/stable-pii-egress.jpg' -Force -ErrorAction SilentlyContinue
+  $pii=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/pii_smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('stable pii redaction')
+  Focus-Process $pii 'stable PII target'
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  $piiLine=(Get-Content $log | Select-Object -Last 1)
+  foreach($forbidden in @('alice@example.com','090-1234-5678','123-4567')){
+    if($piiLine.Contains($forbidden,[StringComparison]::OrdinalIgnoreCase)){throw "PII leaked in outbound structured payload: $forbidden"}
+  }
+  Assert-HasSolidRedaction 'artifacts/stable-pii-egress.jpg' 80 8
+  Stop-Process -Id $pii.Id -Force; $pii=$null
+
+  # A distinct topmost no-activate window may cover the foreground target without becoming foreground.
+  # Its pixels must be blacked out before the screenshot leaves the device.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/stable-occluder-egress.jpg' -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/occluder-overlay-bounds.json' -Force -ErrorAction SilentlyContinue
+  $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $occluder=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' -PassThru
+  $occluderDeadline=[DateTime]::UtcNow.AddSeconds(6)
+  while(-not(Test-Path 'artifacts/occluder-overlay-bounds.json') -and [DateTime]::UtcNow -lt $occluderDeadline){Start-Sleep -Milliseconds 100}
+  if(-not(Test-Path 'artifacts/occluder-overlay-bounds.json')){throw 'Stable occluder helper did not become ready'}
+  Focus-Process $target 'stable occluder target'
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('stable occluder redaction')
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  $occLine=(Get-Content $log | Select-Object -Last 1)
+  if($occLine.Contains('UNRELATED OVERLAY',[StringComparison]::OrdinalIgnoreCase)){throw 'Occluder text leaked into structured payload'}
+  Assert-HasSolidRedaction 'artifacts/stable-occluder-egress.jpg' 120 40
+  Stop-Process -Id $occluder.Id -Force; $occluder=$null
+  Stop-Process -Id $target.Id -Force; $target=$null
+
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $matrix=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/uia_matrix_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('inspect dense matrix')
+  Focus-Process $matrix 'UIA matrix target'
+  Press-F8
+  Wait-Request
+  $req=(Get-Content $log | Select-Object -Last 1 | ConvertFrom-Json)
+  if(@($req.controls).Count -gt 240){throw "UIA control cap exceeded: $(@($req.controls).Count)"}
+  foreach($expected in @('MatrixActionButton','MatrixEdit','MatrixCheck','MatrixDisabled')){
+    if(-not @($req.controls | Where-Object { $_.automationId -eq $expected })){throw "Dense UIA scan missed prioritized control: $expected"}
+  }
+  $disabled=@($req.controls | Where-Object { $_.automationId -eq 'MatrixDisabled' } | Select-Object -First 1)
+  if($disabled.Count -ne 1 -or $disabled[0].enabled -ne $false){throw 'Disabled UIA state was not preserved'}
+  Stop-Process -Id $matrix.Id -Force; $matrix=$null
+
+  # Cancellation must abort an in-flight planner call and leave the app reusable.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('slow cancellation recovery')
+  Focus-Process $target 'cancel target'
+  Press-F8
+  Wait-Request
+  $cancel=Find-Element $app 'CancelButton'
+  if($null-eq $cancel){throw 'Cancel button disappeared during planning'}
+  $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  Start-Sleep -Seconds 2
+  if($app.HasExited){throw 'HelpSys exited after cancellation'}
+  $status=Find-Element $app 'StatusText'
+  if($null-eq $status -or $status.Current.Name -notlike '*中止*'){throw "Cancellation status missing: $($status.Current.Name)"}
+
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('recovery after cancellation')
+  Focus-Process $target 'recovery target'
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  if($app.HasExited){throw 'HelpSys failed to recover after cancellation'}
+  Stop-Process -Id $target.Id -Force; $target=$null
+
+  # A target that moves or becomes disabled while Gemini is answering must invalidate guidance.
+  foreach($mode in @('move','disable')){
+    Remove-Item $log -Force -ErrorAction SilentlyContinue
+    $signal=Join-Path $PWD "artifacts/stale-$mode.signal"
+    Remove-Item $signal -Force -ErrorAction SilentlyContinue
+    $stale=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/stale_target.ps1','-SignalPath',$signal -PassThru
+    Start-Sleep -Seconds 2
+    $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("slow stale $mode")
+    Focus-Process $stale "stale $mode target"
+    Press-F8
+    Wait-Request
+    Set-Content -Path $signal -Value $mode -Encoding ASCII
+    $ack=$signal + '.ack'
+    $ackDeadline=[DateTime]::UtcNow.AddSeconds(2)
+    while(-not(Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline){Start-Sleep -Milliseconds 50}
+    if(-not(Test-Path $ack)){throw "Stale-$mode target did not acknowledge UI update"}
+    Start-Sleep -Seconds 3
+    if($app.HasExited){throw "HelpSys exited during stale-$mode revalidation"}
+    $status=Find-Element $app 'StatusText'
+    if($null-eq $status -or $status.Current.Name -notlike '*古い案内を破棄*'){throw "Stale-$mode guidance was not rejected: $($status.Current.Name)"}
+    Stop-Process -Id $stale.Id -Force; $stale=$null
+  }
+
+  # Visual-only targets must also be revalidated against the current pixels.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $signal=Join-Path $PWD 'artifacts/stale-visual.signal'
+  Remove-Item $signal -Force -ErrorAction SilentlyContinue
+  $stale=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/stale_target.ps1','-SignalPath',$signal -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('slow visual stale move')
+  Focus-Process $stale 'visual stale target'
+  Press-F8
+  Wait-Request
+  Set-Content -Path $signal -Value 'move' -Encoding ASCII
+  $ack=$signal + '.ack'
+  $ackDeadline=[DateTime]::UtcNow.AddSeconds(2)
+  while(-not(Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline){Start-Sleep -Milliseconds 50}
+  if(-not(Test-Path $ack)){throw 'Visual stale target did not acknowledge UI update'}
+  Start-Sleep -Seconds 3
+  $status=Find-Element $app 'StatusText'
+  if($null-eq $status -or $status.Current.Name -notlike '*古い案内を破棄*'){throw "Visual stale guidance was not rejected: $($status.Current.Name)"}
+  Stop-Process -Id $stale.Id -Force; $stale=$null
+
+  # Update cancellation must abort the HTTP request and restore the idle UI.
+  $update=Find-Element $app 'UpdateButton'
+  $cancel=Find-Element $app 'CancelButton'
+  if($null-eq $update -or $null-eq $cancel){throw 'Update/cancel controls missing before cancellation test'}
+  $update.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  Start-Sleep -Milliseconds 350
+  $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  $deadline=[DateTime]::UtcNow.AddSeconds(4)
+  do {
+    $status=Find-Element $app 'StatusText'
+    $update=Find-Element $app 'UpdateButton'
+    if($null-ne $status -and $status.Current.Name -like '*更新処理を中止*' -and $update.Current.IsEnabled){break}
+    Start-Sleep -Milliseconds 100
+  } while([DateTime]::UtcNow -lt $deadline)
+  if($null-eq $status -or $status.Current.Name -notlike '*更新処理を中止*'){throw "Update cancellation did not settle: $($status.Current.Name)"}
+  if(-not $update.Current.IsEnabled){throw 'Update button did not recover after cancellation'}
+
+  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA/cancel/stale-target/update-cancel smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_STABLE_ENDPOINT -ErrorAction SilentlyContinue
-  foreach($p in @($app,$target,$privacy,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
+  Remove-Item Env:HELPSYS_UPDATE_API -ErrorAction SilentlyContinue
+  foreach($p in @($app,$target,$privacy,$matrix,$stale,$pii,$occluder,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
 }

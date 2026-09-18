@@ -1,6 +1,14 @@
 name: HelpSys Stable live API burn-in
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
+  pull_request:
+    paths:
+      - "tests/stable-live-api-burnin.mjs"
+      - ".github/workflows/stable-live-api.yml"
   push:
     branches: [main]
     paths:
@@ -18,6 +26,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Report deployment secret availability
+        shell: bash
+        env:
+          GEMINI_API_KEY_VALUE: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY_VALUE: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_KEY_VALUE: ${{ secrets.GEMINI_KEY }}
+          CF_API_TOKEN_VALUE: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID_VALUE: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$GEMINI_API_KEY_VALUE" ] && g=true || g=false
+          [ -n "$GOOGLE_API_KEY_VALUE" ] && gg=true || gg=false
+          [ -n "$GEMINI_KEY_VALUE" ] && gk=true || gk=false
+          [ -n "$CF_API_TOKEN_VALUE" ] && cft=true || cft=false
+          [ -n "$CF_ACCOUNT_ID_VALUE" ] && cfa=true || cfa=false
+          echo "secret_presence GEMINI_API_KEY=$g GOOGLE_API_KEY=$gg GEMINI_KEY=$gk CLOUDFLARE_API_TOKEN=$cft CLOUDFLARE_ACCOUNT_ID=$cfa"
       - uses: actions/setup-node@v4
         with:
           node-version: 24

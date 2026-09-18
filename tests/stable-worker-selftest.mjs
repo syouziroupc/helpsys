@@ -45,6 +45,18 @@ try {
   assert(lastBody?.generationConfig?.thinkingConfig?.thinkingLevel === 'medium', 'Stable planner must use medium thinking');
   assert(lastBody?.generationConfig?.responseMimeType === 'application/json', 'Stable planner must require structured JSON output');
 
+  nextPlan = { ...nextPlan, targetId: 'u1' };
+  const piiControls = [{...controls[0], name:'alice@example.com', automationId:'090-1234-5678'}];
+  const piiResponse = await worker.fetch(new Request('https://stable.test/v1/plan', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({goal:'contact alice@example.com',processName:'explorer',windowTitle:'〒123-4567',controls:piiControls,image})
+  }), {GEMINI_API_KEY:'test-key'});
+  assert(piiResponse.status===200,'sanitized PII request should remain usable');
+  const context=JSON.parse(lastBody.contents[0].parts[0].text);
+  assert(!JSON.stringify(context).includes('alice@example.com'),'email must be sanitized before Gemini');
+  assert(!JSON.stringify(context).includes('090-1234-5678'),'phone must be sanitized before Gemini');
+  assert(!JSON.stringify(context).includes('123-4567'),'postal code must be sanitized before Gemini');
+
   nextPlan = { ...nextPlan, targetId: 'missing' };
   const invalid = await worker.fetch(new Request('https://stable.test/v1/plan', {
     method: 'POST', headers: { 'content-type': 'application/json' },

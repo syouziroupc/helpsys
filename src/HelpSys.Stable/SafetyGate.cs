@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace HelpSys.Stable;
 
 internal static class SafetyGate
@@ -20,9 +22,15 @@ internal static class SafetyGate
         "ワンタイム", "認証コード", "確認コード", "リカバリキー", "秘密鍵", "apiキー", "カード番号", "セキュリティコード"
     ];
 
+    private static readonly string[] AuthenticationTitleTerms =
+    [
+        "sign in", "log in", "login", "authentication", "verify your identity",
+        "サインイン", "ログイン", "認証", "本人確認"
+    ];
+
     private static readonly string[] SensitiveStorageTerms =
     [
-        "cookies", "cookie storage", "session storage", "local storage",
+        "cookie storage", "session storage", "local storage",
         "application - cookies", "application > cookies", "devtools - application - cookies",
         "cookie・storage", "cookie / storage", "セッションストレージ", "ローカルストレージ"
     ];
@@ -38,7 +46,13 @@ internal static class SafetyGate
         if (controls.Any(x => x.Password))
             throw new PrivacyBlockedException("パスワード入力欄を検出したため、スクリーンショットを撮影せず画面解析を停止しました。");
 
-        var signals = string.Join(' ', new[] { windowTitle }.Concat(controls.Select(x => x.Name)).Take(220));
+        if (ContainsAny(windowTitle, AuthenticationTitleTerms) &&
+            controls.Any(x => x.Enabled && x.KeyboardFocusable &&
+                (x.ControlType.Contains("Edit", StringComparison.OrdinalIgnoreCase) ||
+                 x.ControlType.Contains("Document", StringComparison.OrdinalIgnoreCase))))
+            throw new PrivacyBlockedException("ログイン・本人確認画面を検出したため、スクリーンショットを撮影せず画面解析を停止しました。");
+
+        var signals = string.Join(' ', new[] { windowTitle }.Concat(controls.Select(x => x.Name)));
         if (ContainsAny(signals, SecurityWarningTerms))
             throw new PrivacyBlockedException("ブラウザまたはOSのセキュリティ警告画面では自動案内を停止します。警告を迂回する操作は案内しません。");
 
@@ -53,6 +67,18 @@ internal static class SafetyGate
         if (hasEditableControl && ContainsAny(signals, SecretContextTerms))
             throw new PrivacyBlockedException("認証コード・秘密鍵・カード認証などの機密入力画面を検出したため、スクリーンショットを撮影せず解析を停止しました。");
     }
+
+    internal static bool ContainsWarningBypass(string? value)
+        => Regex.IsMatch(
+            value ?? "",
+            @"(proceed\s+anyway|continue\s+to\s+(?:the\s+)?site|ignore.{0,24}warning|bypass.{0,24}(warning|certificate|smartscreen)|advanced.{0,24}proceed|警告.{0,24}無視|無視して.{0,24}(続|進)|詳細設定.{0,24}(続行|アクセス|進)|安全ではありません.{0,24}(続|進)|危険.{0,24}続行|このサイトに進む)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    internal static bool ContainsSecretRequest(string? value)
+        => Regex.IsMatch(
+            value ?? "",
+            @"(?:(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)|(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide).{0,36}(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード))",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool ContainsAny(string text, IEnumerable<string> terms)
         => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
