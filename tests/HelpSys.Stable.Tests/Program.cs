@@ -45,8 +45,10 @@ ExpectPlanner(() => GeminiPlannerClient.Validate(new("clarify","left_click","", 
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("done","left_click","done",null,null,null,.9,0,0,0,0), controls), "done action");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("done","none","done",null,null,null,.5,0,0,0,0), controls), "low done confidence");
 
-Assert(UpdateService.IsTrustedReleaseUri(new Uri("https://github.com/a/b")), "github release URI should be trusted");
-Assert(!UpdateService.IsTrustedReleaseUri(new Uri("http://github.com/a/b")), "http must not be trusted");
+Assert(UpdateService.IsTrustedReleaseUri(new Uri("https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-latest-win-x64.zip")), "canonical HelpSys release URI should be trusted");
+Assert(!UpdateService.IsTrustedReleaseUri(new Uri("https://github.com/other/repo/releases/download/preview-latest/x.zip")), "foreign GitHub repo must not be trusted");
+Assert(!UpdateService.IsTrustedReleaseUri(new Uri("https://github.com/syouziroupc/helpsys/releases/download/other-tag/x.zip")), "foreign tag must not be trusted");
+Assert(!UpdateService.IsTrustedReleaseUri(new Uri("http://github.com/syouziroupc/helpsys/releases/download/preview-latest/x.zip")), "http must not be trusted");
 Assert(!UpdateService.IsTrustedReleaseUri(new Uri("https://evil.example/a")), "foreign host must not be trusted");
 Assert(VersionInfo.Version == "3.0.1", "test version drift");
 Assert(!string.IsNullOrWhiteSpace(VersionInfo.BuildId), "build id missing");
