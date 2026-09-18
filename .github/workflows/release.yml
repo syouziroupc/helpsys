@@ -91,6 +91,7 @@ jobs:
           "HELPSYS_LEGACY_ASSET=$legacyName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "HELPSYS_STABLE_ASSET=$stableName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "HELPSYS_SHA_ASSET=$shaName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HELPSYS_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Startup smoke
         shell: pwsh
@@ -116,7 +117,7 @@ jobs:
           $allowed = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_LEGACY_ASSET, $env:HELPSYS_STABLE_ASSET, $env:HELPSYS_SHA_ASSET)
 
           $notes = @"
-          HelpSys Stable $version — Gemini Edition
+          HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition
 
           - Windows 10 / 11 x64, self-contained
           - Gemini 3.8 Flash only; no GLM fallback
@@ -144,9 +145,9 @@ jobs:
             }
             gh release upload $tag $versioned $legacy $stable $sha --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Stable assets.' }
-            gh release edit $tag --target main --title "HelpSys Stable $version — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --target main --title "HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $versioned $legacy $stable $sha --target main --title "HelpSys Stable $version — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $versioned $legacy $stable $sha --target main --title "HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create Stable release.' }
           }
 
