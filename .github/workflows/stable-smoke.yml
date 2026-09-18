@@ -31,6 +31,10 @@ jobs:
         with:
           node-version: 24
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Check Gemini worker syntax
         shell: pwsh
         run: |
@@ -40,6 +44,8 @@ jobs:
           node --check tests/stable-worker-selftest.mjs
           node --check tests/stable-education-selftest.mjs
           node --check tests/stable-rebuild-contract.mjs
+          node --check tests/stable-adversarial-selftest.mjs
+          python -m py_compile tests/mock_stable_server.py
 
       - name: Run Stable contracts
         shell: pwsh
@@ -47,12 +53,22 @@ jobs:
           node tests/stable-worker-selftest.mjs
           node tests/stable-education-selftest.mjs
           node tests/stable-rebuild-contract.mjs
+          node tests/stable-adversarial-selftest.mjs
 
-      - name: Restore Stable project
-        run: dotnet restore src/HelpSys.Stable/HelpSys.Stable.csproj
+      - name: Restore Stable project and tests
+        shell: pwsh
+        run: |
+          dotnet restore src/HelpSys.Stable/HelpSys.Stable.csproj
+          dotnet restore tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj
 
-      - name: Build Stable project
-        run: dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+      - name: Build Stable project and tests
+        shell: pwsh
+        run: |
+          dotnet build src/HelpSys.Stable/HelpSys.Stable.csproj -c Release --no-restore
+          dotnet build tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj -c Release --no-restore
+
+      - name: Run Stable C# safety and validation tests
+        run: dotnet run --project tests/HelpSys.Stable.Tests/HelpSys.Stable.Tests.csproj -c Release --no-build
 
       - name: Publish and startup smoke
         shell: pwsh
@@ -74,8 +90,14 @@ jobs:
           if ($p.HasExited) { throw "HelpSys Stable exited during startup smoke with code $($p.ExitCode)." }
           Stop-Process -Id $p.Id -Force
 
+      - name: Run Stable GUI F8 and privacy smoke
+        shell: pwsh
+        run: ./tests/stable_gui_smoke.ps1
+
       - uses: actions/upload-artifact@v4
         with:
           name: HelpSys-Stable-3.0.0-win-x64
-          path: publish/stable-win-x64/
+          path: |
+            publish/stable-win-x64/
+            artifacts/
           if-no-files-found: error
