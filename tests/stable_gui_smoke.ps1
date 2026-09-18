@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -13,7 +14,7 @@ public static class StableSmokeNative {
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'publish/stable-win-x64/HelpSys.Stable.exe'
-$server=$null; $target=$null; $privacy=$null; $matrix=$null; $stale=$null; $app=$null
+$server=$null; $target=$null; $privacy=$null; $matrix=$null; $stale=$null; $pii=$null; $occluder=$null; $app=$null
 $log='artifacts/stable-mock-requests.jsonl'
 
 function Find-Element($process,[string]$id) {
@@ -57,6 +58,30 @@ function Wait-Request([int]$seconds=8) {
   } while([DateTime]::UtcNow -lt $deadline)
   throw 'Stable planner request did not arrive'
 }
+
+function Assert-HasSolidRedaction([string]$path,[int]$minRun=80,[int]$minRows=8) {
+  if(-not(Test-Path $path)){throw "Redaction image missing: $path"}
+  $bitmap=[System.Drawing.Bitmap]::new((Resolve-Path $path).Path)
+  try {
+    $rows=0; $maxRun=0
+    for($y=0;$y -lt $bitmap.Height;$y+=2){
+      $run=0; $rowMax=0
+      for($x=0;$x -lt $bitmap.Width;$x+=2){
+        $p=$bitmap.GetPixel($x,$y)
+        if($p.R -le 12 -and $p.G -le 12 -and $p.B -le 12){
+          $run+=2
+          if($run -gt $rowMax){$rowMax=$run}
+        } else {$run=0}
+      }
+      if($rowMax -gt $maxRun){$maxRun=$rowMax}
+      if($rowMax -ge $minRun){$rows+=2}
+    }
+    if($maxRun -lt $minRun -or $rows -lt $minRows){
+      throw "Expected solid redaction block not found. maxRun=$maxRun rows=$rows"
+    }
+  } finally {$bitmap.Dispose()}
+}
+
 function Request-Count {
   if(-not(Test-Path $log)){return 0}
   return @(Get-Content $log | Where-Object { $_.Trim() }).Count
@@ -126,6 +151,45 @@ try {
     Stop-Process -Id $privacy.Id -Force; $privacy=$null
     Start-Sleep -Milliseconds 500
   }
+
+  # Visible contact PII must be removed from structured evidence and blacked out in the exact outbound screenshot.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/stable-pii-egress.jpg' -Force -ErrorAction SilentlyContinue
+  $pii=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/pii_smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('stable pii redaction')
+  Focus-Process $pii 'stable PII target'
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  $piiLine=(Get-Content $log | Select-Object -Last 1)
+  foreach($forbidden in @('alice@example.com','090-1234-5678','123-4567')){
+    if($piiLine.Contains($forbidden,[StringComparison]::OrdinalIgnoreCase)){throw "PII leaked in outbound structured payload: $forbidden"}
+  }
+  Assert-HasSolidRedaction 'artifacts/stable-pii-egress.jpg' 80 8
+  Stop-Process -Id $pii.Id -Force; $pii=$null
+
+  # A distinct topmost no-activate window may cover the foreground target without becoming foreground.
+  # Its pixels must be blacked out before the screenshot leaves the device.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/stable-occluder-egress.jpg' -Force -ErrorAction SilentlyContinue
+  Remove-Item 'artifacts/occluder-overlay-bounds.json' -Force -ErrorAction SilentlyContinue
+  $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $occluder=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/occluder_smoke_overlay.ps1' -PassThru
+  $occluderDeadline=[DateTime]::UtcNow.AddSeconds(6)
+  while(-not(Test-Path 'artifacts/occluder-overlay-bounds.json') -and [DateTime]::UtcNow -lt $occluderDeadline){Start-Sleep -Milliseconds 100}
+  if(-not(Test-Path 'artifacts/occluder-overlay-bounds.json')){throw 'Stable occluder helper did not become ready'}
+  Focus-Process $target 'stable occluder target'
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('stable occluder redaction')
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  $occLine=(Get-Content $log | Select-Object -Last 1)
+  if($occLine.Contains('UNRELATED OVERLAY',[StringComparison]::OrdinalIgnoreCase)){throw 'Occluder text leaked into structured payload'}
+  Assert-HasSolidRedaction 'artifacts/stable-occluder-egress.jpg' 120 40
+  Stop-Process -Id $occluder.Id -Force; $occluder=$null
+  Stop-Process -Id $target.Id -Force; $target=$null
 
   Remove-Item $log -Force -ErrorAction SilentlyContinue
   $matrix=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/uia_matrix_target.ps1' -PassThru
@@ -233,5 +297,5 @@ try {
 finally {
   Remove-Item Env:HELPSYS_STABLE_ENDPOINT -ErrorAction SilentlyContinue
   Remove-Item Env:HELPSYS_UPDATE_API -ErrorAction SilentlyContinue
-  foreach($p in @($app,$target,$privacy,$matrix,$stale,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
+  foreach($p in @($app,$target,$privacy,$matrix,$stale,$pii,$occluder,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
 }
