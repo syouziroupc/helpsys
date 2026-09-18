@@ -170,15 +170,24 @@ function validatePlan(value, controls) {
   if (!statuses.has(status) || !actions.has(action))
     return { ok: false, error: 'invalid_plan_shape' };
 
+  if (typeof value?.instruction !== 'string' ||
+      !isNullableString(value?.question) ||
+      !isNullableString(value?.targetId) ||
+      !isNullableString(value?.key))
+    return { ok: false, error: 'invalid_plan_shape' };
+
+  const confidence = strictNumber(value?.confidence, 0, 1);
+  const x = strictNumber(value?.x, 0, 1000);
+  const y = strictNumber(value?.y, 0, 1000);
+  const width = strictNumber(value?.width, 0, 1000);
+  const height = strictNumber(value?.height, 0, 1000);
+  if ([confidence, x, y, width, height].some(v => v === null))
+    return { ok: false, error: 'invalid_plan_shape' };
+
   const targetId = nullableText(value?.targetId, 80);
   const instruction = text(value?.instruction, 420);
   const question = nullableText(value?.question, 320);
   const key = nullableText(value?.key, 80);
-  const confidence = clamp01(value?.confidence);
-  const x = clamp1000(value?.x);
-  const y = clamp1000(value?.y);
-  const width = clamp1000(value?.width);
-  const height = clamp1000(value?.height);
 
   if (containsSecretRequest(instruction) || containsSecretRequest(question || ''))
     return { ok: false, error: 'secret_request_rejected' };
@@ -295,7 +304,10 @@ function hasKey(env) {
 }
 function text(value, max) { return typeof value === 'string' ? value.trim().slice(0, max) : ''; }
 function nullableText(value, max) { const v = text(value, max); return v || null; }
-function clamp01(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0; }
+function isNullableString(value) { return value === null || typeof value === 'string'; }
+function strictNumber(value, min, max) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : null;
+}
 function clamp1000(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, Math.min(1000, n)) : 0; }
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
