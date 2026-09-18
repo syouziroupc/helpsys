@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace HelpSys.Stable;
 
 internal static class SafetyGate
@@ -53,6 +55,12 @@ internal static class SafetyGate
         if (hasEditableControl && ContainsAny(signals, SecretContextTerms))
             throw new PrivacyBlockedException("認証コード・秘密鍵・カード認証などの機密入力画面を検出したため、スクリーンショットを撮影せず解析を停止しました。");
     }
+
+    internal static bool ContainsSecretRequest(string? value)
+        => Regex.IsMatch(
+            value ?? "",
+            @"(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool ContainsAny(string text, IEnumerable<string> terms)
         => terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
