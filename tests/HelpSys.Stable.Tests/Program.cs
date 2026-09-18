@@ -51,3 +51,12 @@ Assert(VersionInfo.Version == "3.0.1", "test version drift");
 Assert(!string.IsNullOrWhiteSpace(VersionInfo.BuildId), "build id missing");
 
 Console.WriteLine("HelpSys Stable C# safety/validation tests passed.");
+
+
+var originalTarget = new UiControlSnapshot("u1","Go","GoButton","","ControlType.Button",true,false,true,false,100,100,120,60);
+var sameTarget = originalTarget with { Id = "u99", X = 120, Y = 120 };
+var movedTarget = originalTarget with { Id = "u99", X = 300, Y = 300 };
+var disabledTarget = originalTarget with { Id = "u99", Enabled = false };
+Assert(ObservationService.SameControlIdentity(originalTarget, sameTarget), "small layout drift should remain valid");
+Assert(!ObservationService.SameControlIdentity(originalTarget, movedTarget), "moved target must invalidate stale overlay coordinates");
+Assert(!ObservationService.SameControlIdentity(originalTarget, disabledTarget), "disabled target must invalidate guidance");
