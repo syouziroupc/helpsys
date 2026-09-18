@@ -61,3 +61,13 @@ var disabledTarget = originalTarget with { Id = "u99", Enabled = false };
 Assert(ObservationService.SameControlIdentity(originalTarget, sameTarget), "small layout drift should remain valid");
 Assert(!ObservationService.SameControlIdentity(originalTarget, movedTarget), "moved target must invalidate stale overlay coordinates");
 Assert(!ObservationService.SameControlIdentity(originalTarget, disabledTarget), "disabled target must invalidate guidance");
+
+Assert(ObservationService.NormalizeBrowserDomain("https://Example.COM/path?q=secret") == "example.com", "full URL must reduce to host");
+Assert(ObservationService.NormalizeBrowserDomain("example.com/private/path") == "example.com", "bare host must parse");
+Assert(ObservationService.NormalizeBrowserDomain("127.0.0.1:8080/path") == "127.0.0.1", "IP host must parse");
+Assert(ObservationService.NormalizeBrowserDomain("localhost:3000/test") == "localhost", "localhost must parse");
+Assert(ObservationService.NormalizeBrowserDomain("printer setup") is null, "search text must not become a fake domain");
+Assert(ObservationService.NormalizeBrowserDomain("settings") is null, "single search word must not become a fake domain");
+Assert(ObservationService.LooksLikeAddressBar("Address and search bar", "ControlType.Edit"), "address bar must be recognized");
+Assert(!ObservationService.LooksLikeAddressBar("Search", "ControlType.Edit"), "site search box must not be treated as address bar");
+ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","left_click","Proceed anyway to the unsafe site.",null,"c1",null,.99,0,0,0,0), controls), "warning bypass");
