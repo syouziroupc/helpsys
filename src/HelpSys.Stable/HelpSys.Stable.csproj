@@ -9,13 +9,15 @@
     <RootNamespace>HelpSys.Stable</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <Version>3.0.0</Version>
-    <AssemblyVersion>3.0.0.0</AssemblyVersion>
-    <FileVersion>3.0.0.0</FileVersion>
-    <InformationalVersion>3.0.0-stable-gemini</InformationalVersion>
+    <Version>3.0.1</Version>
+    <AssemblyVersion>3.0.1.0</AssemblyVersion>
+    <FileVersion>3.0.1.0</FileVersion>
+    <InformationalVersion>3.0.1-stable-gemini</InformationalVersion>
+    <HelpSysBuildId Condition="'$(HelpSysBuildId)' == ''">dev</HelpSysBuildId>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Speech" Version="10.0.12" />
+    <AssemblyMetadata Include="HelpSysBuildId" Value="$(HelpSysBuildId)" />
   </ItemGroup>
 </Project>
