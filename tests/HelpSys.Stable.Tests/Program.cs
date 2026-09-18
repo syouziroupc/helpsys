@@ -99,3 +99,29 @@ Console.WriteLine("HelpSys Stable C# safety/validation/visual-state tests passed
 Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 96) - 1920) < 0.001, "96 DPI conversion");
 Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 144) - 1280) < 0.001, "150% DPI conversion");
 Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 192) - 960) < 0.001, "200% DPI conversion");
+
+
+Assert(ObservationService.SanitizeText("alice@example.com 090-1234-5678 〒123-4567")
+    == "<email> <phone> <postal-code>", "structured PII sanitizer");
+Assert(!ObservationService.SanitizeText("api_key=secretvalue12345").Contains("secretvalue12345", StringComparison.Ordinal),
+    "API secret sanitizer");
+
+ExpectPrivacy(
+    () => SafetyGate.EnsureSafeToCapture(
+        "msedge",
+        "Sign in to Example",
+        [C(name:"Email", type:"ControlType.Edit", focusable:true)]),
+    "authentication title");
+
+var oldEndpoint = Environment.GetEnvironmentVariable("HELPSYS_STABLE_ENDPOINT");
+try
+{
+    Environment.SetEnvironmentVariable("HELPSYS_STABLE_ENDPOINT", "http://127.0.0.1:8766/v1/plan");
+    Assert(GeminiPlannerClient.ResolveEndpoint().IsLoopback, "loopback planner endpoint must remain available for tests");
+    Environment.SetEnvironmentVariable("HELPSYS_STABLE_ENDPOINT", "https://evil.example/v1/plan");
+    ExpectPlanner(() => _ = GeminiPlannerClient.ResolveEndpoint(), "foreign planner endpoint");
+}
+finally
+{
+    Environment.SetEnvironmentVariable("HELPSYS_STABLE_ENDPOINT", oldEndpoint);
+}
