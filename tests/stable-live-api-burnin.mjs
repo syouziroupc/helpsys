@@ -19,14 +19,19 @@ function validPlan(x){
   return x&&['target','clarify','done'].includes(x.status)&&['left_click','double_click','type_text','press_key','none'].includes(x.action)&&typeof x.confidence==='number';
 }
 async function waitHealth(){
+  let last='';
   for(let i=0;i<30;i++){
     try{
       const h=await req('/health');
+      const now=JSON.stringify({status:h.status,body:h.body,ms:Math.round(h.ms)});
+      if(now!==last){ console.log('health_probe',now); last=now; }
       if(h.status===200&&h.body?.ok===true&&h.body?.version==='3.0.1'&&h.body?.geminiConfigured===true)return h;
-    }catch{}
+    }catch(e){
+      console.log('health_probe_error',String(e));
+    }
     await new Promise(r=>setTimeout(r,6000));
   }
-  throw new Error('production health did not converge to 3.0.1 with Gemini configured');
+  throw new Error('production health did not converge to 3.0.1 with Gemini configured; last='+last);
 }
 
 const health=await waitHealth();
