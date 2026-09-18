@@ -14,6 +14,8 @@ internal sealed partial class UpdateService : IDisposable
 {
     private static readonly Uri ReleaseApi = new("https://api.github.com/repos/syouziroupc/helpsys/releases/tags/preview-latest");
     private const long MaximumPackageBytes = 180L * 1024 * 1024;
+    private const long MaximumExtractedBytes = 450L * 1024 * 1024;
+    private const int MaximumArchiveEntries = 1200;
     private const int MaximumRedirects = 5;
     private const int MaximumMetadataBytes = 2 * 1024 * 1024;
     private const int MaximumDigestBytes = 4096;
@@ -98,6 +100,9 @@ internal sealed partial class UpdateService : IDisposable
 
     public async Task InstallAsync(UpdateInfo info, CancellationToken cancellationToken)
     {
+        var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        EnsureInstallDirectoryWritable(appDirectory);
+
         var root = Path.Combine(Path.GetTempPath(), "HelpSys-Stable-Update-" + Guid.NewGuid().ToString("N"));
         var zip = Path.Combine(root, "update.zip");
         var extracted = Path.Combine(root, "payload");
@@ -130,7 +135,6 @@ internal sealed partial class UpdateService : IDisposable
             if (!File.Exists(newExe))
                 throw new PlannerException("更新パッケージにHelpSys本体がありません。");
 
-            var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
             var script = Path.Combine(root, "apply-update.ps1");
             var log = Path.Combine(root, "update.log");
             var currentPid = Environment.ProcessId;
@@ -149,6 +153,7 @@ internal sealed partial class UpdateService : IDisposable
                 $"  Start-Process -FilePath '{escapedExe}'",
                 "} catch {",
                 $"  $_ | Out-String | Set-Content -Encoding UTF8 '{escapedLog}'",
+                $"  if (Test-Path '{escapedExe}') {{ try {{ Start-Process -FilePath '{escapedExe}' }} catch {{ }} }}",
                 "}"
             ]) + Environment.NewLine;
             await File.WriteAllTextAsync(script, scriptText, cancellationToken);
@@ -256,6 +261,13 @@ internal sealed partial class UpdateService : IDisposable
     private static void ExtractVerifiedPackage(string zipPath, string destination)
     {
         using var archive = ZipFile.OpenRead(zipPath);
+        if (archive.Entries.Count > MaximumArchiveEntries)
+            throw new PlannerException("更新パッケージのファイル数が安全上限を超えています。");
+
+        var declaredExtractedBytes = archive.Entries.Sum(entry => entry.Length);
+        if (declaredExtractedBytes <= 0 || declaredExtractedBytes > MaximumExtractedBytes)
+            throw new PlannerException("更新パッケージの展開サイズが安全上限を超えています。");
+
         var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
         foreach (var entry in archive.Entries)
         {
@@ -269,6 +281,25 @@ internal sealed partial class UpdateService : IDisposable
             }
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             entry.ExtractToFile(target, overwrite: true);
+        }
+    }
+
+    private static void EnsureInstallDirectoryWritable(string installDirectory)
+    {
+        var probe = Path.Combine(installDirectory, ".helpsys-update-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            File.WriteAllText(probe, "probe");
+        }
+        catch (Exception ex)
+        {
+            throw new PlannerException(
+                "現在のHelpSysフォルダーへ更新を書き込めません。書き込み可能なフォルダーへ移してから更新してください。",
+                ex);
+        }
+        finally
+        {
+            try { if (File.Exists(probe)) File.Delete(probe); } catch { }
         }
     }
 
