@@ -12,6 +12,7 @@ on:
       - "wrangler.stable.jsonc"
       - "wrangler.education.jsonc"
       - "tests/stable-*.mjs"
+      - ".github/workflows/stable-live-api.yml"
       - "tests/stable_*.ps1"
       - "tests/mock_stable_server.py"
       - "tests/HelpSys.Stable.Tests/**"
@@ -48,6 +49,7 @@ jobs:
           node --check tests/stable-education-selftest.mjs
           node --check tests/stable-rebuild-contract.mjs
           node --check tests/stable-adversarial-selftest.mjs
+          node --check tests/stable-live-api-burnin.mjs
           python -m py_compile tests/mock_stable_server.py
 
       - name: Run Stable contracts

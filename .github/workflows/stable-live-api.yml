@@ -1,0 +1,27 @@
+name: HelpSys Stable live API burn-in
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/stable-gemini.js"
+      - "worker/stable-router.js"
+      - "wrangler.jsonc"
+      - "wrangler.stable.jsonc"
+      - "tests/stable-live-api-burnin.mjs"
+      - ".github/workflows/stable-live-api.yml"
+  workflow_dispatch:
+
+jobs:
+  live-burnin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Wait for production deployment and burn in live planner
+        env:
+          HELPSYS_BASE_URL: https://helpsys.syouziroupc.workers.dev
+        run: node tests/stable-live-api-burnin.mjs

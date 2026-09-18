@@ -48,6 +48,8 @@ assert(updater.includes('IsTrustedReleaseUri'), 'updater must reject untrusted r
 
 for (const source of [worker, education, router]) assert(!source.toLowerCase().includes('glm'), 'Gemini services must not contain GLM');
 assert(worker.includes("const MODEL = 'gemini-3.8-flash'"), 'planner must pin Gemini 3.8 Flash');
+assert(worker.includes("const VERSION = '3.0.1'"), 'Worker health version must match Stable 3.0.1');
+assert(wrangler.includes('"HELPSYS_VERSION": "3.0.1"'), 'Wrangler Stable version must match 3.0.1');
 assert(education.includes("const MODEL = 'gemini-3.8-flash'"), 'Education must pin Gemini 3.8 Flash');
 assert(worker.includes("thinkingLevel: 'medium'"), 'planner must use medium thinking');
 assert(education.includes("thinkingLevel: 'low'"), 'Education must use low thinking');
