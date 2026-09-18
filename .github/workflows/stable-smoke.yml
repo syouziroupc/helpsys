@@ -9,6 +9,7 @@ on:
       - "worker/education-gemini.js"
       - "worker/stable-router.js"
       - "wrangler.jsonc"
+      - "wrangler.stable.jsonc"
       - "wrangler.education.jsonc"
       - "tests/stable-*.mjs"
       - ".github/workflows/stable-smoke.yml"
