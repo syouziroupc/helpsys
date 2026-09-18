@@ -59,16 +59,50 @@ internal sealed class SpeechService : IDisposable
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await Task.Run(() =>
-            {
-                using var engine = new SpeechRecognitionEngine(_recognizer);
-                engine.LoadGrammar(new DictationGrammar());
-                engine.SetInputToDefaultAudioDevice();
-                return engine.Recognize(TimeSpan.FromSeconds(8))?.Text?.Trim();
-            }, CancellationToken.None);
+            using var engine = new SpeechRecognitionEngine(_recognizer);
+            engine.LoadGrammar(new DictationGrammar());
+            engine.SetInputToDefaultAudioDevice();
+            engine.InitialSilenceTimeout = TimeSpan.FromSeconds(8);
+            engine.BabbleTimeout = TimeSpan.FromSeconds(8);
+            engine.EndSilenceTimeout = TimeSpan.FromSeconds(1);
+            engine.EndSilenceTimeoutAmbiguous = TimeSpan.FromSeconds(1.5);
 
-            cancellationToken.ThrowIfCancellationRequested();
-            return string.IsNullOrWhiteSpace(result) ? null : result;
+            var completion = new TaskCompletionSource<string?>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<RecognizeCompletedEventArgs>? handler = null;
+            handler = (_, args) =>
+            {
+                if (args.Cancelled)
+                    completion.TrySetCanceled();
+                else if (args.Error is not null)
+                    completion.TrySetException(args.Error);
+                else
+                    completion.TrySetResult(args.Result?.Text?.Trim());
+            };
+            engine.RecognizeCompleted += handler;
+
+            using var hardLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            hardLimit.CancelAfter(TimeSpan.FromSeconds(8));
+            using var registration = hardLimit.Token.Register(() =>
+            {
+                try { engine.RecognizeAsyncCancel(); } catch { }
+            });
+
+            try
+            {
+                engine.RecognizeAsync(RecognizeMode.Single);
+                var result = await completion.Task.WaitAsync(hardLimit.Token);
+                return string.IsNullOrWhiteSpace(result) ? null : result;
+            }
+            catch (OperationCanceledException) when (hardLimit.IsCancellationRequested)
+            {
+                try { engine.RecognizeAsyncCancel(); } catch { }
+                throw;
+            }
+            finally
+            {
+                engine.RecognizeCompleted -= handler;
+            }
         }
         catch (InvalidOperationException ex)
         {
