@@ -1,5 +1,9 @@
 name: HelpSys Stable live API burn-in
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:
