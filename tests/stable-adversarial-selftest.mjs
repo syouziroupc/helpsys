@@ -23,6 +23,10 @@ try{
  plan={...plan,targetId:'x',action:'type_text',confidence:.99};
  r=await call({...base,controls:[{...base.controls[0],focused:false}]}); assert(r.status===502,'unfocused type_text');
  plan={...plan,action:'press_key',targetId:null,key:null}; r=await call(); assert(r.status===502,'missing key');
+ plan={...plan,status:'target',action:'left_click',targetId:123,key:null,confidence:.99,x:10,y:10,width:100,height:50}; r=await call(); assert(r.status===502,'non-string targetId');
+ plan={...plan,targetId:'x',confidence:'0.99'}; r=await call(); assert(r.status===502,'string confidence');
+ plan={...plan,confidence:1.5}; r=await call(); assert(r.status===502,'out-of-range confidence');
+ plan={...plan,confidence:.99,x:-1}; r=await call(); assert(r.status===502,'negative geometry');
  plan={...plan,status:'done',action:'none',targetId:null,confidence:.4}; r=await call(); assert(r.status===502,'low done');
  plan={...plan,status:'clarify',action:'none',question:'',confidence:.9}; r=await call(); assert(r.status===502,'empty clarify');
  plan={...plan,status:'target',action:'left_click',instruction:'passwordを入力して送って',question:null,targetId:'x',confidence:.99}; r=await call(); assert(r.status===502,'secret request');
