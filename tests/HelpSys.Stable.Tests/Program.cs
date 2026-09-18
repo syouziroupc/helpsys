@@ -95,3 +95,7 @@ Assert(ObservationService.IsVisualTargetStillCurrent(visualBefore, visualSame, v
 Assert(!ObservationService.IsVisualTargetStillCurrent(visualBefore, visualMoved, visualPlan), "moved visual target must invalidate stale guidance");
 
 Console.WriteLine("HelpSys Stable C# safety/validation/visual-state tests passed.");
+
+Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 96) - 1920) < 0.001, "96 DPI conversion");
+Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 144) - 1280) < 0.001, "150% DPI conversion");
+Assert(Math.Abs(OverlayWindow.PixelsToDips(1920, 192) - 960) < 0.001, "200% DPI conversion");
