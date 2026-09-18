@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: helpsys-stable-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -175,3 +175,11 @@ jobs:
           foreach ($expected in $allowed) {
             if ($published -notcontains $expected) { throw "Release asset missing after publish: $expected" }
           }
+
+          # gh release edit --target does not move an already-existing Git tag.
+          # Move preview-latest only after every asset is verified so the tag and
+          # traceable package always identify the same tested commit.
+          git tag -f $tag $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to update preview-latest tag locally.' }
+          git push origin "refs/tags/$tag" --force
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to move preview-latest tag to the published commit.' }
