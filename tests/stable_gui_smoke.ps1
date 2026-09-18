@@ -180,6 +180,10 @@ try {
     Press-F8
     Wait-Request
     Set-Content -Path $signal -Value $mode -Encoding ASCII
+    $ack=$signal + '.ack'
+    $ackDeadline=[DateTime]::UtcNow.AddSeconds(2)
+    while(-not(Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline){Start-Sleep -Milliseconds 50}
+    if(-not(Test-Path $ack)){throw "Stale-$mode target did not acknowledge UI update"}
     Start-Sleep -Seconds 3
     if($app.HasExited){throw "HelpSys exited during stale-$mode revalidation"}
     $status=Find-Element $app 'StatusText'
@@ -198,6 +202,10 @@ try {
   Press-F8
   Wait-Request
   Set-Content -Path $signal -Value 'move' -Encoding ASCII
+  $ack=$signal + '.ack'
+  $ackDeadline=[DateTime]::UtcNow.AddSeconds(2)
+  while(-not(Test-Path $ack) -and [DateTime]::UtcNow -lt $ackDeadline){Start-Sleep -Milliseconds 50}
+  if(-not(Test-Path $ack)){throw 'Visual stale target did not acknowledge UI update'}
   Start-Sleep -Seconds 3
   $status=Find-Element $app 'StatusText'
   if($null-eq $status -or $status.Current.Name -notlike '*古い案内を破棄*'){throw "Visual stale guidance was not rejected: $($status.Current.Name)"}
