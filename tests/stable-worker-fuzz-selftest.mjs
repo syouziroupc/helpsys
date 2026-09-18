@@ -37,7 +37,7 @@ function invariant(body){
   if(body.action==='type_text') assert(body.targetId==='e','unsafe type_text escaped');
 }
 try{
-  for(let i=0;i<1500;i++){
+  for(let i=0;i<10000;i++){
     next=plan();
     const r=await worker.fetch(new Request('https://x/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({goal:'test',controls,image})}),{GEMINI_API_KEY:'k'});
     assert([200,502].includes(r.status),'unexpected output-fuzz status '+r.status);
@@ -56,5 +56,5 @@ try{
     const r=await worker.fetch(new Request('https://x/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),{GEMINI_API_KEY:'k'});
     assert(r.status>=200&&r.status<600,'input fuzz produced invalid HTTP status');
   }
-  console.log('HelpSys Stable worker fuzz passed: 1500 provider plans + input corpus.');
+  console.log('HelpSys Stable worker fuzz passed: 10000 provider plans + input corpus.');
 } finally { globalThis.fetch=original; }
