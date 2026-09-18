@@ -366,13 +366,13 @@ internal sealed class ObservationService
            processName.Equals("firefox", StringComparison.OrdinalIgnoreCase) ||
            processName.Equals("brave", StringComparison.OrdinalIgnoreCase);
 
-    private static bool LooksLikeAddressBar(string name, string controlType)
+    internal static bool LooksLikeAddressBar(string name, string controlType)
     {
         if (!controlType.Contains("Edit", StringComparison.OrdinalIgnoreCase)) return false;
         return name.Contains("address", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("search bar", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("アドレス", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("検索", StringComparison.OrdinalIgnoreCase);
+               name.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("url", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("アドレス", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? TryReadDomain(AutomationElement element)
@@ -381,18 +381,37 @@ internal sealed class ObservationService
         {
             if (!element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) || pattern is not ValuePattern valuePattern)
                 return null;
-            var raw = valuePattern.Current.Value?.Trim();
-            if (string.IsNullOrWhiteSpace(raw)) return null;
-            if (!raw.Contains("://", StringComparison.Ordinal)) raw = "https://" + raw;
-            return Uri.TryCreate(raw, UriKind.Absolute, out var uri) &&
-                   (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
-                ? uri.IdnHost.ToLowerInvariant()
-                : null;
+            return NormalizeBrowserDomain(valuePattern.Current.Value);
         }
         catch
         {
             return null;
         }
+    }
+
+    internal static string? NormalizeBrowserDomain(string? value)
+    {
+        var raw = value?.Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var hasScheme = raw.Contains("://", StringComparison.Ordinal);
+        if (!hasScheme)
+        {
+            var authority = raw.Split('/', '?', '#')[0];
+            var hostCandidate = authority.Split(':')[0];
+            var isIp = System.Net.IPAddress.TryParse(hostCandidate, out _);
+            var looksLikeHost = hostCandidate.Contains('.', StringComparison.Ordinal) ||
+                                hostCandidate.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                                isIp;
+            if (!looksLikeHost) return null;
+            raw = "https://" + raw;
+        }
+
+        return Uri.TryCreate(raw, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) &&
+               !string.IsNullOrWhiteSpace(uri.IdnHost)
+            ? uri.IdnHost.ToLowerInvariant()
+            : null;
     }
 
     private sealed record UiScanResult(IReadOnlyList<UiControlSnapshot> Controls, string? BrowserDomain);
