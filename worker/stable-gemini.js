@@ -182,6 +182,8 @@ function validatePlan(value, controls) {
 
   if (containsSecretRequest(instruction) || containsSecretRequest(question || ''))
     return { ok: false, error: 'secret_request_rejected' };
+  if (containsWarningBypass(instruction) || containsWarningBypass(question || ''))
+    return { ok: false, error: 'warning_bypass_rejected' };
 
   if (status === 'clarify') {
     if (!question) return { ok: false, error: 'empty_question' };
@@ -243,6 +245,10 @@ function compactControl(value) {
 
 function containsSecretRequest(value) {
   return /(?:(password|passcode|パスワード|暗証|\\bpin\\b|otp|ワンタイム|認証コード|verification\\s*code|recovery\\s*key|リカバリ(?:ー)?キー|秘密鍵|private\\s*key|api\\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)|(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide).{0,36}(password|passcode|パスワード|暗証|\\bpin\\b|otp|ワンタイム|認証コード|verification\\s*code|recovery\\s*key|リカバリ(?:ー)?キー|秘密鍵|private\\s*key|api\\s*key|apiキー|cvv|cvc|セキュリティコード))/i.test(value || '');
+}
+
+function containsWarningBypass(value) {
+  return /(proceed\s+anyway|continue\s+to\s+(?:the\s+)?site|ignore.{0,24}warning|bypass.{0,24}(warning|certificate|smartscreen)|advanced.{0,24}proceed|警告.{0,24}無視|無視して.{0,24}(続|進)|詳細設定.{0,24}(続行|アクセス|進)|安全ではありません.{0,24}(続|進)|危険.{0,24}続行|このサイトに進む)/i.test(value || '');
 }
 
 function parseDataImage(value) {
