@@ -98,6 +98,9 @@ internal sealed class GeminiPlannerClient : IDisposable
         if (plan.Status == "done" && plan.Confidence < 0.85)
             throw new PlannerException("完了判定の確度が不足しているため、完了扱いにしません。");
 
+        if (SafetyGate.ContainsSecretRequest(plan.Instruction) || SafetyGate.ContainsSecretRequest(plan.Question))
+            throw new PlannerException("秘密情報の入力を求める案内を検出したため、案内を表示しませんでした。");
+
         var allowedActions = new HashSet<string>(StringComparer.Ordinal)
         {
             "left_click", "double_click", "type_text", "press_key", "none"
