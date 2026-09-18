@@ -1,4 +1,4 @@
-import json, time
+import json, time, base64
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -37,6 +37,12 @@ class H(BaseHTTPRequestHandler):
         Path("artifacts").mkdir(exist_ok=True)
         with LOG.open("a",encoding="utf-8") as f:
             f.write(json.dumps({"path":self.path,"goal":body.get("goal"),"processName":body.get("processName"),"windowTitle":body.get("windowTitle"),"hasImage":str(body.get("image","")).startswith("data:image/"),"controls":body.get("controls",[])},ensure_ascii=False)+"\n")
+        goal = str(body.get("goal","")).lower()
+        image = str(body.get("image",""))
+        if image.startswith("data:image/") and ("stable pii" in goal or "stable occluder" in goal):
+            raw = image.split(",",1)[1]
+            name = "stable-pii-egress.jpg" if "stable pii" in goal else "stable-occluder-egress.jpg"
+            Path("artifacts",name).write_bytes(base64.b64decode(raw))
         if "slow" in str(body.get("goal","")).lower(): time.sleep(1.5)
         target=next((x for x in body.get("controls",[]) if x.get("automationId") in ("SmokeButton","StaleButton") or x.get("name") in ("Open test target","Stale action")),None)
         if not target:
