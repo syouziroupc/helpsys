@@ -56,6 +56,12 @@ internal static class SafetyGate
             throw new PrivacyBlockedException("認証コード・秘密鍵・カード認証などの機密入力画面を検出したため、スクリーンショットを撮影せず解析を停止しました。");
     }
 
+    internal static bool ContainsWarningBypass(string? value)
+        => Regex.IsMatch(
+            value ?? "",
+            @"(proceed\s+anyway|continue\s+to\s+(?:the\s+)?site|ignore.{0,24}warning|bypass.{0,24}(warning|certificate|smartscreen)|advanced.{0,24}proceed|警告.{0,24}無視|無視して.{0,24}(続|進)|詳細設定.{0,24}(続行|アクセス|進)|安全ではありません.{0,24}(続|進)|危険.{0,24}続行|このサイトに進む)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     internal static bool ContainsSecretRequest(string? value)
         => Regex.IsMatch(
             value ?? "",
