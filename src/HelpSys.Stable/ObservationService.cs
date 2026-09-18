@@ -170,8 +170,17 @@ internal sealed class ObservationService
 
         var walker = TreeWalker.ControlViewWalker;
         var queue = new Queue<AutomationElement>();
-        var first = walker.GetFirstChild(root);
-        if (first is not null) queue.Enqueue(first);
+
+        // Enumerate every direct child of the target window. Starting from only the first
+        // child drops all of its root-level siblings (common in WinForms, Office and browsers).
+        var rootChild = walker.GetFirstChild(root);
+        var rootSiblings = 0;
+        while (rootChild is not null && queue.Count < MaxVisitedNodes && rootSiblings < 250)
+        {
+            queue.Enqueue(rootChild);
+            rootSiblings++;
+            rootChild = walker.GetNextSibling(rootChild);
+        }
 
         var controls = new List<UiControlSnapshot>(MaxControls);
         string? browserDomain = null;
