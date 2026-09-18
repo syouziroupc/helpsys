@@ -197,7 +197,7 @@ internal sealed class ObservationService
         // child drops all of its root-level siblings (common in WinForms, Office and browsers).
         var rootChild = walker.GetFirstChild(root);
         var rootSiblings = 0;
-        while (rootChild is not null && queue.Count < MaxVisitedNodes && rootSiblings < 250)
+        while (rootChild is not null && queue.Count < MaxVisitedNodes && rootSiblings < MaxVisitedNodes)
         {
             queue.Enqueue(rootChild);
             rootSiblings++;
@@ -217,7 +217,7 @@ internal sealed class ObservationService
             {
                 var child = walker.GetFirstChild(item);
                 var siblings = 0;
-                while (child is not null && queue.Count < MaxVisitedNodes && siblings < 250)
+                while (child is not null && queue.Count < MaxVisitedNodes && siblings < MaxVisitedNodes)
                 {
                     queue.Enqueue(child);
                     siblings++;
