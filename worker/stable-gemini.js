@@ -238,7 +238,7 @@ function compactControl(value) {
 }
 
 function containsSecretRequest(value) {
-  return /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,28}(教え|送|貼|入力してhelp|tell|send|paste)/i.test(value || '');
+  return /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)/i.test(value || '');
 }
 
 function parseDataImage(value) {
