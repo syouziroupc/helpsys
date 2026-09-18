@@ -13,7 +13,7 @@ public static class StableSmokeNative {
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'publish/stable-win-x64/HelpSys.Stable.exe'
-$server=$null; $target=$null; $privacy=$null; $app=$null
+$server=$null; $target=$null; $privacy=$null; $matrix=$null; $app=$null
 $log='artifacts/stable-mock-requests.jsonl'
 
 function Find-Element($process,[string]$id) {
@@ -126,9 +126,25 @@ try {
     Start-Sleep -Milliseconds 500
   }
 
-  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger smoke passed.'
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $matrix=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/uia_matrix_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('inspect dense matrix')
+  Focus-Process $matrix 'UIA matrix target'
+  Press-F8
+  Wait-Request
+  $req=(Get-Content $log | Select-Object -Last 1 | ConvertFrom-Json)
+  if(@($req.controls).Count -gt 240){throw "UIA control cap exceeded: $(@($req.controls).Count)"}
+  foreach($expected in @('MatrixActionButton','MatrixEdit','MatrixCheck','MatrixDisabled')){
+    if(-not @($req.controls | Where-Object { $_.automationId -eq $expected })){throw "Dense UIA scan missed prioritized control: $expected"}
+  }
+  $disabled=@($req.controls | Where-Object { $_.automationId -eq 'MatrixDisabled' } | Select-Object -First 1)
+  if($disabled.Count -ne 1 -or $disabled[0].enabled -ne $false){throw 'Disabled UIA state was not preserved'}
+  Stop-Process -Id $matrix.Id -Force; $matrix=$null
+
+  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_STABLE_ENDPOINT -ErrorAction SilentlyContinue
-  foreach($p in @($app,$target,$privacy,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
+  foreach($p in @($app,$target,$privacy,$matrix,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
 }
