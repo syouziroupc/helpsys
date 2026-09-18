@@ -18,9 +18,13 @@ internal static class NativeMethods
     public static readonly nint HwndTopmost = new(-1);
     public const uint SwpNoActivate = 0x0010;
     public const uint SwpShowWindow = 0x0040;
+    public const uint GwHwndPrev = 3;
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
