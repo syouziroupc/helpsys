@@ -121,16 +121,29 @@ public sealed class SystemContextService
         var nowTick = CurrentTick();
         lock (_foregroundGate)
         {
+            // A Guide/Enter action happens immediately after HelpSys takes focus. Prefer the
+            // external HWND that was most recently observed by the foreground event hook. A
+            // sampler candidate can legally be a couple of seconds old and may belong to an
+            // earlier transient window, which is not safe enough for an explicit user handoff.
+            if (_observedExternalForeground != nint.Zero &&
+                unchecked(nowTick - _observedExternalSinceTick) <= AutomaticInteractionHandoffMaximumAgeMilliseconds &&
+                IsUsableExternalWindow(_observedExternalForeground))
+            {
+                _assistantInteractionForeground = _observedExternalForeground;
+                _lastExternalForeground = _observedExternalForeground;
+                _interactionForegroundCandidate = nint.Zero;
+                return;
+            }
+
             if (TryPromoteInteractionCandidateLocked(nowTick, InteractionCandidateMaximumAgeMilliseconds, out var interaction))
             {
                 _assistantInteractionForeground = interaction;
                 return;
             }
 
-            // A Guide/Enter action is an explicit user handoff, so the most recent real external
-            // foreground is stronger evidence than the ordinary background dwell filter. Keep the
-            // normal 180 ms dwell for passive tracking, but do not discard an intentional target
-            // merely because the user moved straight from that target to HelpSys in under 180 ms.
+            // Keep the wider age window only as a fallback when the foreground hook did not see a
+            // fresh handoff. This preserves slow keyboard/mouse transitions without allowing a
+            // stale sampler candidate to override a freshly observed target.
             if (_observedExternalForeground != nint.Zero &&
                 unchecked(nowTick - _observedExternalSinceTick) <= InteractionCandidateMaximumAgeMilliseconds &&
                 IsUsableExternalWindow(_observedExternalForeground))
@@ -359,6 +372,11 @@ public sealed class SystemContextService
             PromoteObservedExternalIfStableLocked(observedTick);
             _observedExternalForeground = hwnd;
             _observedExternalSinceTick = observedTick;
+
+            // A candidate sampled before this foreground transition is stale by definition.
+            // Drop it so an immediate Guide click cannot pin an older unrelated window.
+            if (_interactionForegroundCandidate != nint.Zero && _interactionForegroundCandidate != hwnd)
+                _interactionForegroundCandidate = nint.Zero;
         }
     }
 
