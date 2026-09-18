@@ -242,7 +242,7 @@ function compactControl(value) {
 }
 
 function containsSecretRequest(value) {
-  return /(password|passcode|パスワード|暗証|\bpin\b|otp|ワンタイム|認証コード|verification\s*code|recovery\s*key|リカバリ(?:ー)?キー|秘密鍵|private\s*key|api\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)/i.test(value || '');
+  return /(?:(password|passcode|パスワード|暗証|\\bpin\\b|otp|ワンタイム|認証コード|verification\\s*code|recovery\\s*key|リカバリ(?:ー)?キー|秘密鍵|private\\s*key|api\\s*key|apiキー|cvv|cvc|セキュリティコード).{0,36}(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide)|(教え|送|貼|入力|記入|tell|send|paste|enter|type|provide).{0,36}(password|passcode|パスワード|暗証|\\bpin\\b|otp|ワンタイム|認証コード|verification\\s*code|recovery\\s*key|リカバリ(?:ー)?キー|秘密鍵|private\\s*key|api\\s*key|apiキー|cvv|cvc|セキュリティコード))/i.test(value || '');
 }
 
 function parseDataImage(value) {
