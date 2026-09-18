@@ -33,6 +33,7 @@ internal sealed partial class UpdateService : IDisposable
             throw new PlannerException("更新情報の形式が不正です。");
 
         System.Version? newest = null;
+        string? newestBuildId = null;
         Uri? stableZip = null;
         Uri? shaUrl = null;
 
@@ -40,7 +41,7 @@ internal sealed partial class UpdateService : IDisposable
         {
             var name = asset.TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "";
             var url = asset.TryGetProperty("browser_download_url", out var urlProp) ? urlProp.GetString() ?? "" : "";
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) continue;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !IsTrustedReleaseUri(uri)) continue;
 
             if (name.Equals("HelpSys-latest-win-x64.zip", StringComparison.OrdinalIgnoreCase))
                 stableZip = uri;
@@ -51,15 +52,25 @@ internal sealed partial class UpdateService : IDisposable
                 var match = VersionedAssetRegex().Match(name);
                 if (match.Success && System.Version.TryParse(match.Groups["version"].Value, out var parsed) &&
                     (newest is null || parsed > newest))
+                {
                     newest = parsed;
+                    newestBuildId = match.Groups["build"].Value.ToLowerInvariant();
+                }
             }
         }
 
-        if (newest is null || newest <= VersionInfo.SemanticVersion) return null;
+        if (newest is null || newestBuildId is null) return null;
+        if (newest < VersionInfo.SemanticVersion) return null;
+
+        var sameVersionAndBuild =
+            newest == VersionInfo.SemanticVersion &&
+            newestBuildId.Equals(VersionInfo.BuildId, StringComparison.OrdinalIgnoreCase);
+        if (sameVersionAndBuild) return null;
+
         if (stableZip is null || shaUrl is null)
             throw new PlannerException("最新版はありますが、検証付き更新ファイルが揃っていません。");
 
-        return new UpdateInfo(newest, stableZip, shaUrl);
+        return new UpdateInfo(newest, newestBuildId, stableZip, shaUrl);
     }
 
     public async Task InstallAsync(UpdateInfo info, CancellationToken cancellationToken)
@@ -142,7 +153,11 @@ internal sealed partial class UpdateService : IDisposable
 
     private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
-    [GeneratedRegex(@"^HelpSys-Stable-(?<version>\d+\.\d+\.\d+)-[0-9a-fA-F]{8}-win-x64\.zip$",
+    internal static bool IsTrustedReleaseUri(Uri uri)
+        => uri.Scheme == Uri.UriSchemeHttps &&
+           uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
+
+    [GeneratedRegex(@"^HelpSys-Stable-(?<version>\d+\.\d+\.\d+)-(?<build>[0-9a-fA-F]{8})-win-x64\.zip$",
         RegexOptions.CultureInvariant)]
     private static partial Regex VersionedAssetRegex();
 

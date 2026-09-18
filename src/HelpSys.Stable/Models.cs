@@ -54,6 +54,7 @@ public sealed record PlanResult(
 
 public sealed record UpdateInfo(
     System.Version Version,
+    string BuildId,
     Uri ZipUrl,
     Uri Sha256Url);
 

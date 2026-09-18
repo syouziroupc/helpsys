@@ -17,7 +17,8 @@ const router = fs.readFileSync('worker/stable-router.js', 'utf8');
 const wrangler = fs.readFileSync('wrangler.jsonc', 'utf8');
 const release = fs.readFileSync('.github/workflows/release.yml', 'utf8');
 
-assert(project.includes('<Version>3.0.0</Version>'), 'Stable version must be explicit');
+assert(project.includes('<Version>3.0.1</Version>'), 'Stable version must be explicit');
+assert(project.includes('HelpSysBuildId'), 'Stable build id must be embedded for same-version updates');
 assert(!project.includes('ProjectReference'), 'Stable project must not reference legacy HelpSys projects');
 assert(project.includes('System.Speech') && project.includes('10.0.12'), 'voice features must use the pinned Microsoft System.Speech package');
 
@@ -34,11 +35,16 @@ assert(safetyIndex >= 0 && imageIndex > safetyIndex, 'local safety gate must run
 assert(safety.includes('controls.Any(x => x.Password)'), 'password controls must block screenshot capture');
 assert(safety.includes('SecurityWarningTerms'), 'security warnings must be blocked locally');
 assert(safety.includes('SecretContextTerms'), 'secret/authentication contexts must be blocked locally');
+assert(safety.includes('SensitiveStorageTerms'), 'cookie/storage secret surfaces must be blocked locally');
 
 assert(client.includes('helpsys.syouziroupc.workers.dev/v1/plan'), 'Stable desktop must preserve the public HelpSys origin');
+assert(client.includes('allowedActions'), 'desktop must independently reject unknown planner actions');
+assert(client.includes('!target.Focused'), 'desktop must reject unsafe type_text targets');
 assert(!client.toLowerCase().includes('glm'), 'Stable desktop must not contain GLM fallback');
 assert(speech.includes('TimeSpan.FromSeconds(8)'), 'voice input must remain bounded');
 assert(updater.includes('SHA256.HashDataAsync'), 'in-app updates must verify SHA-256');
+assert(updater.includes('VersionInfo.BuildId'), 'updater must compare build id as well as semantic version');
+assert(updater.includes('IsTrustedReleaseUri'), 'updater must reject untrusted release asset origins');
 
 for (const source of [worker, education, router]) assert(!source.toLowerCase().includes('glm'), 'Gemini services must not contain GLM');
 assert(worker.includes("const MODEL = 'gemini-3.8-flash'"), 'planner must pin Gemini 3.8 Flash');
@@ -50,6 +56,8 @@ assert(wrangler.includes('"main": "worker/stable-router.js"'), 'production Worke
 assert(wrangler.includes('"/v1/*"'), 'API routes must run Worker-first while static site remains asset-first');
 
 assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'versioned release asset must expose Stable version');
+assert(release.includes('-p:HelpSysBuildId=$shortSha'), 'release must embed the current build id');
+assert(release.includes('HELPSYS_VERSION=$version') && release.includes('$env:HELPSYS_VERSION'), 'release version must persist across workflow steps');
 assert(release.includes('HelpSys-latest-win-x64.zip'), 'public stable alias must remain compatible');
 assert(release.includes('HelpSys-latest-win-x64.sha256'), 'release must publish update integrity hash');
 assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'release must preserve legacy updater migration asset');
