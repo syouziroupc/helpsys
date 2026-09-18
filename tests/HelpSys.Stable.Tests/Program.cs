@@ -25,6 +25,7 @@ UiControlSnapshot C(
     => new(id, name, "", "", type, enabled, focused, focusable, password, 100, 100, 120, 60);
 
 SafetyGate.EnsureSafeToCapture("notepad", "ordinary document", [C()]);
+SafetyGate.EnsureSafeToCapture("msedge", "We use cookies", [C(name: "Accept cookies")]);
 ExpectPrivacy(() => SafetyGate.EnsureSafeToCapture("notepad", "login", [C(password: true)]), "password");
 ExpectPrivacy(() => SafetyGate.EnsureSafeToCapture("chrome", "Enter verification code", [C(type: "ControlType.Edit")]), "otp");
 ExpectPrivacy(() => SafetyGate.EnsureSafeToCapture("chrome", "DevTools - Application - Cookies", [C()]), "cookies");
