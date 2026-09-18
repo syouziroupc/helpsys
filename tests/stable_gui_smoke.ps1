@@ -37,9 +37,9 @@ function Focus-Process($process,[string]$label) {
       try{[void][StableSmokeNative]::SetForegroundWindow([IntPtr]$w.Current.NativeWindowHandle)}catch{}
     }
     Start-Sleep -Milliseconds 120
-    $h=[StableSmokeNative]::GetForegroundWindow(); [uint32]$pid=0
-    [void][StableSmokeNative]::GetWindowThreadProcessId($h,[ref]$pid)
-    if([int]$pid -eq $process.Id){return}
+    $h=[StableSmokeNative]::GetForegroundWindow(); [uint32]$foregroundPid=0
+    [void][StableSmokeNative]::GetWindowThreadProcessId($h,[ref]$foregroundPid)
+    if([int]$foregroundPid -eq $process.Id){return}
   } while([DateTime]::UtcNow -lt $deadline)
   throw "could not foreground $label"
 }
