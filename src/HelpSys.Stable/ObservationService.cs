@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Text.RegularExpressions;
 using System.Windows.Automation;
 
 namespace HelpSys.Stable;
@@ -53,21 +54,30 @@ internal sealed class ObservationService
         SafetyGate.EnsureSafeToCapture(processName, title, scan.Controls);
         EnsureSameWindow(hwnd, pid);
 
-        var image = CaptureWindow(rect);
+        var localImage = CaptureWindow(rect);
         EnsureSameWindow(hwnd, pid);
+
+        var outboundImage = RedactOutboundImage(
+            localImage,
+            rect,
+            hwnd,
+            pid,
+            scan.SensitiveBounds);
+        var safeControls = scan.Controls.Select(SanitizeControl).ToList();
 
         return new ScreenObservation(
             hwnd,
             pid,
             processName,
-            title,
+            SanitizeText(title),
             scan.BrowserDomain,
             rect.Left,
             rect.Top,
             rect.Width,
             rect.Height,
-            image,
-            scan.Controls);
+            outboundImage,
+            localImage,
+            safeControls);
     }
 
     public bool IsStillCurrent(ScreenObservation observation)
@@ -96,7 +106,7 @@ internal sealed class ObservationService
             {
                 var currentImage = await Task.Run(() => CaptureWindow(visualRect), cancellationToken);
                 if (!IsStillCurrent(observation)) return false;
-                return IsVisualTargetStillCurrent(observation.ImageDataUri, currentImage, plan);
+                return IsVisualTargetStillCurrent(observation.LocalComparisonImageDataUri, currentImage, plan);
             }
             catch (OperationCanceledException)
             {
@@ -205,6 +215,7 @@ internal sealed class ObservationService
         }
 
         var candidates = new List<(UiControlSnapshot Control, int Priority, int Order)>(MaxVisitedNodes);
+        var sensitiveBounds = new List<PixelRect>();
         string? browserDomain = null;
         var visited = 0;
 
@@ -256,6 +267,13 @@ internal sealed class ObservationService
 
                 candidates.Add((snapshot, ControlPriority(snapshot), visited));
 
+                if (current.IsPassword || ContainsSensitiveText(name) || HasSensitiveValue(item, type))
+                    sensitiveBounds.Add(new PixelRect(
+                        (int)Math.Floor(left),
+                        (int)Math.Floor(top),
+                        (int)Math.Ceiling(right),
+                        (int)Math.Ceiling(bottom)));
+
                 if (browserDomain is null && IsBrowser(processName) && LooksLikeAddressBar(name, type))
                     browserDomain = TryReadDomain(item);
             }
@@ -274,7 +292,7 @@ internal sealed class ObservationService
             .Select((x, index) => x.Control with { Id = $"u{index + 1}" })
             .ToList();
 
-        return new UiScanResult(controls, browserDomain);
+        return new UiScanResult(controls, browserDomain, sensitiveBounds);
     }
 
     private static int ControlPriority(UiControlSnapshot control)
@@ -332,6 +350,148 @@ internal sealed class ObservationService
         {
             if (!ReferenceEquals(output, source)) output.Dispose();
         }
+    }
+
+    private static readonly Regex EmailRegex = new(
+        @"(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![\w.-])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex JapanesePhoneRegex = new(
+        @"(?<!\d)0\d{1,4}[-‐‑–—ー]?\d{1,4}[-‐‑–—ー]?\d{3,4}(?!\d)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex PostalRegex = new(
+        @"〒?\s*\d{3}[-‐‑–—ー]?\d{4}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex SecretValueRegex = new(
+        @"(?i)(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|(?:api[_ -]?key|token|secret|password|パスワード|秘密鍵|apiキー)\s*[:=]\s*\S{4,}|\b(?:\d[ -]?){13,19}\b)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static bool ContainsSensitiveText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return EmailRegex.IsMatch(value) ||
+               JapanesePhoneRegex.IsMatch(value) ||
+               PostalRegex.IsMatch(value) ||
+               SecretValueRegex.IsMatch(value);
+    }
+
+    private static bool HasSensitiveValue(AutomationElement element, string controlType)
+    {
+        if (!controlType.Contains("Edit", StringComparison.OrdinalIgnoreCase) &&
+            !controlType.Contains("Document", StringComparison.OrdinalIgnoreCase))
+            return false;
+        try
+        {
+            if (!element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) ||
+                pattern is not ValuePattern valuePattern)
+                return false;
+            return ContainsSensitiveText(valuePattern.Current.Value);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static string SanitizeText(string? value)
+    {
+        var text = value ?? string.Empty;
+        text = EmailRegex.Replace(text, "<email>");
+        text = JapanesePhoneRegex.Replace(text, "<phone>");
+        text = PostalRegex.Replace(text, "<postal-code>");
+        text = SecretValueRegex.Replace(text, "<redacted-secret>");
+        return text;
+    }
+
+    private static UiControlSnapshot SanitizeControl(UiControlSnapshot control)
+        => control with
+        {
+            Name = SanitizeText(control.Name),
+            AutomationId = SanitizeText(control.AutomationId)
+        };
+
+    internal static string RedactOutboundImage(
+        string sourceDataUri,
+        NativeMethods.Rect windowRect,
+        nint targetWindow,
+        int targetPid,
+        IReadOnlyList<PixelRect> sensitiveBounds)
+    {
+        using var bitmap = DecodeDataImage(sourceDataUri);
+        using var graphics = Graphics.FromImage(bitmap);
+        using var brush = new SolidBrush(Color.Black);
+
+        foreach (var sensitive in sensitiveBounds)
+        {
+            var clipped = Intersect(
+                sensitive,
+                new PixelRect(windowRect.Left, windowRect.Top, windowRect.Right, windowRect.Bottom));
+            if (clipped is null) continue;
+            FillAbsoluteRect(graphics, brush, clipped.Value, windowRect, bitmap);
+        }
+
+        var cursor = NativeMethods.GetWindow(targetWindow, NativeMethods.GwHwndPrev);
+        for (var i = 0; i < 96 && cursor != nint.Zero; i++)
+        {
+            try
+            {
+                if (NativeMethods.IsWindowVisible(cursor) &&
+                    NativeMethods.GetWindowRect(cursor, out var otherRect))
+                {
+                    NativeMethods.GetWindowThreadProcessId(cursor, out var rawPid);
+                    var otherPid = checked((int)rawPid);
+                    if (otherPid > 0 && otherPid != targetPid)
+                    {
+                        var clipped = Intersect(
+                            new PixelRect(otherRect.Left, otherRect.Top, otherRect.Right, otherRect.Bottom),
+                            new PixelRect(windowRect.Left, windowRect.Top, windowRect.Right, windowRect.Bottom));
+                        if (clipped is not null)
+                            FillAbsoluteRect(graphics, brush, clipped.Value, windowRect, bitmap);
+                    }
+                }
+            }
+            catch
+            {
+                // Redaction is conservative but must not crash capture if a transient window disappears.
+            }
+
+            cursor = NativeMethods.GetWindow(cursor, NativeMethods.GwHwndPrev);
+        }
+
+        using var stream = new MemoryStream();
+        var encoder = ImageCodecInfo.GetImageEncoders().First(x => x.FormatID == ImageFormat.Jpeg.Guid);
+        using var parameters = new EncoderParameters(1);
+        parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
+        bitmap.Save(stream, encoder, parameters);
+        return "data:image/jpeg;base64," + Convert.ToBase64String(stream.ToArray());
+    }
+
+    private static void FillAbsoluteRect(
+        Graphics graphics,
+        Brush brush,
+        PixelRect rect,
+        NativeMethods.Rect windowRect,
+        Bitmap bitmap)
+    {
+        var scaleX = bitmap.Width / (double)Math.Max(1, windowRect.Width);
+        var scaleY = bitmap.Height / (double)Math.Max(1, windowRect.Height);
+        var x = (int)Math.Floor((rect.Left - windowRect.Left) * scaleX);
+        var y = (int)Math.Floor((rect.Top - windowRect.Top) * scaleY);
+        var width = (int)Math.Ceiling((rect.Right - rect.Left) * scaleX);
+        var height = (int)Math.Ceiling((rect.Bottom - rect.Top) * scaleY);
+        x = Math.Clamp(x, 0, Math.Max(0, bitmap.Width - 1));
+        y = Math.Clamp(y, 0, Math.Max(0, bitmap.Height - 1));
+        width = Math.Clamp(width, 1, bitmap.Width - x);
+        height = Math.Clamp(height, 1, bitmap.Height - y);
+        graphics.FillRectangle(brush, x, y, width, height);
+    }
+
+    private static PixelRect? Intersect(PixelRect a, PixelRect b)
+    {
+        var left = Math.Max(a.Left, b.Left);
+        var top = Math.Max(a.Top, b.Top);
+        var right = Math.Min(a.Right, b.Right);
+        var bottom = Math.Min(a.Bottom, b.Bottom);
+        return right > left && bottom > top ? new PixelRect(left, top, right, bottom) : null;
     }
 
     internal static bool IsVisualTargetStillCurrent(string beforeDataUri, string afterDataUri, PlanResult plan)
@@ -507,5 +667,9 @@ internal sealed class ObservationService
             : null;
     }
 
-    private sealed record UiScanResult(IReadOnlyList<UiControlSnapshot> Controls, string? BrowserDomain);
+    internal readonly record struct PixelRect(int Left, int Top, int Right, int Bottom);
+    private sealed record UiScanResult(
+        IReadOnlyList<UiControlSnapshot> Controls,
+        string? BrowserDomain,
+        IReadOnlyList<PixelRect> SensitiveBounds);
 }
