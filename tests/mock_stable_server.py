@@ -42,5 +42,6 @@ class H(BaseHTTPRequestHandler):
         if not target:
             self.sendj({"status":"clarify","action":"none","instruction":"","question":"対象を確認してください。","targetId":None,"key":None,"confidence":.9,"x":0,"y":0,"width":0,"height":0}); return
         label=target.get("name") or "target"
-        self.sendj({"status":"target","action":"left_click","instruction":f"「{label}」を1回クリックしてください。","question":None,"targetId":target["id"],"key":None,"confidence":.99,"x":target["x"],"y":target["y"],"width":target["width"],"height":target["height"]})
+        visual = "visual" in str(body.get("goal","")).lower()
+        self.sendj({"status":"target","action":"left_click","instruction":f"「{label}」を1回クリックしてください。","question":None,"targetId":None if visual else target["id"],"key":None,"confidence":.99,"x":target["x"],"y":target["y"],"width":target["width"],"height":target["height"]})
 if __name__=="__main__": ThreadingHTTPServer(("127.0.0.1",8766),H).serve_forever()
