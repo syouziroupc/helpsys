@@ -16,6 +16,8 @@ try{
  r=await worker.fetch(new Request('https://x/nope'),{}); assert(r.status===404,'unknown route');
  r=await call({...base,goal:''}); assert(r.status===400,'empty goal');
  r=await call({...base,image:'bogus'}); assert(r.status===400,'bad image');
+ plan={...plan,targetId:'x',action:'left_click',confidence:.99};
+ r=await call({...base,controls:[{...base.controls[0],enabled:undefined}]}); assert(r.status===502,'missing enabled flag must fail closed');
  const huge = await call({...base,pad:'x'.repeat(7_000_100)}); assert(huge.status===413,'chunked/undeclared oversized body');
 
  plan={...plan,targetId:'x',action:'type_text',confidence:.99};
