@@ -13,7 +13,7 @@ public static class StableSmokeNative {
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'publish/stable-win-x64/HelpSys.Stable.exe'
-$server=$null; $target=$null; $privacy=$null; $matrix=$null; $app=$null
+$server=$null; $target=$null; $privacy=$null; $matrix=$null; $stale=$null; $app=$null
 $log='artifacts/stable-mock-requests.jsonl'
 
 function Find-Element($process,[string]$id) {
@@ -142,9 +142,53 @@ try {
   if($disabled.Count -ne 1 -or $disabled[0].enabled -ne $false){throw 'Disabled UIA state was not preserved'}
   Stop-Process -Id $matrix.Id -Force; $matrix=$null
 
-  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA smoke passed.'
+  # Cancellation must abort an in-flight planner call and leave the app reusable.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('slow cancellation recovery')
+  Focus-Process $target 'cancel target'
+  Press-F8
+  Wait-Request
+  $cancel=Find-Element $app 'CancelButton'
+  if($null-eq $cancel){throw 'Cancel button disappeared during planning'}
+  $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  Start-Sleep -Seconds 2
+  if($app.HasExited){throw 'HelpSys exited after cancellation'}
+  $status=Find-Element $app 'StatusText'
+  if($null-eq $status -or $status.Current.Name -notlike '*中止*'){throw "Cancellation status missing: $($status.Current.Name)"}
+
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('recovery after cancellation')
+  Focus-Process $target 'recovery target'
+  Press-F8
+  Wait-Request
+  Start-Sleep -Seconds 1
+  if($app.HasExited){throw 'HelpSys failed to recover after cancellation'}
+  Stop-Process -Id $target.Id -Force; $target=$null
+
+  # A target that moves or becomes disabled while Gemini is answering must invalidate guidance.
+  foreach($mode in @('move','disable')){
+    Remove-Item $log -Force -ErrorAction SilentlyContinue
+    $signal=Join-Path $PWD "artifacts/stale-$mode.signal"
+    Remove-Item $signal -Force -ErrorAction SilentlyContinue
+    $stale=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/stale_target.ps1','-SignalPath',$signal -PassThru
+    Start-Sleep -Seconds 2
+    $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("slow stale $mode")
+    Focus-Process $stale "stale $mode target"
+    Press-F8
+    Wait-Request
+    Set-Content -Path $signal -Value $mode -Encoding ASCII
+    Start-Sleep -Seconds 3
+    if($app.HasExited){throw "HelpSys exited during stale-$mode revalidation"}
+    $status=Find-Element $app 'StatusText'
+    if($null-eq $status -or $status.Current.Name -notlike '*古い案内を破棄*'){throw "Stale-$mode guidance was not rejected: $($status.Current.Name)"}
+    Stop-Process -Id $stale.Id -Force; $stale=$null
+  }
+
+  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA/cancel/stale-target smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_STABLE_ENDPOINT -ErrorAction SilentlyContinue
-  foreach($p in @($app,$target,$privacy,$matrix,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
+  foreach($p in @($app,$target,$privacy,$matrix,$stale,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
 }
