@@ -182,11 +182,11 @@ internal sealed class ObservationService
             rootChild = walker.GetNextSibling(rootChild);
         }
 
-        var controls = new List<UiControlSnapshot>(MaxControls);
+        var candidates = new List<(UiControlSnapshot Control, int Priority, int Order)>(MaxVisitedNodes);
         string? browserDomain = null;
         var visited = 0;
 
-        while (queue.Count > 0 && controls.Count < MaxControls && visited < MaxVisitedNodes)
+        while (queue.Count > 0 && visited < MaxVisitedNodes)
         {
             var item = queue.Dequeue();
             visited++;
@@ -217,8 +217,8 @@ internal sealed class ObservationService
                 var className = Trim(current.ClassName, 120);
                 var type = Trim(current.ControlType?.ProgrammaticName, 80);
 
-                controls.Add(new UiControlSnapshot(
-                    $"u{controls.Count + 1}",
+                var snapshot = new UiControlSnapshot(
+                    "",
                     name,
                     automationId,
                     className,
@@ -230,7 +230,9 @@ internal sealed class ObservationService
                     Normalize(left - windowRect.Left, windowRect.Width),
                     Normalize(top - windowRect.Top, windowRect.Height),
                     Normalize(right - left, windowRect.Width),
-                    Normalize(bottom - top, windowRect.Height)));
+                    Normalize(bottom - top, windowRect.Height));
+
+                candidates.Add((snapshot, ControlPriority(snapshot), visited));
 
                 if (browserDomain is null && IsBrowser(processName) && LooksLikeAddressBar(name, type))
                     browserDomain = TryReadDomain(item);
@@ -243,7 +245,38 @@ internal sealed class ObservationService
             }
         }
 
+        var controls = candidates
+            .OrderByDescending(x => x.Priority)
+            .ThenBy(x => x.Order)
+            .Take(MaxControls)
+            .Select((x, index) => x.Control with { Id = $"u{index + 1}" })
+            .ToList();
+
         return new UiScanResult(controls, browserDomain);
+    }
+
+    private static int ControlPriority(UiControlSnapshot control)
+    {
+        var score = 0;
+        if (control.Password) score += 10_000;
+        if (control.Focused) score += 5_000;
+        if (control.KeyboardFocusable) score += 600;
+        if (control.Enabled) score += 100;
+        if (!string.IsNullOrWhiteSpace(control.AutomationId)) score += 450;
+        if (!string.IsNullOrWhiteSpace(control.Name)) score += 300;
+
+        score += control.ControlType switch
+        {
+            "ControlType.Edit" => 1_400,
+            "ControlType.Button" => 1_300,
+            "ControlType.ComboBox" => 1_250,
+            "ControlType.CheckBox" or "ControlType.RadioButton" => 1_200,
+            "ControlType.MenuItem" or "ControlType.Hyperlink" => 1_150,
+            "ControlType.ListItem" or "ControlType.TreeItem" or "ControlType.DataItem" => 1_100,
+            "ControlType.TabItem" => 1_000,
+            _ => 0
+        };
+        return score;
     }
 
     private static string CaptureWindow(NativeMethods.Rect rect)
