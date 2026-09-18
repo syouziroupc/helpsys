@@ -156,46 +156,78 @@ internal sealed class ObservationService
         if (!await _uiaGate.WaitAsync(0, cancellationToken))
             throw new PlannerException("Windows画面構造取得がすでに実行中のため、二重実行しません。");
 
-        Task<UiScanResult>? scanTask = null;
-        var releaseHere = true;
+        var outputPath = Path.Combine(
+            Path.GetTempPath(),
+            "HelpSys-Stable-UiProbe-" + Guid.NewGuid().ToString("N") + ".json");
+        Process? probe = null;
         try
         {
-            scanTask = Task.Run(() => ScanUi(hwnd, processName, windowRect), CancellationToken.None);
-            return await scanTask.WaitAsync(UiAutomationTimeout, cancellationToken);
-        }
-        catch (TimeoutException)
-        {
-            if (scanTask is not null && !scanTask.IsCompleted)
+            var executable = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
+                throw new PlannerException("Windows画面構造取得プロセスを開始できませんでした。");
+
+            var startInfo = new ProcessStartInfo
             {
-                releaseHere = false;
-                _ = scanTask.ContinueWith(
-                    _ => _uiaGate.Release(),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            }
-            throw;
-        }
-        catch (OperationCanceledException)
-        {
-            if (scanTask is not null && !scanTask.IsCompleted)
+                FileName = executable,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add(UiProbeHost.Switch);
+            startInfo.ArgumentList.Add(hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add(processName);
+            startInfo.ArgumentList.Add(windowRect.Left.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add(windowRect.Top.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add(windowRect.Right.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add(windowRect.Bottom.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add(outputPath);
+
+            probe = Process.Start(startInfo)
+                ?? throw new PlannerException("Windows画面構造取得プロセスを開始できませんでした。");
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(UiAutomationTimeout);
+            try
             {
-                releaseHere = false;
-                _ = scanTask.ContinueWith(
-                    _ => _uiaGate.Release(),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
+                await probe.WaitForExitAsync(timeoutCts.Token);
             }
-            throw;
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                TryKillProbe(probe);
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                TryKillProbe(probe);
+                throw new TimeoutException("UI Automation probe timed out.");
+            }
+
+            if (probe.ExitCode != 0 || !File.Exists(outputPath))
+                throw new PlannerException("Windowsの画面構造取得プロセスが正常に完了しませんでした。");
+
+            var json = await File.ReadAllTextAsync(outputPath, cancellationToken);
+            var result = System.Text.Json.JsonSerializer.Deserialize<UiScanResult>(json);
+            return result ?? throw new PlannerException("Windowsの画面構造取得結果が空でした。");
         }
         finally
         {
-            if (releaseHere) _uiaGate.Release();
+            if (probe is not null && !probe.HasExited) TryKillProbe(probe);
+            probe?.Dispose();
+            try { File.Delete(outputPath); } catch { }
+            try { File.Delete(outputPath + ".error"); } catch { }
+            _uiaGate.Release();
         }
     }
 
-    private static UiScanResult ScanUi(nint hwnd, string processName, NativeMethods.Rect windowRect)
+    private static void TryKillProbe(Process probe)
+    {
+        try
+        {
+            if (!probe.HasExited) probe.Kill(entireProcessTree: true);
+        }
+        catch { }
+    }
+
+    internal static UiScanResult ScanUi(nint hwnd, string processName, NativeMethods.Rect windowRect)
     {
         var root = AutomationElement.FromHandle(hwnd)
                    ?? throw new InvalidOperationException("UI Automation root unavailable.");
@@ -668,7 +700,7 @@ internal sealed class ObservationService
     }
 
     internal readonly record struct PixelRect(int Left, int Top, int Right, int Bottom);
-    private sealed record UiScanResult(
+    internal sealed record UiScanResult(
         IReadOnlyList<UiControlSnapshot> Controls,
         string? BrowserDomain,
         IReadOnlyList<PixelRect> SensitiveBounds);
