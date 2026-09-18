@@ -349,6 +349,14 @@ public partial class MainWindow : Window
 
     private void ShowStructuredTarget(GuideDecision decision, UiElementCandidate target, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
+        var safeDecision = NormalizeStructuredDecisionForTarget(decision, target);
+        if (safeDecision is null)
+        {
+            HandleTechnicalPlanningUncertainty("操作対象と操作方法の組み合わせを最終確認できない", generation);
+            return;
+        }
+        decision = safeDecision;
+
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
@@ -365,6 +373,42 @@ public partial class MainWindow : Window
             return;
         }
         ShowInstruction(instruction);
+    }
+
+    private static GuideDecision? NormalizeStructuredDecisionForTarget(GuideDecision decision, UiElementCandidate target)
+    {
+        var action = (decision.Action ?? string.Empty).Trim().ToLowerInvariant();
+        var controlType = (target.ControlType ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (action is "" or "none" or "press_key") return null;
+
+        if (action == "type_text")
+        {
+            var editable = controlType is "edit" or "document" or "combobox";
+            if (!editable || !target.Focused || !target.KeyboardFocusable) return null;
+            return decision;
+        }
+
+        if (action is not ("left_click" or "double_click")) return null;
+
+        var singleClickControl = controlType is
+            "button" or "menuitem" or "hyperlink" or "checkbox" or "radiobutton" or "tabitem" or "combobox";
+        if (action == "double_click" && singleClickControl)
+            action = "left_click";
+
+        var label = string.IsNullOrWhiteSpace(target.Name) ? "青い枠の場所" : $"「{target.Name.Trim()}」";
+        var instruction = action == "double_click"
+            ? $"青い枠の{label}で、マウスの左ボタンを間をあけずに2回押してください。"
+            : $"青い枠の{label}で、マウスの左ボタンを1回押してください。";
+
+        return new GuideDecision(
+            decision.Status,
+            decision.TargetId,
+            action,
+            instruction,
+            decision.Question,
+            decision.Key,
+            decision.Confidence);
     }
 
     private void ShowKeyboardGuide(GuideDecision decision, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
