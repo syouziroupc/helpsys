@@ -56,7 +56,8 @@ public sealed record UpdateInfo(
     System.Version Version,
     string BuildId,
     Uri ZipUrl,
-    Uri Sha256Url);
+    Uri Sha256Url,
+    long SizeBytes);
 
 public sealed class PrivacyBlockedException(string message) : Exception(message);
 public sealed class ObservationChangedException(string message) : Exception(message);
