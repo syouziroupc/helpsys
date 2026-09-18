@@ -20,6 +20,13 @@ internal static class SafetyGate
         "ワンタイム", "認証コード", "確認コード", "リカバリキー", "秘密鍵", "apiキー", "カード番号", "セキュリティコード"
     ];
 
+    private static readonly string[] SensitiveStorageTerms =
+    [
+        "cookies", "cookie storage", "session storage", "local storage",
+        "application - cookies", "application > cookies", "devtools - application - cookies",
+        "cookie・storage", "cookie / storage", "セッションストレージ", "ローカルストレージ"
+    ];
+
     public static void EnsureSafeToCapture(
         string processName,
         string windowTitle,
@@ -34,6 +41,9 @@ internal static class SafetyGate
         var signals = string.Join(' ', new[] { windowTitle }.Concat(controls.Select(x => x.Name)).Take(220));
         if (ContainsAny(signals, SecurityWarningTerms))
             throw new PrivacyBlockedException("ブラウザまたはOSのセキュリティ警告画面では自動案内を停止します。警告を迂回する操作は案内しません。");
+
+        if (ContainsAny(signals, SensitiveStorageTerms))
+            throw new PrivacyBlockedException("Cookie・ブラウザストレージなどの機密情報画面を検出したため、スクリーンショットを撮影せず解析を停止しました。");
 
         var hasEditableControl = controls.Any(x =>
             x.Enabled && x.KeyboardFocusable &&
