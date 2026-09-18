@@ -100,6 +100,8 @@ internal sealed class GeminiPlannerClient : IDisposable
 
         if (SafetyGate.ContainsSecretRequest(plan.Instruction) || SafetyGate.ContainsSecretRequest(plan.Question))
             throw new PlannerException("秘密情報の入力を求める案内を検出したため、案内を表示しませんでした。");
+        if (SafetyGate.ContainsWarningBypass(plan.Instruction) || SafetyGate.ContainsWarningBypass(plan.Question))
+            throw new PlannerException("セキュリティ警告を迂回する案内を検出したため、案内を表示しませんでした。");
 
         var allowedActions = new HashSet<string>(StringComparer.Ordinal)
         {
