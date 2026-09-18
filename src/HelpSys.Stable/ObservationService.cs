@@ -312,15 +312,22 @@ internal sealed class ObservationService
         }
     }
 
-    private static bool SameControlIdentity(UiControlSnapshot a, UiControlSnapshot b)
+    internal static bool SameControlIdentity(UiControlSnapshot a, UiControlSnapshot b)
     {
+        if (!a.Enabled || !b.Enabled) return false;
         if (!a.ControlType.Equals(b.ControlType, StringComparison.OrdinalIgnoreCase)) return false;
-        if (!string.IsNullOrWhiteSpace(a.AutomationId) && !string.IsNullOrWhiteSpace(b.AutomationId))
-            return a.AutomationId.Equals(b.AutomationId, StringComparison.OrdinalIgnoreCase);
 
-        if (!string.IsNullOrWhiteSpace(a.Name) && !a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(a.AutomationId) && !string.IsNullOrWhiteSpace(b.AutomationId) &&
+            !a.AutomationId.Equals(b.AutomationId, StringComparison.OrdinalIgnoreCase))
             return false;
 
+        if (!string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(b.Name) &&
+            !a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Stable AutomationId/name is not enough: a responsive layout can move the same
+        // control while Gemini is answering. The overlay still uses the original snapshot,
+        // so reject meaningful geometry drift rather than highlighting a stale position.
         return Math.Abs(a.X - b.X) <= 45 &&
                Math.Abs(a.Y - b.Y) <= 45 &&
                Math.Abs(a.Width - b.Width) <= 70 &&
