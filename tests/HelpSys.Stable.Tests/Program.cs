@@ -35,6 +35,7 @@ var controls = new List<UiControlSnapshot> { C() };
 GeminiPlannerClient.Validate(new("target","left_click","click",null,"c1",null,.99,0,0,0,0), controls);
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","left_click","パスワードを入力してください。",null,"c1",null,.99,0,0,0,0), controls), "secret guidance");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("clarify","none","", "Enter your verification code.",null,null,.99,0,0,0,0), controls), "secret clarify");
+ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","left_click","Type your password.",null,"c1",null,.99,0,0,0,0), controls), "reversed secret guidance");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","none","x",null,"c1",null,.99,0,0,0,0), controls), "target none");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","launch_missiles","x",null,"c1",null,.99,0,0,0,0), controls), "unknown action");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","type_text","type",null,"c1",null,.99,0,0,0,0), controls), "unfocused type");
