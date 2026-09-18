@@ -187,6 +187,22 @@ try {
     Stop-Process -Id $stale.Id -Force; $stale=$null
   }
 
+  # Visual-only targets must also be revalidated against the current pixels.
+  Remove-Item $log -Force -ErrorAction SilentlyContinue
+  $signal=Join-Path $PWD 'artifacts/stale-visual.signal'
+  Remove-Item $signal -Force -ErrorAction SilentlyContinue
+  $stale=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/stale_target.ps1','-SignalPath',$signal -PassThru
+  Start-Sleep -Seconds 2
+  $goal.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('slow visual stale move')
+  Focus-Process $stale 'visual stale target'
+  Press-F8
+  Wait-Request
+  Set-Content -Path $signal -Value 'move' -Encoding ASCII
+  Start-Sleep -Seconds 3
+  $status=Find-Element $app 'StatusText'
+  if($null-eq $status -or $status.Current.Name -notlike '*古い案内を破棄*'){throw "Visual stale guidance was not rejected: $($status.Current.Name)"}
+  Stop-Process -Id $stale.Id -Force; $stale=$null
+
   # Update cancellation must abort the HTTP request and restore the idle UI.
   $update=Find-Element $app 'UpdateButton'
   $cancel=Find-Element $app 'CancelButton'
