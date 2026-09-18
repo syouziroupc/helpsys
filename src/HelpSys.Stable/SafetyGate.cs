@@ -22,6 +22,12 @@ internal static class SafetyGate
         "ワンタイム", "認証コード", "確認コード", "リカバリキー", "秘密鍵", "apiキー", "カード番号", "セキュリティコード"
     ];
 
+    private static readonly string[] AuthenticationTitleTerms =
+    [
+        "sign in", "log in", "login", "authentication", "verify your identity",
+        "サインイン", "ログイン", "認証", "本人確認"
+    ];
+
     private static readonly string[] SensitiveStorageTerms =
     [
         "cookie storage", "session storage", "local storage",
@@ -40,7 +46,13 @@ internal static class SafetyGate
         if (controls.Any(x => x.Password))
             throw new PrivacyBlockedException("パスワード入力欄を検出したため、スクリーンショットを撮影せず画面解析を停止しました。");
 
-        var signals = string.Join(' ', new[] { windowTitle }.Concat(controls.Select(x => x.Name)).Take(220));
+        if (ContainsAny(windowTitle, AuthenticationTitleTerms) &&
+            controls.Any(x => x.Enabled && x.KeyboardFocusable &&
+                (x.ControlType.Contains("Edit", StringComparison.OrdinalIgnoreCase) ||
+                 x.ControlType.Contains("Document", StringComparison.OrdinalIgnoreCase))))
+            throw new PrivacyBlockedException("ログイン・本人確認画面を検出したため、スクリーンショットを撮影せず画面解析を停止しました。");
+
+        var signals = string.Join(' ', new[] { windowTitle }.Concat(controls.Select(x => x.Name)));
         if (ContainsAny(signals, SecurityWarningTerms))
             throw new PrivacyBlockedException("ブラウザまたはOSのセキュリティ警告画面では自動案内を停止します。警告を迂回する操作は案内しません。");
 
