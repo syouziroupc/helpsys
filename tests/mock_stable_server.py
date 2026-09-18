@@ -25,6 +25,13 @@ class H(BaseHTTPRequestHandler):
         n=int(self.headers.get("Content-Length","0"))
         return self.rfile.read(n) if n else b""
 
+    def do_GET(self):
+        if self.path.startswith("/release"):
+            time.sleep(5)
+            self.sendj({"assets":[]})
+            return
+        self.sendj({"error":"not_found"},404)
+
     def do_POST(self):
         body=json.loads(self.read_body() or b"{}")
         Path("artifacts").mkdir(exist_ok=True)
