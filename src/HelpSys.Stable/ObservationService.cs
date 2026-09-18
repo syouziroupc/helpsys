@@ -84,7 +84,29 @@ internal sealed class ObservationService
         CancellationToken cancellationToken)
     {
         if (!IsStillCurrent(observation)) return false;
-        if (plan.Status != "target" || string.IsNullOrWhiteSpace(plan.TargetId)) return true;
+        if (plan.Status != "target") return true;
+
+        if (string.IsNullOrWhiteSpace(plan.TargetId))
+        {
+            if (!NativeMethods.GetWindowRect(observation.WindowHandle, out var visualRect) ||
+                visualRect.Width != observation.Width || visualRect.Height != observation.Height)
+                return false;
+
+            try
+            {
+                var currentImage = await Task.Run(() => CaptureWindow(visualRect), cancellationToken);
+                if (!IsStillCurrent(observation)) return false;
+                return IsVisualTargetStillCurrent(observation.ImageDataUri, currentImage, plan);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         var original = observation.Controls.FirstOrDefault(x => x.Id == plan.TargetId);
         if (original is null || !original.Enabled) return false;
@@ -310,6 +332,77 @@ internal sealed class ObservationService
         {
             if (!ReferenceEquals(output, source)) output.Dispose();
         }
+    }
+
+    internal static bool IsVisualTargetStillCurrent(string beforeDataUri, string afterDataUri, PlanResult plan)
+    {
+        try
+        {
+            using var before = DecodeDataImage(beforeDataUri);
+            using var after = DecodeDataImage(afterDataUri);
+            if (before.Width != after.Width || before.Height != after.Height) return false;
+
+            Rectangle region;
+            if (plan.Width > 0 && plan.Height > 0)
+            {
+                var x = (int)Math.Floor(plan.X / 1000d * before.Width);
+                var y = (int)Math.Floor(plan.Y / 1000d * before.Height);
+                var width = Math.Max(1, (int)Math.Ceiling(plan.Width / 1000d * before.Width));
+                var height = Math.Max(1, (int)Math.Ceiling(plan.Height / 1000d * before.Height));
+                var marginX = Math.Max(8, width / 2);
+                var marginY = Math.Max(8, height / 2);
+                var left = Math.Clamp(x - marginX, 0, before.Width - 1);
+                var top = Math.Clamp(y - marginY, 0, before.Height - 1);
+                var right = Math.Clamp(x + width + marginX, left + 1, before.Width);
+                var bottom = Math.Clamp(y + height + marginY, top + 1, before.Height);
+                region = Rectangle.FromLTRB(left, top, right, bottom);
+            }
+            else
+            {
+                region = new Rectangle(0, 0, before.Width, before.Height);
+            }
+
+            var samplesX = Math.Min(40, Math.Max(4, region.Width));
+            var samplesY = Math.Min(30, Math.Max(4, region.Height));
+            var changed = 0;
+            var total = 0;
+            var totalDifference = 0d;
+
+            for (var sy = 0; sy < samplesY; sy++)
+            {
+                var py = region.Top + Math.Min(region.Height - 1, (int)((sy + 0.5) * region.Height / samplesY));
+                for (var sx = 0; sx < samplesX; sx++)
+                {
+                    var px = region.Left + Math.Min(region.Width - 1, (int)((sx + 0.5) * region.Width / samplesX));
+                    var a = before.GetPixel(px, py);
+                    var b = after.GetPixel(px, py);
+                    var difference = (Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B)) / 3d;
+                    totalDifference += difference;
+                    total++;
+                    if (difference >= 38d) changed++;
+                }
+            }
+
+            if (total == 0) return false;
+            var changedRatio = changed / (double)total;
+            var averageDifference = totalDifference / total;
+            return changedRatio <= 0.08 && averageDifference <= 18d;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Bitmap DecodeDataImage(string dataUri)
+    {
+        var comma = dataUri.IndexOf(',');
+        if (comma < 0 || comma == dataUri.Length - 1)
+            throw new FormatException("Invalid image data URI.");
+        var bytes = Convert.FromBase64String(dataUri[(comma + 1)..]);
+        using var stream = new MemoryStream(bytes);
+        using var image = Image.FromStream(stream);
+        return new Bitmap(image);
     }
 
     internal static bool SameControlIdentity(UiControlSnapshot a, UiControlSnapshot b)
