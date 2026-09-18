@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpsys",
+  "main": "worker/stable-router.js",
+  "compatibility_date": "2026-09-18",
+  "cache": {
+    "enabled": false
+  },
+  "assets": {
+    "directory": "./site",
+    "run_worker_first": [
+      "/v1/*",
+      "/health",
+      "/health/*"
+    ]
+  },
+  "vars": {
+    "HELPSYS_VERSION": "3.0.0"
+  }
+}
