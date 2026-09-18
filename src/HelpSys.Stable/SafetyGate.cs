@@ -22,7 +22,7 @@ internal static class SafetyGate
 
     private static readonly string[] SensitiveStorageTerms =
     [
-        "cookies", "cookie storage", "session storage", "local storage",
+        "cookie storage", "session storage", "local storage",
         "application - cookies", "application > cookies", "devtools - application - cookies",
         "cookie・storage", "cookie / storage", "セッションストレージ", "ローカルストレージ"
     ];
