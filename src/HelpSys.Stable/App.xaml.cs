@@ -6,6 +6,24 @@ namespace HelpSys.Stable;
 
 public partial class App : Application
 {
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+
+        if (UiProbeHost.IsInvocation(e.Args))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var code = UiProbeHost.Run(e.Args);
+            Environment.ExitCode = code;
+            Shutdown(code);
+            return;
+        }
+
+        var window = new MainWindow();
+        MainWindow = window;
+        window.Show();
+    }
+
     public App()
     {
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
