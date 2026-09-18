@@ -1,0 +1,39 @@
+name: GLM rebuild validation
+
+on:
+  push:
+    branches:
+      - rebuild/glm-clean-20260918
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Worker syntax and regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --check worker/quality-guide.js
+          node --check worker/quality-guide-selftest.mjs
+          node worker/quality-guide-selftest.mjs
+          node tests/commander-stability-contract.mjs
+          node tests/current-state-replan-contract.mjs
+          node tests/ui-surface-contract.mjs
+
+      - name: Restore Windows project
+        run: dotnet restore src/HelpSys.Desktop/HelpSys.Desktop.csproj
+
+      - name: Build Windows project
+        run: dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore
