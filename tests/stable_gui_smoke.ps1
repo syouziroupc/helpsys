@@ -65,6 +65,7 @@ function Request-Count {
 try {
   Remove-Item $log -Force -ErrorAction SilentlyContinue
   $env:HELPSYS_STABLE_ENDPOINT='http://127.0.0.1:8766/v1/plan'
+  $env:HELPSYS_UPDATE_API='http://127.0.0.1:8766/release'
   $server=Start-Process python -ArgumentList 'tests/mock_stable_server.py' -PassThru -WindowStyle Hidden
   Start-Sleep -Seconds 1
   $target=Start-Process powershell.exe -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File','tests/smoke_target.ps1' -PassThru
@@ -186,9 +187,27 @@ try {
     Stop-Process -Id $stale.Id -Force; $stale=$null
   }
 
-  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA/cancel/stale-target smoke passed.'
+  # Update cancellation must abort the HTTP request and restore the idle UI.
+  $update=Find-Element $app 'UpdateButton'
+  $cancel=Find-Element $app 'CancelButton'
+  if($null-eq $update -or $null-eq $cancel){throw 'Update/cancel controls missing before cancellation test'}
+  $update.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  Start-Sleep -Milliseconds 350
+  $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  $deadline=[DateTime]::UtcNow.AddSeconds(4)
+  do {
+    $status=Find-Element $app 'StatusText'
+    $update=Find-Element $app 'UpdateButton'
+    if($null-ne $status -and $status.Current.Name -like '*更新処理を中止*' -and $update.Current.IsEnabled){break}
+    Start-Sleep -Milliseconds 100
+  } while([DateTime]::UtcNow -lt $deadline)
+  if($null-eq $status -or $status.Current.Name -notlike '*更新処理を中止*'){throw "Update cancellation did not settle: $($status.Current.Name)"}
+  if(-not $update.Current.IsEnabled){throw 'Update button did not recover after cancellation'}
+
+  Write-Host 'HelpSys Stable GUI/F8/privacy/double-trigger/dense-UIA/cancel/stale-target/update-cancel smoke passed.'
 }
 finally {
   Remove-Item Env:HELPSYS_STABLE_ENDPOINT -ErrorAction SilentlyContinue
+  Remove-Item Env:HELPSYS_UPDATE_API -ErrorAction SilentlyContinue
   foreach($p in @($app,$target,$privacy,$matrix,$stale,$server)){ if($null-ne $p -and -not $p.HasExited){Stop-Process -Id $p.Id -Force} }
 }
