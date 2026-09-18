@@ -30,6 +30,21 @@ try{
  plan={...plan,instruction:'Proceed anyway to the unsafe site.'}; r=await call(); assert(r.status===502,'warning bypass English');
  plan={...plan,instruction:'詳細設定を開いてこのサイトに進んでください。'}; r=await call(); assert(r.status===502,'warning bypass Japanese');
  upstreamStatus=429; plan={...plan,instruction:'click'}; r=await call(); assert(r.status===502,'provider error normalization');
+ upstreamStatus=200;
+
+ const malformedPayloads=[
+   {},
+   {candidates:[]},
+   {candidates:[{content:{parts:[]}}]},
+   {candidates:[{content:{parts:[{thought:true,text:'{}'}]}}]},
+   {candidates:[{content:{parts:[{text:'not-json'}]}}]},
+   {candidates:[{content:{parts:[{text:'null'}]}}]},
+   {candidates:[{content:{parts:[{text:'[]'}]}}]}
+ ];
+ for(const payload of malformedPayloads){
+   globalThis.fetch=async()=>new Response(JSON.stringify(payload),{status:200,headers:{'content-type':'application/json'}});
+   r=await call(); assert(r.status===502,'malformed Gemini payload must fail closed');
+ }
 
  console.log('HelpSys Stable adversarial worker self-test passed.');
 } finally { globalThis.fetch=original; }
