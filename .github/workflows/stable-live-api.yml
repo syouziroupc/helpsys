@@ -1,6 +1,10 @@
 name: HelpSys Stable live API burn-in
 
 on:
+  pull_request:
+    paths:
+      - "tests/stable-live-api-burnin.mjs"
+      - ".github/workflows/stable-live-api.yml"
   push:
     branches: [main]
     paths:
