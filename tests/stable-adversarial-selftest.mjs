@@ -23,6 +23,9 @@ try{
  plan={...plan,status:'done',action:'none',targetId:null,confidence:.4}; r=await call(); assert(r.status===502,'low done');
  plan={...plan,status:'clarify',action:'none',question:'',confidence:.9}; r=await call(); assert(r.status===502,'empty clarify');
  plan={...plan,status:'target',action:'left_click',instruction:'passwordを入力して送って',question:null,targetId:'x',confidence:.99}; r=await call(); assert(r.status===502,'secret request');
+ plan={...plan,instruction:'パスワードを入力してください。'}; r=await call(); assert(r.status===502,'natural Japanese password entry');
+ plan={...plan,instruction:'Enter your verification code.'}; r=await call(); assert(r.status===502,'English verification-code entry');
+ plan={...plan,instruction:'APIキーを貼り付けてください。'}; r=await call(); assert(r.status===502,'API key paste');
  upstreamStatus=429; plan={...plan,instruction:'click'}; r=await call(); assert(r.status===502,'provider error normalization');
 
  console.log('HelpSys Stable adversarial worker self-test passed.');
