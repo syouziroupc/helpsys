@@ -27,6 +27,8 @@ try{
  plan={...plan,instruction:'パスワードを入力してください。'}; r=await call(); assert(r.status===502,'natural Japanese password entry');
  plan={...plan,instruction:'Enter your verification code.'}; r=await call(); assert(r.status===502,'English verification-code entry');
  plan={...plan,instruction:'APIキーを貼り付けてください。'}; r=await call(); assert(r.status===502,'API key paste');
+ plan={...plan,instruction:'Proceed anyway to the unsafe site.'}; r=await call(); assert(r.status===502,'warning bypass English');
+ plan={...plan,instruction:'詳細設定を開いてこのサイトに進んでください。'}; r=await call(); assert(r.status===502,'warning bypass Japanese');
  upstreamStatus=429; plan={...plan,instruction:'click'}; r=await call(); assert(r.status===502,'provider error normalization');
 
  console.log('HelpSys Stable adversarial worker self-test passed.');
