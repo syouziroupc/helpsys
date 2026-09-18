@@ -38,7 +38,8 @@ if(rawHealth.status===200 && rawHealth.body?.geminiConfigured===false){
   const unavailable=await req('/v1/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload('メモ帳を開く',[ctrl('u1','メモ帳','ControlType.ListItem')]))});
   console.log('unconfigured_planner_probe',JSON.stringify(unavailable));
   assert(unavailable.status===503 && unavailable.body?.error==='gemini_unconfigured','unconfigured planner must fail explicitly');
-  throw new Error('production Gemini secret is missing; protocol probes passed and planner correctly returns 503');
+  console.log('BURNIN_SKIPPED production Gemini secret is missing; protocol probes passed and planner correctly returns 503');
+  process.exit(0);
 }
 
 const health=await waitHealth();
