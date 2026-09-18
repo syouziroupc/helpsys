@@ -57,6 +57,7 @@ assert(wrangler.includes('"/v1/*"'), 'API routes must run Worker-first while sta
 
 assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'versioned release asset must expose Stable version');
 assert(release.includes('-p:HelpSysBuildId=$shortSha'), 'release must embed the current build id');
+assert(release.includes('HELPSYS_VERSION=$version') && release.includes('$env:HELPSYS_VERSION'), 'release version must persist across workflow steps');
 assert(release.includes('HelpSys-latest-win-x64.zip'), 'public stable alias must remain compatible');
 assert(release.includes('HelpSys-latest-win-x64.sha256'), 'release must publish update integrity hash');
 assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'release must preserve legacy updater migration asset');
