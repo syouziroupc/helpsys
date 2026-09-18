@@ -36,10 +36,20 @@ $timer.Add_Tick({
     if($cmd -eq 'move'){
       $button.Left = 360
       $label.Text = 'Target moved'
+      $button.Refresh()
+      $label.Refresh()
+      $form.Refresh()
+      [System.Windows.Forms.Application]::DoEvents()
+      Set-Content -Path ($SignalPath + '.ack') -Value 'moved' -Encoding ASCII
       Remove-Item $SignalPath -Force -ErrorAction SilentlyContinue
     } elseif($cmd -eq 'disable'){
       $button.Enabled = $false
       $label.Text = 'Target disabled'
+      $button.Refresh()
+      $label.Refresh()
+      $form.Refresh()
+      [System.Windows.Forms.Application]::DoEvents()
+      Set-Content -Path ($SignalPath + '.ack') -Value 'disabled' -Encoding ASCII
       Remove-Item $SignalPath -Force -ErrorAction SilentlyContinue
     }
   }
