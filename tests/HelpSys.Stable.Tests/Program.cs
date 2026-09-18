@@ -1,4 +1,7 @@
 using HelpSys.Stable;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 
 static void Assert(bool condition, string message)
 {
@@ -53,9 +56,6 @@ Assert(!UpdateService.IsTrustedReleaseUri(new Uri("https://evil.example/a")), "f
 Assert(VersionInfo.Version == "3.0.1", "test version drift");
 Assert(!string.IsNullOrWhiteSpace(VersionInfo.BuildId), "build id missing");
 
-Console.WriteLine("HelpSys Stable C# safety/validation tests passed.");
-
-
 var originalTarget = new UiControlSnapshot("u1","Go","GoButton","","ControlType.Button",true,false,true,false,100,100,120,60);
 var sameTarget = originalTarget with { Id = "u99", X = 120, Y = 120 };
 var movedTarget = originalTarget with { Id = "u99", X = 300, Y = 300 };
@@ -73,3 +73,25 @@ Assert(ObservationService.NormalizeBrowserDomain("settings") is null, "single se
 Assert(ObservationService.LooksLikeAddressBar("Address and search bar", "ControlType.Edit"), "address bar must be recognized");
 Assert(!ObservationService.LooksLikeAddressBar("Search", "ControlType.Edit"), "site search box must not be treated as address bar");
 ExpectPlanner(() => GeminiPlannerClient.Validate(new("target","left_click","Proceed anyway to the unsafe site.",null,"c1",null,.99,0,0,0,0), controls), "warning bypass");
+
+
+static string MakeTestImage(Rectangle patch)
+{
+    using var bitmap = new Bitmap(320, 200);
+    using var graphics = Graphics.FromImage(bitmap);
+    graphics.Clear(Color.FromArgb(25, 25, 25));
+    using var brush = new SolidBrush(Color.FromArgb(235, 235, 235));
+    graphics.FillRectangle(brush, patch);
+    using var stream = new MemoryStream();
+    bitmap.Save(stream, ImageFormat.Jpeg);
+    return "data:image/jpeg;base64," + Convert.ToBase64String(stream.ToArray());
+}
+
+var visualPlan = new PlanResult("target","left_click","click",null,null,null,.95,100,200,220,260);
+var visualBefore = MakeTestImage(new Rectangle(32,40,70,52));
+var visualSame = MakeTestImage(new Rectangle(32,40,70,52));
+var visualMoved = MakeTestImage(new Rectangle(210,40,70,52));
+Assert(ObservationService.IsVisualTargetStillCurrent(visualBefore, visualSame, visualPlan), "unchanged visual target must stay valid");
+Assert(!ObservationService.IsVisualTargetStillCurrent(visualBefore, visualMoved, visualPlan), "moved visual target must invalidate stale guidance");
+
+Console.WriteLine("HelpSys Stable C# safety/validation/visual-state tests passed.");
