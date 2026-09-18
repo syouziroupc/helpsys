@@ -49,7 +49,7 @@ assert(window.includes('wakeReleased = true'), 'Commander must release wake list
 assert(window.indexOf('_commander.CompleteWakeInteraction();\n            wakeReleased = true;') < window.indexOf('var planningTask = StartOrContinueSessionAsync();'), 'Commander wake release must occur before long planning begins.');
 
 assert(qualityWindow.includes('TryStructuredFallbackAsync'), 'Quality-first guidance must have a fresh UIA fallback when image confirmation is unavailable.');
-assert(qualityWindow.includes('MinimumStructuredFallbackConfidence = 0.88'), 'Structured fallback confidence threshold regression.');
+assert(qualityWindow.includes('MinimumStructuredFallbackConfidence = 0.93'), 'Structured fallback confidence threshold regression.');
 assert(qualityWindow.includes('string.IsNullOrWhiteSpace(fallback.TargetId)'), 'Structured fallback must require a concrete UIA target.');
 assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'Structured fallback must revalidate the target immediately before showing guidance.');
 assert(qualityWindow.includes('_speechInput.HideOverlay();'), 'Screen capture must remove the speech overlay first.');

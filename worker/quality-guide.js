@@ -5,7 +5,7 @@ const MAX_UI_ELEMENTS = 280;
 const MAX_HISTORY = 8;
 const MAX_IMAGE_CHARS = 6_500_000;
 const MIN_TARGET_CONFIDENCE = 0.80;
-const MIN_STRUCTURED_TARGET_CONFIDENCE = 0.88;
+const MIN_STRUCTURED_TARGET_CONFIDENCE = 0.93;
 const MIN_DONE_CONFIDENCE = 0.90;
 
 const qualityTool = {
@@ -66,6 +66,8 @@ ROUTE RECOVERY:
 
 PHYSICAL WINDOWS RULES:
 - A desktop shortcut/icon exposed as an Explorer ListItem normally needs a DOUBLE CLICK to launch. A single click merely selects it and is not enough.
+- Standard Button, MenuItem, Hyperlink, CheckBox, RadioButton, TabItem, TreeItem and ComboBox controls normally use ONE left click. Do not double-click them unless current evidence clearly establishes an exceptional requirement.
+- type_text is valid only for a focused editable control such as Edit, Document or ComboBox. Never use type_text on buttons, links, tabs or menu items.
 - A taskbar app button normally needs ONE left click to bring it forward.
 - If the requested goal is a website and a browser shortcut is visibly on the desktop, naming the real browser (for example Google Chrome) is better than saying a generic phrase such as “internet app”.
 - Do not assume a browser is already visible merely because its process is running.
@@ -227,6 +229,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   }
 
   if (status !== 'target') return notFound(instruction || '現在の情報を照合しましたが、次の操作を安全に決められませんでした。');
+  if (action === 'none') return notFound('操作対象は示されていますが、実行する操作を特定できませんでした。');
   if (confidence < MIN_TARGET_CONFIDENCE) return notFound('次の操作を決める確度が足りませんでした。');
 
   const structuredTarget = !screenConfirmed && targetId && ids.has(targetId) && confidence >= MIN_STRUCTURED_TARGET_CONFIDENCE;
@@ -279,6 +282,8 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
   if (task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
     return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
+  if (action === 'type_text' && !isEditableControl(target))
+    return notFound('文字入力できる対象ではないため、この操作は案内しません。');
   if (action === 'type_text' && !(target.focused === true && target.keyboardFocusable === true))
     return notFound('入力欄が実際に選ばれていることを確認できませんでした。');
 
@@ -299,15 +304,38 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
 }
 
 function normalizePhysicalAction(decision, target, task) {
-  const desktopListItem = /listitem/i.test(target.controlType || '') && /explorer/i.test(target.processName || '');
-  if (!desktopListItem || !['site', 'launch-app'].includes(task?.kind)) return decision;
-
+  const controlType = String(target.controlType || '').toLowerCase();
+  const processName = String(target.processName || '').toLowerCase();
+  const desktopListItem = controlType === 'listitem' && processName === 'explorer';
   const label = text(target.name, 80) || '青い枠の項目';
-  return {
-    ...decision,
-    action: 'double_click',
-    instruction: `青い枠の「${label}」で、マウスの左ボタンを間をあけずに2回押してください。`
-  };
+
+  if (desktopListItem && ['site', 'launch-app'].includes(task?.kind)) {
+    return {
+      ...decision,
+      action: 'double_click',
+      instruction: `青い枠の「${label}」で、マウスの左ボタンを間をあけずに2回押してください。`
+    };
+  }
+
+  if (decision.action === 'double_click' && isSingleClickControl(target)) {
+    return {
+      ...decision,
+      action: 'left_click',
+      instruction: `青い枠の「${label}」で、マウスの左ボタンを1回押してください。`
+    };
+  }
+
+  return decision;
+}
+
+function isSingleClickControl(target) {
+  const controlType = String(target?.controlType || '').toLowerCase();
+  return new Set(['button', 'menuitem', 'hyperlink', 'checkbox', 'radiobutton', 'tabitem', 'treeitem', 'combobox']).has(controlType);
+}
+
+function isEditableControl(target) {
+  const controlType = String(target?.controlType || '').toLowerCase();
+  return new Set(['edit', 'document', 'combobox']).has(controlType);
 }
 
 function isStrictTask(task) {

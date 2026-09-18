@@ -96,8 +96,45 @@ assert(payload().uiElements?.[0]?.toggleState === 'Off', 'UIA state must survive
 assert(payload().uiElements?.[0]?.selected === false, 'UIA selection state must survive compaction into the fused model input');
 
 nextDecision = {
+  status: 'target', targetId: 'b1', action: 'double_click', instruction: '設定を2回押してください。',
+  question: null, key: null, confidence: 0.96, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '設定ボタンが画面に見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: '設定を開いて',
+  systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
+});
+assert(value.status === 'target' && value.action === 'left_click', 'ordinary buttons must be normalized to one left click');
+assert(value.instruction.includes('1回'), 'normalized button guidance must explicitly say one click');
+
+nextDecision = {
+  status: 'target', targetId: 'b1', action: 'type_text', instruction: '設定に入力してください。',
+  question: null, key: null, confidence: 0.97, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '設定ボタンが画面に見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: '設定を開いて',
+  systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true, focused: true, keyboardFocusable: true }]
+});
+assert(value.status === 'not_found', 'type_text on a non-editable control must be rejected');
+
+nextDecision = {
+  status: 'target', targetId: 'b1', action: 'none', instruction: '設定を開いてください。',
+  question: null, key: null, confidence: 0.98, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '設定ボタンが画面に見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: '設定を開いて',
+  systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
+  elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
+});
+assert(value.status === 'not_found', 'target decisions without a physical action must be rejected');
+
+nextDecision = {
   status: 'target', targetId: 'b1', action: 'left_click', instruction: '「設定」を1回押してください。',
-  question: null, key: null, confidence: 0.91, x: 0, y: 0, width: 0, height: 0,
+  question: null, key: null, confidence: 0.95, x: 0, y: 0, width: 0, height: 0,
   screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
 };
 value = await ask({
@@ -115,13 +152,13 @@ value = await ask({
 assert(value.status === 'target' && value.targetId === 'b1' && value.screenConfirmed === false,
   'high-confidence real UIA target must survive when the screenshot is ambiguous');
 
-nextDecision = { ...nextDecision, confidence: 0.84 };
+nextDecision = { ...nextDecision, confidence: 0.90 };
 value = await ask({
   request: '設定を開いて',
   systemContext: { foregroundProcess: 'searchhost', foregroundProcessId: 30, runningApps: [] },
   elements: [{ id: 'b1', name: '設定', automationId: 'Settings', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true }]
 });
-assert(value.status === 'not_found', 'ambiguous structured target below the high-confidence threshold must be rejected');
+assert(value.status === 'not_found', 'ambiguous structured target below the stricter high-confidence threshold must be rejected');
 
 const detourElements = [
   { id: 'excel-target', name: 'Excel', controlType: 'Button', processName: 'SearchHost', interactable: true, enabled: true },

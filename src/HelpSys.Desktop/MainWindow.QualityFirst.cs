@@ -10,7 +10,7 @@ public partial class MainWindow
     private const double MinimumQualityTargetConfidence = 0.80;
     private const double MinimumQualityDoneConfidence = 0.90;
     private const double MinimumVisualOnlyTargetConfidence = 0.92;
-    private const double MinimumStructuredFallbackConfidence = 0.88;
+    private const double MinimumStructuredFallbackConfidence = 0.93;
 
     private async Task AdvanceGuideAsync()
     {
