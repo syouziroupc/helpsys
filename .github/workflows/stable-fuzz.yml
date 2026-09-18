@@ -1,0 +1,44 @@
+name: HelpSys Stable Worker fuzz
+
+on:
+  pull_request:
+    paths:
+      - "worker/stable-gemini.js"
+      - "worker/stable-router.js"
+      - "tests/stable-worker-*.mjs"
+      - ".github/workflows/stable-fuzz.yml"
+  push:
+    branches: [main]
+    paths:
+      - "worker/stable-gemini.js"
+      - "worker/stable-router.js"
+      - "tests/stable-worker-*.mjs"
+      - ".github/workflows/stable-fuzz.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax
+        run: |
+          node --check worker/stable-gemini.js
+          node --check worker/stable-router.js
+          node --check tests/stable-worker-selftest.mjs
+          node --check tests/stable-worker-fuzz-selftest.mjs
+          node --check tests/stable-adversarial-selftest.mjs
+      - name: Stable Worker contract
+        run: node tests/stable-worker-selftest.mjs
+      - name: Stable Worker adversarial cases
+        run: node tests/stable-adversarial-selftest.mjs
+      - name: Stable Worker deterministic fuzz
+        run: node tests/stable-worker-fuzz-selftest.mjs
