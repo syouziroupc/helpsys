@@ -50,7 +50,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\stable-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.0.0'
+          $projectXml = Get-Content 'src\HelpSys.Stable\HelpSys.Stable.csproj' -Raw
+          $versionMatch = [regex]::Match($projectXml, '<Version>([^<]+)</Version>')
+          if (-not $versionMatch.Success) { throw 'Stable project version is missing.' }
+          $version = $versionMatch.Groups[1].Value
           $versionedName = "HelpSys-Stable-$version-$shortSha-win-x64.zip"
           $legacyName = "HelpSys-Unified-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-latest-win-x64.zip'
@@ -63,6 +66,7 @@ jobs:
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishReadyToRun=false `
+            -p:HelpSysBuildId=$shortSha `
             -o $out
 
           $exe = Join-Path $out 'HelpSys.Stable.exe'
@@ -112,7 +116,7 @@ jobs:
           $allowed = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_LEGACY_ASSET, $env:HELPSYS_STABLE_ASSET, $env:HELPSYS_SHA_ASSET)
 
           $notes = @"
-          HelpSys Stable 3.0.0 — Gemini Edition
+          HelpSys Stable $version — Gemini Edition
 
           - Windows 10 / 11 x64, self-contained
           - Gemini 3.8 Flash only; no GLM fallback
@@ -140,9 +144,9 @@ jobs:
             }
             gh release upload $tag $versioned $legacy $stable $sha --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Stable assets.' }
-            gh release edit $tag --target main --title "HelpSys Stable 3.0.0 — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --target main --title "HelpSys Stable $version — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $versioned $legacy $stable $sha --target main --title "HelpSys Stable 3.0.0 — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $versioned $legacy $stable $sha --target main --title "HelpSys Stable $version — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create Stable release.' }
           }
 
