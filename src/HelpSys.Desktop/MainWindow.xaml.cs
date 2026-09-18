@@ -389,14 +389,14 @@ public partial class MainWindow : Window
             return decision;
         }
 
-        if (action is not ("left_click" or "double_click")) return null;
+        if (action != "left_click" && action != "double_click") return null;
 
         var singleClickControl = controlType is
             "button" or "menuitem" or "hyperlink" or "checkbox" or "radiobutton" or "tabitem" or "combobox";
         if (action == "double_click" && singleClickControl)
             action = "left_click";
 
-        var label = string.IsNullOrWhiteSpace(target.Name) ? "青い枠の場所" : $"「{target.Name.Trim()}」";
+        var label = string.IsNullOrWhiteSpace(target.Name) ? "場所" : $"「{target.Name.Trim()}」";
         var instruction = action == "double_click"
             ? $"青い枠の{label}で、マウスの左ボタンを間をあけずに2回押してください。"
             : $"青い枠の{label}で、マウスの左ボタンを1回押してください。";
