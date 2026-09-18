@@ -79,7 +79,11 @@ export default {
     if (declaredLength > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
 
     let body;
-    try { body = await request.json(); }
+    try {
+      const raw = await request.arrayBuffer();
+      if (raw.byteLength > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
+      body = JSON.parse(new TextDecoder().decode(raw));
+    }
     catch { return json({ error: 'invalid_json' }, 400); }
 
     const goal = text(body?.goal, 1000);
