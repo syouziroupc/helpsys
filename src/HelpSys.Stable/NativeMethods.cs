@@ -15,6 +15,9 @@ internal static class NativeMethods
     public const nint WsExTransparent = 0x00000020;
     public const nint WsExToolWindow = 0x00000080;
     public const nint WsExNoActivate = 0x08000000;
+    public static readonly nint HwndTopmost = new(-1);
+    public const uint SwpNoActivate = 0x0010;
+    public const uint SwpShowWindow = 0x0040;
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
@@ -53,6 +56,17 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern nint SetWindowLongPtr(nint hWnd, int index, nint newLong);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPos(
+        nint hWnd,
+        nint hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint flags);
 
     public static string GetTitle(nint hWnd)
     {
