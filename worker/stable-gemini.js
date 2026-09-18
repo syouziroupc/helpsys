@@ -86,7 +86,7 @@ export default {
     }
     catch { return json({ error: 'invalid_json' }, 400); }
 
-    const goal = text(body?.goal, 1000);
+    const goal = sanitizeOutboundText(text(body?.goal, 1000));
     const image = typeof body?.image === 'string' ? body.image : '';
     if (!goal) return json({ error: 'invalid_goal' }, 400);
     const parsedImage = parseDataImage(image);
@@ -99,7 +99,7 @@ export default {
     const context = {
       goal,
       processName: text(body?.processName, 80),
-      windowTitle: text(body?.windowTitle, 260),
+      windowTitle: sanitizeOutboundText(text(body?.windowTitle, 260)),
       browserDomain: nullableText(body?.browserDomain, 220),
       controls
     };
@@ -229,11 +229,11 @@ function compactControl(value) {
   if (!id) return null;
   return {
     id,
-    name: text(value.name, 180),
-    automationId: text(value.automationId, 120),
-    className: text(value.className, 120),
+    name: sanitizeOutboundText(text(value.name, 180)),
+    automationId: sanitizeOutboundText(text(value.automationId, 120)),
+    className: sanitizeOutboundText(text(value.className, 120)),
     controlType: text(value.controlType, 80),
-    enabled: value.enabled !== false,
+    enabled: value.enabled === true,
     focused: value.focused === true,
     keyboardFocusable: value.keyboardFocusable === true,
     x: clamp1000(value.x),
@@ -241,6 +241,26 @@ function compactControl(value) {
     width: clamp1000(value.width),
     height: clamp1000(value.height)
   };
+}
+
+const EMAIL = /(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![\w.-])/gi;
+const JP_PHONE = /(?<!\d)0\d{1,4}[-‐‑–—ー]?\d{1,4}[-‐‑–—ー]?\d{3,4}(?!\d)/g;
+const JP_POSTAL = /〒?\s*\d{3}[-‐‑–—ー]?\d{4}/g;
+const LABELED_SECRET = /(api[_ -]?key|token|secret|password|パスワード|秘密鍵|apiキー)\s*[:=]\s*\S{4,}/gi;
+const BEARER = /bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+const JWT = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
+const CARD = /\b(?:\d[ -]?){13,19}\b/g;
+
+function sanitizeOutboundText(value) {
+  let result = String(value || '');
+  result = result.replace(EMAIL, '<email>');
+  result = result.replace(JP_PHONE, '<phone>');
+  result = result.replace(JP_POSTAL, '<postal-code>');
+  result = result.replace(BEARER, '<redacted-secret>');
+  result = result.replace(JWT, '<redacted-secret>');
+  result = result.replace(LABELED_SECRET, '<redacted-secret>');
+  result = result.replace(CARD, '<redacted-card>');
+  return result;
 }
 
 function containsSecretRequest(value) {
