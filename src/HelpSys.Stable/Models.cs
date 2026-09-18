@@ -37,6 +37,7 @@ public sealed record ScreenObservation(
     int Width,
     int Height,
     string ImageDataUri,
+    string LocalComparisonImageDataUri,
     IReadOnlyList<UiControlSnapshot> Controls);
 
 public sealed record PlanResult(
