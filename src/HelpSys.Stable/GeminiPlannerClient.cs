@@ -90,7 +90,7 @@ internal sealed class GeminiPlannerClient : IDisposable
         return plan;
     }
 
-    private static void Validate(PlanResult plan, IReadOnlyList<UiControlSnapshot> controls)
+    internal static void Validate(PlanResult plan, IReadOnlyList<UiControlSnapshot> controls)
     {
         if (plan.Status is not ("target" or "clarify" or "done"))
             throw new PlannerException("Geminiの案内状態が不正です。");
@@ -98,8 +98,17 @@ internal sealed class GeminiPlannerClient : IDisposable
         if (plan.Status == "done" && plan.Confidence < 0.85)
             throw new PlannerException("完了判定の確度が不足しているため、完了扱いにしません。");
 
+        var allowedActions = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "left_click", "double_click", "type_text", "press_key", "none"
+        };
+        if (!allowedActions.Contains(plan.Action))
+            throw new PlannerException("Geminiの操作種別が不正です。");
+
         if (plan.Status == "target")
         {
+            if (plan.Action == "none")
+                throw new PlannerException("操作対象がある案内なのに操作種別がありません。");
             if (string.IsNullOrWhiteSpace(plan.Instruction))
                 throw new PlannerException("Geminiの操作説明が空です。");
 
@@ -123,12 +132,23 @@ internal sealed class GeminiPlannerClient : IDisposable
                     throw new PlannerException("画像だけの操作位置の確度が不足しているため、案内を表示しませんでした。");
             }
 
+            if (plan.Action == "type_text" && (target is null || !target.Focused || !target.KeyboardFocusable))
+                throw new PlannerException("文字入力先が現在フォーカスされていないため、入力案内を表示しませんでした。");
+
             if (plan.Action == "press_key" && (string.IsNullOrWhiteSpace(plan.Key) || plan.Confidence < 0.72))
                 throw new PlannerException("キーボード操作の根拠が不足しているため、案内を表示しませんでした。");
         }
 
-        if (plan.Status == "clarify" && string.IsNullOrWhiteSpace(plan.Question))
-            throw new PlannerException("Geminiの確認質問が空です。");
+        if (plan.Status == "clarify")
+        {
+            if (plan.Action != "none")
+                throw new PlannerException("確認質問に操作指示が混在しているため、案内を表示しませんでした。");
+            if (string.IsNullOrWhiteSpace(plan.Question))
+                throw new PlannerException("Geminiの確認質問が空です。");
+        }
+
+        if (plan.Status == "done" && plan.Action != "none")
+            throw new PlannerException("完了判定に操作指示が混在しているため、完了扱いにしません。");
     }
 
     private static Uri ResolveEndpoint()
