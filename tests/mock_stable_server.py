@@ -9,8 +9,24 @@ class H(BaseHTTPRequestHandler):
     def sendj(self,obj,status=200):
         raw=json.dumps(obj,ensure_ascii=False).encode()
         self.send_response(status); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
+    def read_body(self):
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            chunks=[]
+            while True:
+                line=self.rfile.readline().strip()
+                if not line: continue
+                size=int(line.split(b";",1)[0],16)
+                if size==0:
+                    while self.rfile.readline() not in (b"\r\n",b"\n",b""): pass
+                    break
+                chunks.append(self.rfile.read(size))
+                if self.rfile.read(2)!=b"\r\n": raise ValueError("invalid chunk")
+            return b"".join(chunks)
+        n=int(self.headers.get("Content-Length","0"))
+        return self.rfile.read(n) if n else b""
+
     def do_POST(self):
-        n=int(self.headers.get("Content-Length","0")); body=json.loads(self.rfile.read(n) or b"{}")
+        body=json.loads(self.read_body() or b"{}")
         Path("artifacts").mkdir(exist_ok=True)
         with LOG.open("a",encoding="utf-8") as f:
             f.write(json.dumps({"path":self.path,"goal":body.get("goal"),"processName":body.get("processName"),"windowTitle":body.get("windowTitle"),"hasImage":str(body.get("image","")).startswith("data:image/"),"controls":body.get("controls",[])},ensure_ascii=False)+"\n")
