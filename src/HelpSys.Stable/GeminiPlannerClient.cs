@@ -1,5 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 
 namespace HelpSys.Stable;
@@ -7,12 +9,13 @@ namespace HelpSys.Stable;
 internal sealed class GeminiPlannerClient : IDisposable
 {
     private static readonly Uri DefaultEndpoint = new("https://helpsys.syouziroupc.workers.dev/v1/plan");
+    private const int MaxResponseBodyBytes = 1024 * 1024;
     private readonly HttpClient _http;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
 
     public GeminiPlannerClient()
     {
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _http = new HttpClient(CreateHandler(), disposeHandler: true) { Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("HelpSys-Stable/" + VersionInfo.Version);
         _http.DefaultRequestHeaders.Add("x-helpsys-version", VersionInfo.Version);
     }
@@ -52,7 +55,13 @@ internal sealed class GeminiPlannerClient : IDisposable
         HttpResponseMessage response;
         try
         {
-            response = await _http.PostAsJsonAsync(ResolveEndpoint(), body, _json, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Post, ResolveEndpoint())
+            {
+                Content = JsonContent.Create(body, options: _json)
+            };
+            request.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true, NoCache = true };
+            request.Headers.Pragma.ParseAdd("no-cache");
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -67,7 +76,9 @@ internal sealed class GeminiPlannerClient : IDisposable
             throw new PlannerException("Gemini案内サービスへ接続できませんでした。操作は実行されていません。", ex);
         }
 
-        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        using (response)
+        {
+        var text = await ReadBoundedResponseBodyAsync(response.Content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             if ((int)response.StatusCode == 503 && text.Contains("gemini_unconfigured", StringComparison.OrdinalIgnoreCase))
@@ -88,6 +99,7 @@ internal sealed class GeminiPlannerClient : IDisposable
         if (plan is null) throw new PlannerException("Geminiから案内結果を受け取れませんでした。");
         Validate(plan, observation.Controls);
         return plan;
+        }
     }
 
     internal static void Validate(PlanResult plan, IReadOnlyList<UiControlSnapshot> controls)
@@ -156,10 +168,56 @@ internal sealed class GeminiPlannerClient : IDisposable
             throw new PlannerException("完了判定に操作指示が混在しているため、完了扱いにしません。");
     }
 
-    private static Uri ResolveEndpoint()
+    internal static Uri ResolveEndpoint()
     {
         var configured = Environment.GetEnvironmentVariable("HELPSYS_STABLE_ENDPOINT")?.Trim();
-        return Uri.TryCreate(configured, UriKind.Absolute, out var uri) ? uri : DefaultEndpoint;
+        if (string.IsNullOrWhiteSpace(configured)) return DefaultEndpoint;
+        if (!Uri.TryCreate(configured, UriKind.Absolute, out var uri))
+            throw new PlannerException("HelpSys案内サービスの接続先が不正です。");
+        if (uri.IsLoopback &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            string.IsNullOrEmpty(uri.Query) &&
+            string.IsNullOrEmpty(uri.Fragment))
+            return uri;
+
+        if (uri.Scheme == Uri.UriSchemeHttps &&
+            uri.Host.Equals(DefaultEndpoint.Host, StringComparison.OrdinalIgnoreCase) &&
+            uri.Port == DefaultEndpoint.Port &&
+            uri.AbsolutePath.Equals(DefaultEndpoint.AbsolutePath, StringComparison.Ordinal) &&
+            string.IsNullOrEmpty(uri.UserInfo) &&
+            string.IsNullOrEmpty(uri.Query) &&
+            string.IsNullOrEmpty(uri.Fragment))
+            return uri;
+
+        throw new PlannerException("HelpSysは承認された案内サービス以外へ画面情報を送信しません。");
+    }
+
+    private static HttpClientHandler CreateHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        UseProxy = false,
+        CheckCertificateRevocationList = true
+    };
+
+    private static async Task<string> ReadBoundedResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is > MaxResponseBodyBytes)
+            throw new PlannerException("Gemini案内サービスの応答が安全上限を超えました。");
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream(Math.Min(MaxResponseBodyBytes, 64 * 1024));
+        var chunk = new byte[16 * 1024];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk.AsMemory(0, chunk.Length), cancellationToken);
+            if (read == 0) break;
+            if (buffer.Length + read > MaxResponseBodyBytes)
+                throw new PlannerException("Gemini案内サービスの応答が安全上限を超えました。");
+            buffer.Write(chunk, 0, read);
+        }
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, checked((int)buffer.Length));
     }
 
     public void Dispose() => _http.Dispose();
