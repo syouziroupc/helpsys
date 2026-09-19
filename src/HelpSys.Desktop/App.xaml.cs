@@ -46,7 +46,7 @@ public partial class App : Application
         _smokeListeningOverlay = null;
         try { _singleInstanceMutex?.ReleaseMutex(); } catch (ApplicationException) { }
         _singleInstanceMutex?.Dispose();
-        try { UiAutomationScanner.ShutdownSharedObserver(); } catch { }
+        try { HelpSys.Services.UiAutomationScanner.ShutdownSharedObserver(); } catch { }
         base.OnExit(e);
     }
 }
