@@ -15,7 +15,13 @@ public partial class App : Application
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             base.OnStartup(e);
-            try { UiAutomationObserverHost.RunAsync().GetAwaiter().GetResult(); }
+            try
+            {
+                // Run the pipe loop off the WPF dispatcher. Awaiting redirected stdin from the
+                // Startup thread and synchronously blocking that same dispatcher would deadlock
+                // the continuation before the first observer response.
+                Task.Run(UiAutomationObserverHost.RunAsync).GetAwaiter().GetResult();
+            }
             finally { Shutdown(); }
             return;
         }
