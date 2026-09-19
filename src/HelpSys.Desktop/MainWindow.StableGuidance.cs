@@ -105,6 +105,15 @@ public partial class MainWindow
 
         HideClarificationUiIfNeeded();
 
+        // The planner already performs its own bounded UIA capture/revalidation. Running the live
+        // topology scanner at the same time only creates contention. Security still runs in
+        // parallel through GuidanceStateWatcher.Changed -> privacy epoch invalidation.
+        if (_sessionState.PlannerInFlight)
+        {
+            ClearStableLiveChangeCandidate();
+            return;
+        }
+
         if (_activeRequest is null)
         {
             ResetLiveBaseline();
