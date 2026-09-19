@@ -123,6 +123,11 @@ public sealed class UiAutomationScanner
             ? SharedObserver.Value.SnapToAccessibleBoundsAsync(approximateBounds, cancellationToken)
             : Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
 
+    public Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
+        => UseObserver
+            ? SharedObserver.Value.SnapToAccessibleCandidateAsync(approximateBounds, cancellationToken)
+            : Task.Run(() => SnapToAccessibleCandidate(approximateBounds, cancellationToken), cancellationToken);
+
     private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, int? rootProcessId, CancellationToken cancellationToken)
     {
         var current = CaptureCandidates(700, cancellationToken, rootProcessId).Where(x => x.Interactable).ToArray();
@@ -201,6 +206,9 @@ public sealed class UiAutomationScanner
     }
 
     private Rect? SnapToAccessibleBounds(Rect approximateBounds, CancellationToken cancellationToken)
+        => SnapToAccessibleCandidate(approximateBounds, cancellationToken)?.Bounds;
+
+    private UiElementCandidate? SnapToAccessibleCandidate(Rect approximateBounds, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (approximateBounds.IsEmpty) return null;
@@ -236,7 +244,8 @@ public sealed class UiAutomationScanner
                     {
                         var inflated = approximateBounds;
                         inflated.Inflate(Math.Max(25, approximateBounds.Width * 0.45), Math.Max(25, approximateBounds.Height * 0.45));
-                        if (inflated.IntersectsWith(rect) || rect.Contains(point)) return rect;
+                        if (inflated.IntersectsWith(rect) || rect.Contains(point))
+                            return BuildSnapCandidate(element, current, typeName, rect);
                     }
                     element = walker.GetParent(element);
                 }
@@ -276,7 +285,44 @@ public sealed class UiAutomationScanner
             }
         }
 
-        return best is not null && bestScore >= 25 ? best.Bounds : null;
+        return best is not null && bestScore >= 25 ? best : null;
+    }
+
+    private static UiElementCandidate BuildSnapCandidate(
+        AutomationElement element,
+        AutomationElement.AutomationElementInformation current,
+        string typeName,
+        Rect rect)
+    {
+        var isPassword = current.IsPassword;
+        var actionState = ReadActionState(element, typeName, isPassword);
+        string processName;
+        try { processName = Process.GetProcessById(current.ProcessId).ProcessName; }
+        catch { processName = string.Empty; }
+
+        var rawName = current.Name ?? string.Empty;
+        var name = isPassword ? "[password field]" : rawName;
+        return new UiElementCandidate(
+            "snap-target",
+            Trim(name, 180),
+            Trim(current.AutomationId ?? string.Empty, 120),
+            Trim(current.ClassName ?? string.Empty, 120),
+            Trim(typeName.Replace("ControlType.", string.Empty), 80),
+            processName,
+            true,
+            current.IsEnabled,
+            current.IsKeyboardFocusable,
+            current.HasKeyboardFocus,
+            isPassword,
+            rect.X,
+            rect.Y,
+            rect.Width,
+            rect.Height,
+            current.ProcessId,
+            actionState.Value,
+            actionState.ToggleState,
+            actionState.Selected,
+            actionState.ExpandCollapseState);
     }
 
     private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken, int? rootProcessId = null)
