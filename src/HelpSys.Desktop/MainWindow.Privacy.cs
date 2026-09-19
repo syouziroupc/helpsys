@@ -55,6 +55,7 @@ public partial class MainWindow
     private void EnterPrivacyMode(PrivacyAssessment assessment)
     {
         _privacyPaused = true;
+        CancelResilienceRecovery();
 
         try { _sessionCts?.Cancel(); } catch { }
         _sessionState.AbortCurrentOperation(GuidanceSessionState.Idle);
@@ -206,6 +207,7 @@ public partial class MainWindow
         try { _actionObserver.Start(); } catch { }
         UpdatePrivacyButton();
         PrivacySentinel_RestoreCloudAudio();
+        ResetResilienceRecovery();
         SetState("安全な画面に戻ったため、画面解析を再開します…", speak: false);
         await AdvanceGuideAsync();
     }
