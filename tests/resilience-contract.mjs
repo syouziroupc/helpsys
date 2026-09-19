@@ -8,6 +8,7 @@ const scanner = read('src/HelpSys.Desktop/Services/UiAutomationScanner.cs');
 const observerClient = read('src/HelpSys.Desktop/Services/UiAutomationObserverClient.cs');
 const observerHost = read('src/HelpSys.Desktop/Services/UiAutomationObserverHost.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
+const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
 const stable = read('src/HelpSys.Desktop/MainWindow.StableGuidance.cs');
 const resilience = read('src/HelpSys.Desktop/MainWindow.Resilience.cs');
 const recovery = read('src/HelpSys.Desktop/MainWindow.RecoveryPolicy.cs');
@@ -40,6 +41,16 @@ assert(watcher.includes('DrainStoppedPumpAndSubscriptionsAsync'),
   'UIA watcher removal must be asynchronous.');
 assert(stable.includes('Interval = TimeSpan.FromMilliseconds(120)'),
   'Foreground handoff sampling must not run at the former 30 ms dispatcher cadence.');
+assert(watcher.includes('public event EventHandler? Changed;') && watcher.includes('Changed?.Invoke'),
+  'Security monitoring must receive UIA changes independently of the heavier live planner scan.');
+assert(cloud.includes('UsePrivacyEpochProvider') && cloud.includes('EnsurePrivacyEpochCurrent(privacyEpoch)'),
+  'Every cloud planning path must bind egress to the current security epoch.');
+assert(privacy.includes('Interlocked.Increment(ref _privacyEgressEpoch)'),
+  'UI changes and privacy transitions must invalidate previously approved egress state.');
+const plannerGuard = stable.indexOf('if (_sessionState.PlannerInFlight)');
+const liveScan = stable.indexOf('_scanner.CaptureCandidatesForProcessAsync', plannerGuard);
+assert(plannerGuard >= 0 && liveScan > plannerGuard,
+  'Heavy live UIA scanning must be suppressed while the planner owns the observer.');
 
 assert(resilience.includes('ResilienceRecoveryDelaysMs') && resilience.includes('15000'),
   'Automatic recovery must back off instead of spinning.');
