@@ -84,6 +84,7 @@ public partial class MainWindow
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Capturing)) return;
             }
 
+            var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
             try
             {
@@ -109,6 +110,11 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
+            if (!IsPrivacyEgressEpochCurrent(imagePrivacyEpoch))
+            {
+                HandleTechnicalPlanningUncertainty("画面画像の取得中に安全状態が更新された", generation);
+                return;
+            }
 
             var afterCaptureContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, afterCaptureContext))
