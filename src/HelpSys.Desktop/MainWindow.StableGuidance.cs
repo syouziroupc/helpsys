@@ -14,7 +14,7 @@ public partial class MainWindow
     private int _stablePulseQueued;
     private readonly DispatcherTimer _interactionForegroundSampler = new()
     {
-        Interval = TimeSpan.FromMilliseconds(30)
+        Interval = TimeSpan.FromMilliseconds(120)
     };
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
