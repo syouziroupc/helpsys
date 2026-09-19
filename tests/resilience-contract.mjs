@@ -5,6 +5,7 @@ const assert = (value, message) => { if (!value) throw new Error(message); };
 
 const app = read('src/HelpSys.Desktop/App.xaml.cs');
 const scanner = read('src/HelpSys.Desktop/Services/UiAutomationScanner.cs');
+const scannerFacade = read('src/HelpSys.Desktop/UiAutomationScanner.cs');
 const observerClient = read('src/HelpSys.Desktop/Services/UiAutomationObserverClient.cs');
 const observerHost = read('src/HelpSys.Desktop/Services/UiAutomationObserverHost.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
@@ -24,6 +25,10 @@ assert(app.includes('UiAutomationScanner.ShutdownSharedObserver()'),
 
 assert(scanner.includes('SharedObserver') && scanner.includes('UseObserver'),
   'UIA scanner must route normal desktop calls through the isolated observer.');
+assert(!scannerFacade.includes('AutomationElement.') && !scannerFacade.includes('TreeWalker.') && !scannerFacade.includes('ValuePattern.'),
+  'Main-process scanner facade must not perform direct UI Automation calls.');
+assert(scanner.includes('var rawValue = valueValue.Current.Value?.Trim();'),
+  'Ordinary non-password input evidence must be captured inside the isolated observer before local privacy filtering.');
 assert(scanner.includes('forceLocal: true') === false,
   'The normal UIA scanner must not hard-code local execution.');
 assert(observerHost.includes('new UiAutomationScanner(forceLocal: true)'),
