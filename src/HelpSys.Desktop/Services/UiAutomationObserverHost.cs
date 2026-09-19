@@ -78,6 +78,12 @@ internal static class UiAutomationObserverHost
                     await scanner.SnapToAccessibleBoundsAsync(
                         new Rect(request.X, request.Y, request.Width, request.Height))),
 
+                "snap-candidate" => new UiAutomationObserverResponse(
+                    request.Id,
+                    true,
+                    Candidate: await scanner.SnapToAccessibleCandidateAsync(
+                        new Rect(request.X, request.Y, request.Width, request.Height))),
+
                 "diagnostics" => new UiAutomationObserverResponse(
                     request.Id,
                     true,
