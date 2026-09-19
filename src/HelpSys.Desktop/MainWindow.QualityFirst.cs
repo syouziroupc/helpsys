@@ -512,27 +512,26 @@ public partial class MainWindow
             return;
         }
 
-        if (snapped is { } accessible && !accessible.IsEmpty)
+        if (snapped is not { } accessible || accessible.IsEmpty)
         {
-            bounds = accessible;
-        }
-        else if (quality.Confidence < MinimumVisualOnlyTargetConfidence)
-        {
-            HandleTechnicalPlanningUncertainty("画像候補とWindows構造が一致しない", generation);
+            // A visual coordinate is never enough by itself. If Windows cannot confirm an actual
+            // accessible target under the proposed rectangle, discard it and recover instead of
+            // asking the user to click a plausible-looking location.
+            HandleTechnicalPlanningUncertainty("画像候補を現在のWindows操作要素へ対応付けできない", generation);
             return;
         }
+        bounds = accessible;
 
         var visualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
             ? "double_click"
             : "left_click";
-        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
-            ? visualAction == "double_click"
-                ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
-                : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
-            : decision.Instruction;
+        var instruction = visualAction == "double_click"
+            ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
+            : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。";
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         ResetCurrentStateReplanBudget();
+        ResetResilienceRecovery();
         _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
         _currentTarget = null;
         _stepBaseline = candidates;
