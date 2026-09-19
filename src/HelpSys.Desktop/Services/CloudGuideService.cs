@@ -14,6 +14,7 @@ public sealed class CloudGuideService : IDisposable
     };
 
     private SystemContextService _contextVerifier = new();
+    private Func<long>? _privacyEpochProvider;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly PrivacyGate _privacyGate;
     private readonly CloudAiAdapter _adapter;
@@ -33,6 +34,11 @@ public sealed class CloudGuideService : IDisposable
     public void UseContextVerifier(SystemContextService contextVerifier)
     {
         _contextVerifier = contextVerifier ?? throw new ArgumentNullException(nameof(contextVerifier));
+    }
+
+    public void UsePrivacyEpochProvider(Func<long> privacyEpochProvider)
+    {
+        _privacyEpochProvider = privacyEpochProvider ?? throw new ArgumentNullException(nameof(privacyEpochProvider));
     }
 
     /// <summary>
@@ -90,13 +96,16 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken)
     {
         EnsureCloudConfigured();
+        var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
         var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         var decision = await SendAsync<QualityGuideDecision>("/v1/quality-guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
     }
 
@@ -108,6 +117,7 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureCloudConfigured();
+        var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
         if (relevantElements.Count == 0)
             throw new GuideServiceException(GuideFailureKind.InvalidResponse, "前面アプリを特定できないため、UI候補を送信しません。");
@@ -116,8 +126,10 @@ public sealed class CloudGuideService : IDisposable
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         var decision = await SendAsync<GuideDecision>("/v1/guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
     }
 
@@ -138,14 +150,50 @@ public sealed class CloudGuideService : IDisposable
         CancellationToken cancellationToken = default)
     {
         EnsureCloudConfigured();
+        var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
         var approval = _privacyGate.ApproveVision(request, frame, relevantElements, history, systemContext);
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         var decision = await SendAsync<VisionGuideDecision>("/v1/vision-guide", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
+        EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
+    }
+
+    private long CapturePrivacyEpoch()
+    {
+        var provider = _privacyEpochProvider;
+        if (provider is null) return 0;
+        try { return provider(); }
+        catch
+        {
+            throw new GuideServiceException(
+                GuideFailureKind.ContextChanged,
+                "安全状態の世代を確認できないため、外部送信を停止しました。");
+        }
+    }
+
+    private void EnsurePrivacyEpochCurrent(long expected)
+    {
+        var provider = _privacyEpochProvider;
+        if (provider is null) return;
+
+        long current;
+        try { current = provider(); }
+        catch
+        {
+            throw new GuideServiceException(
+                GuideFailureKind.ContextChanged,
+                "安全状態の世代を再確認できないため、外部送信を停止しました。");
+        }
+
+        if (current != expected)
+            throw new GuideServiceException(
+                GuideFailureKind.ContextChanged,
+                "安全確認後に画面内容が更新されたため、古い送信候補を破棄しました。");
     }
 
     private void EnsureCloudConfigured()
