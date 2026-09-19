@@ -228,12 +228,12 @@ public partial class MainWindow
 
         var current = _systemContext.Capture();
         if (!_sessionState.IsCurrent(generation) || !HasSameCaptureIdentity(context, current) || HasSystemTransitionV3(context, current)) return false;
-        if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
-        else if (recovery.Confidence < MinimumVisualOnlyTargetConfidence) return false;
+        if (snapped is not { } accessible || accessible.IsEmpty) return false;
+        bounds = accessible;
 
-        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
-            ? "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
-            : decision.Instruction;
+        var instruction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+            ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
+            : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。";
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return false;
         _currentDecision = new GuideDecision("target", "vision-target", decision.Action, instruction, null, null, recovery.Confidence);
