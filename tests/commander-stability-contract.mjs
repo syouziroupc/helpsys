@@ -58,7 +58,7 @@ assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(6)'), 'Cloud guidan
 assert(cloudAdapter.includes('x-helpsys-request-id'), 'Cloud AI adapter must attach request IDs for production debugging.');
 
 assert(!watcher.includes('pump.GetAwaiter().GetResult()'), 'Live watcher shutdown must never synchronously block the WPF thread.');
-assert(watcher.includes('DrainStoppedPumpAsync'), 'Live watcher pump must drain asynchronously.');
+assert(watcher.includes('DrainStoppedPumpAndSubscriptionsAsync'), 'Live watcher pump and UIA subscriptions must drain asynchronously.');
 assert(stable.includes('_stablePulseQueued'), 'Rapid screen-change pulses must be coalesced before entering the dispatcher.');
 assert(systemContext.includes('GetCachedBrowser'), 'Browser UIA context must use a cached/background path.');
 assert(systemContext.includes('QueueBrowserRefresh'), 'Browser UIA context must refresh outside the caller path.');
