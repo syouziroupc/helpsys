@@ -44,9 +44,10 @@ assert(watcher.includes('ExpandCollapsePattern.ExpandCollapseStateProperty'), 'E
 assert(watcher.includes('AutomationElement.HasKeyboardFocusProperty'), 'Focus changes must trigger the live watcher.');
 assert(watcher.includes('RemoveAutomationPropertyChangedEventHandler'), 'Semantic UIA subscriptions must be removed during scope changes/shutdown.');
 
-assert(qualityWindow.includes('var visualAction = decision.Action.Equals("double_click"'), 'Visual targets must preserve double-click semantics.');
-assert(qualityWindow.includes('new GuideDecision("target", "vision-target", visualAction'), 'Visual target runtime state must use the preserved action.');
-assert(!qualityWindow.includes('new GuideDecision("target", "vision-target", "left_click"'), 'Visual targets must not be forcibly downgraded to a single click.');
+assert(qualityWindow.includes('proposedVisualAction = decision.Action.Equals("double_click"'), 'Visual planning must carry the proposed physical action into local validation.');
+assert(qualityWindow.includes('NormalizeStructuredDecisionForTarget') && qualityWindow.includes('var visualAction = normalizedVisual.Action'), 'Visual targets must normalize click count against the real Windows control type.');
+assert(qualityWindow.includes('new GuideDecision("target", "vision-target", visualAction'), 'Visual runtime state must use the locally normalized action.');
+assert(!qualityWindow.includes('new GuideDecision("target", "vision-target", "left_click"'), 'Visual targets must not be unconditionally forced to a single click.');
 
 assert(qualityWorker.includes('guardVisionDecisionForTask'), 'Quality visual targets must pass the known-site vision safety guard.');
 assert(qualityWorker.includes("task?.kind === 'site' && task?.deterministic?.status !== 'done'"), 'Known-site done must require the official current browser domain.');
