@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Automation;
 using HelpSys.Models;
 
 namespace HelpSys;
@@ -19,8 +18,7 @@ public sealed class UiAutomationScanner
         int maxCandidates = 360,
         CancellationToken cancellationToken = default)
     {
-        var candidates = await _inner.CaptureCandidatesAsync(maxCandidates, cancellationToken);
-        return RestoreLocalInputEvidence(candidates, cancellationToken);
+        return await _inner.CaptureCandidatesAsync(maxCandidates, cancellationToken);
     }
 
     public async Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForProcessAsync(
@@ -29,8 +27,7 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         var candidates = await _inner.CaptureCandidatesForProcessAsync(processId, maxCandidates, cancellationToken);
-        var scoped = ScopeToForegroundWindow(processId, candidates);
-        return RestoreLocalInputEvidence(scoped, cancellationToken);
+        return ScopeToForegroundWindow(processId, candidates);
     }
 
     public Task<string> CaptureWindowDiagnosticsAsync(
@@ -45,7 +42,7 @@ public sealed class UiAutomationScanner
     {
         var fresh = await _inner.RevalidateCandidateAsync(candidate, cancellationToken);
         if (fresh is null || !IsAllowedByForegroundWindow(fresh, candidate.ProcessId)) return null;
-        return RestoreLocalInputEvidence([fresh], cancellationToken).FirstOrDefault();
+        return fresh;
     }
 
     public async Task<UiElementCandidate?> RevalidateCandidateAsync(
@@ -55,13 +52,18 @@ public sealed class UiAutomationScanner
     {
         var fresh = await _inner.RevalidateCandidateAsync(candidate, rootProcessId, cancellationToken);
         if (fresh is null || !IsAllowedByForegroundWindow(fresh, rootProcessId)) return null;
-        return RestoreLocalInputEvidence([fresh], cancellationToken).FirstOrDefault();
+        return fresh;
     }
 
     public Task<Rect?> SnapToAccessibleBoundsAsync(
         Rect approximateBounds,
         CancellationToken cancellationToken = default)
         => _inner.SnapToAccessibleBoundsAsync(approximateBounds, cancellationToken);
+
+    public Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(
+        Rect approximateBounds,
+        CancellationToken cancellationToken = default)
+        => _inner.SnapToAccessibleCandidateAsync(approximateBounds, cancellationToken);
 
     private static IReadOnlyList<UiElementCandidate> ScopeToForegroundWindow(
         int processId,
@@ -91,68 +93,6 @@ public sealed class UiAutomationScanner
         // Sparse third-party UIA trees remain usable through the process scan, but only for the same
         // process. This fallback never widens to another process or an unrelated window owner.
         return scoped.Any(candidate => candidate.Interactable) ? scoped : candidates;
-    }
-
-    private static IReadOnlyList<UiElementCandidate> RestoreLocalInputEvidence(
-        IReadOnlyList<UiElementCandidate> candidates,
-        CancellationToken cancellationToken)
-    {
-        if (candidates.Count == 0) return candidates;
-        var restored = new UiElementCandidate[candidates.Count];
-        for (var index = 0; index < candidates.Count; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            restored[index] = RestoreLocalInputEvidence(candidates[index]);
-        }
-        return restored;
-    }
-
-    private static UiElementCandidate RestoreLocalInputEvidence(UiElementCandidate candidate)
-    {
-        if (candidate.Password || candidate.Bounds.IsEmpty ||
-            candidate.ControlType is not ("Edit" or "ComboBox"))
-            return candidate;
-
-        try
-        {
-            var point = new Point(candidate.X + candidate.Width / 2d, candidate.Y + candidate.Height / 2d);
-            var element = AutomationElement.FromPoint(point);
-            var walker = TreeWalker.ControlViewWalker;
-
-            for (var depth = 0; element is not null && depth < 7; depth++)
-            {
-                var current = element.Current;
-                var type = (current.ControlType?.ProgrammaticName ?? string.Empty)
-                    .Replace("ControlType.", string.Empty, StringComparison.Ordinal);
-                var sameProcess = candidate.ProcessId <= 0 || current.ProcessId == candidate.ProcessId;
-                if (sameProcess && type is "Edit" or "ComboBox" && !current.IsPassword)
-                {
-                    var name = current.Name?.Trim() ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(name)) name = candidate.Name;
-
-                    string? value = null;
-                    if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
-                    {
-                        value = valuePattern.Current.Value?.Trim();
-                        if (value?.Length > 320) value = value[..320];
-                        if (string.IsNullOrWhiteSpace(value)) value = null;
-                    }
-
-                    return candidate with
-                    {
-                        Name = string.IsNullOrWhiteSpace(name) ? "[input field]" : name,
-                        Value = value
-                    };
-                }
-
-                element = walker.GetParent(element);
-            }
-        }
-        catch (ElementNotAvailableException) { }
-        catch (InvalidOperationException) { }
-        catch (COMException) { }
-
-        return candidate;
     }
 
     private static bool IsAllowedByForegroundWindow(UiElementCandidate candidate, int expectedProcessId)

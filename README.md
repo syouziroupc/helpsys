@@ -12,6 +12,18 @@ https://helpsys.syouziroupc.workers.dev/download/education
 
 通常版の `/download` は固定名 `HelpSys-latest-win-x64.zip` へ接続します。Reliabilityの版番号を上げても公開サイトのURLは変えません。
 
+## Reliability v9 — Resilient Guidance
+
+v9はGLM系統を維持したまま、フリーズ・誤案内・技術エラーによる途中停止・セキュリティ競合を重点的に修正する版です。
+
+- UI AutomationをHelpSys本体とは別の監視プロセスへ隔離。3.8秒のhard deadlineを超えた監視プロセスは破棄し、次回要求で再生成します。
+- UIAイベントの登録・解除をWPF dispatcher上で同期実行しません。
+- Planning中は重いLive UIA再走査を止め、Security epochの更新だけを並列監視します。
+- Privacy Gateの判定後に同じ画面内のUI状態が更新された場合、外部送信候補または返ってきた古い案内を破棄します。
+- 技術的不確実性、通信失敗、モデル応答不良、画面切替ではユーザーの目的を消去しません。短い再取得の後、最大15秒までbackoffしながら現在画面から自動復帰します。
+- 画像AIの座標だけでは案内枠を表示しません。Windows UI Automationで実在する操作可能要素へ対応付けできた場合だけ表示します。
+- Privacy停止はセッション終了ではなくPauseとして扱い、安全な画面に戻れば同じ目的から再開します。
+
 ## Reliability v8 — GLM + Commander Stability
 
 v8は通常版HelpSysの安定性と案内精度を優先した更新です。Educationの追加機能開発ではありません。

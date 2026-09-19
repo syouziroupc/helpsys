@@ -229,7 +229,7 @@ public partial class MainWindow : Window
             if (!HasUsableForeground(systemContext))
             {
                 if (_sessionState.IsCurrent(generation))
-                    StopWithMessage("今操作しているアプリを確認できないため、背景画面を推測せず案内を停止しました。もう一度「案内」を押してください。");
+                    HandleTechnicalPlanningUncertainty("前面ウィンドウを特定できない", generation);
                 return;
             }
 
@@ -250,7 +250,7 @@ public partial class MainWindow : Window
             if (candidates.Count == 0)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("今の画面から次の操作を安全に決められませんでした。");
+                    HandleTechnicalPlanningUncertainty("現在画面から次の操作候補を確定できない", generation);
                 return;
             }
 
@@ -287,7 +287,7 @@ public partial class MainWindow : Window
             if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumTargetConfidence)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("今の画面では、次にすることを安全に決められませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内判断の信頼度が不足している", generation);
                 return;
             }
 
@@ -300,7 +300,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("案内する場所を確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内対象IDを確定できない", generation);
                 return;
             }
 
@@ -308,7 +308,7 @@ public partial class MainWindow : Window
             if (target is null || !target.Interactable || target.Bounds.IsEmpty)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("案内する場所を今の画面で確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内対象が現在画面で操作可能ではない", generation);
                 return;
             }
 
@@ -316,13 +316,13 @@ public partial class MainWindow : Window
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。");
+                HandleTechnicalPlanningUncertainty("操作中に画面が切り替わった", generation);
                 return;
             }
             if (freshTarget is null)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("画面が動いたため、押す場所をもう一度確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("表示直前に操作対象を再確認できない", generation);
                 return;
             }
 
@@ -331,11 +331,11 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-                StopWithMessage("案内処理が規定時間内に完了しませんでした。通信障害とは断定せず、現在の画面からやり直します。もう一度「案内」を押してください。");
+                HandleTechnicalPlanningUncertainty("案内処理が工程期限内に完了しない", generation);
         }
         catch (Exception ex)
         {
-            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面を確認できませんでした: {ex.Message}");
+            if (_sessionState.IsCurrent(generation)) HandleTechnicalPlanningUncertainty($"画面確認例外: {ex.GetType().Name}", generation);
         }
         finally
         {
@@ -360,6 +360,7 @@ public partial class MainWindow : Window
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
+        ResetResilienceRecovery();
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
@@ -416,6 +417,7 @@ public partial class MainWindow : Window
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
+        ResetResilienceRecovery();
         _currentDecision = decision;
         _currentTarget = null;
         _stepBaseline = candidates;
@@ -500,7 +502,7 @@ public partial class MainWindow : Window
         if (!_sessionState.IsCurrent(generation)) return false;
         if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
         {
-            StopWithMessage("画像確認中に操作対象の画面が切り替わったため、古い画像案内を表示せず破棄しました。");
+            HandleTechnicalPlanningUncertainty("画像確認中に操作対象の画面が切り替わった", generation);
             return true;
         }
 
@@ -566,7 +568,8 @@ public partial class MainWindow : Window
             _technicalClarificationRetries++;
             if (_technicalClarificationRetries > 2)
             {
-                StopWithMessage("現在の画面を安全に自動判定できなかったため、推測や追加質問をせず案内を停止しました。");
+                _technicalClarificationRetries = 0;
+                QueueResilientRecovery("技術的な画面不確実性が継続しているため自動復旧へ移行", generation);
                 return;
             }
 
@@ -653,16 +656,27 @@ public partial class MainWindow : Window
 
     private void StopWithGuideFailure(GuideServiceException error)
     {
-        var message = error.Kind switch
+        if (error.Kind == GuideFailureKind.PrivacyBlocked)
         {
-            GuideFailureKind.Network => "案内サービスへの通信に一時的に失敗しました。もう一度「案内」を押すと現在の目的から再開できます。",
-            GuideFailureKind.ServiceUnavailable => "案内サービスの応答が一時的に遅れています。もう一度「案内」を押すと現在の目的から再開できます。",
-            GuideFailureKind.Rejected => "案内サービスがこの要求を受け付けませんでした。現在の画面を推測せず、案内を停止します。",
-            GuideFailureKind.InvalidResponse => "案内サービスから利用できる形式の応答を受け取れませんでした。現在の画面を推測せず、案内を停止します。",
-            GuideFailureKind.ContextChanged => "操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。",
-            _ => "案内サービスを利用できませんでした。"
+            // PrivacyBlocked already raises PrivacyBlocked and moves the session into resumable
+            // privacy pause. Never overwrite that state with a terminal guidance error.
+            if (!_privacyPaused)
+                SetState("秘密情報を扱う画面のため、外部送信を停止しています。安全な画面に戻ると自動再開します。", speak: false);
+            return;
+        }
+
+        var reason = error.Kind switch
+        {
+            GuideFailureKind.Network => "案内サービスへの通信に一時的に失敗",
+            GuideFailureKind.ServiceUnavailable => "案内サービスの応答が一時的に利用不可",
+            GuideFailureKind.Rejected => "案内サービスが要求を受理できない",
+            GuideFailureKind.InvalidResponse => "案内サービスの応答形式を利用できない",
+            GuideFailureKind.ContextChanged => "案内処理中に画面が切り替わった",
+            _ => "案内サービスの一時的な処理失敗"
         };
-        StopWithMessage(message);
+
+        if (!QueueResilientRecovery(reason))
+            SetState("案内処理を再開できる状態を確認しています。", speak: false);
     }
 
     private void StopWithMessage(string message)
@@ -688,6 +702,7 @@ public partial class MainWindow : Window
 
     private void EndSession()
     {
+        CancelResilienceRecovery();
         _sessionState.Invalidate(GuidanceSessionState.Idle);
         _overlay.Hide();
         _keyHint.Hide();

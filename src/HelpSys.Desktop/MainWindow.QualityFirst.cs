@@ -84,6 +84,7 @@ public partial class MainWindow
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Capturing)) return;
             }
 
+            var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
             try
             {
@@ -109,6 +110,11 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
+            if (!IsPrivacyEgressEpochCurrent(imagePrivacyEpoch))
+            {
+                HandleTechnicalPlanningUncertainty("画面画像の取得中に安全状態が更新された", generation);
+                return;
+            }
 
             var afterCaptureContext = _systemContext.Capture();
             if (!HasSameCaptureIdentity(systemContext, afterCaptureContext))
@@ -500,8 +506,8 @@ public partial class MainWindow
             return;
         }
 
-        Rect? snapped = null;
-        try { snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
+        UiElementCandidate? snappedTarget = null;
+        try { snappedTarget = await _scanner.SnapToAccessibleCandidateAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { throw; }
 
         if (!_sessionState.IsCurrent(generation)) return;
@@ -512,29 +518,40 @@ public partial class MainWindow
             return;
         }
 
-        if (snapped is { } accessible && !accessible.IsEmpty)
+        if (snappedTarget is null ||
+            snappedTarget.Password ||
+            !snappedTarget.Interactable ||
+            !snappedTarget.Enabled ||
+            snappedTarget.Bounds.IsEmpty ||
+            snappedTarget.ProcessId != systemContext.ForegroundProcessId)
         {
-            bounds = accessible;
-        }
-        else if (quality.Confidence < MinimumVisualOnlyTargetConfidence)
-        {
-            HandleTechnicalPlanningUncertainty("画像候補とWindows構造が一致しない", generation);
+            // A visual coordinate is never enough by itself. Require the exact current foreground
+            // process and concrete accessibility metadata before exposing a click instruction.
+            HandleTechnicalPlanningUncertainty("画像候補を現在のWindows操作要素へ対応付けできない", generation);
             return;
         }
 
-        var visualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+        var proposedVisualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
             ? "double_click"
             : "left_click";
-        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
-            ? visualAction == "double_click"
-                ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
-                : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
-            : decision.Instruction;
+        var normalizedVisual = NormalizeStructuredDecisionForTarget(
+            new GuideDecision("target", "vision-target", proposedVisualAction, string.Empty, null, null, quality.Confidence),
+            snappedTarget);
+        if (normalizedVisual is null)
+        {
+            HandleTechnicalPlanningUncertainty("画像候補の操作方法をWindows要素種別と整合できない", generation);
+            return;
+        }
+
+        bounds = snappedTarget.Bounds;
+        var visualAction = normalizedVisual.Action;
+        var instruction = normalizedVisual.Instruction;
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         ResetCurrentStateReplanBudget();
+        ResetResilienceRecovery();
         _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
-        _currentTarget = null;
+        _currentTarget = snappedTarget;
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;
         _guidedBounds = bounds;

@@ -113,6 +113,8 @@ public partial class MainWindow
             var expected = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
             if (MatchesKeySpecV3(expected, observation))
             {
+                if (Volatile.Read(ref _typeTextFocusRecoveryInFlight) != 0) return;
+
                 if (!_v3TypeActivityObserved)
                 {
                     SetState("先に青い枠の入力欄へ案内された文字を入力してから、「Enter」と書かれたキーを1回押してください。", speak: true);

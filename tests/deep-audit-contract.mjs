@@ -16,8 +16,12 @@ assert(!guards.includes('_actionObserver.LeftClick += ObserveOffRouteClickDeepAu
 assert(guards.includes('_actionObserver.KeyReleased -= OnObservedKeyReleasedV3;'), 'The type-text submit guard must run before the normal key verifier.');
 assert(guards.includes('_actionObserver.KeyReleased += ObserveTypeTextSubmitDeepAudit;'), 'A synchronous type-text submit guard must be installed.');
 assert(guards.includes('type_target_lost_focus'), 'Lost focus at text-submit time must be recorded as route-deviation evidence.');
-assert(guards.includes('IsCurrentTextTargetFocusedDeepAudit'), 'The finishing key must re-check the actual focused UIA target.');
-assert(guards.includes('ClearCurrentGuidanceV3();'), 'A bad finishing key must clear current guidance before normal verification can consume it.');
+assert(guards.includes('ValidateTypeTextSubmitFocusAsync'), 'The finishing key must asynchronously re-check the focused target through the isolated observer.');
+assert(guards.includes('_scanner.RevalidateCandidateAsync'), 'Type-text focus proof must use the isolated scanner observer.');
+assert(!guards.includes('AutomationElement.') && !guards.includes('TreeWalker.'), 'Deep-audit focus validation must not invoke UI Automation directly in the desktop process.');
+assert(guards.includes('ClearCurrentGuidanceV3();'), 'A failed observer focus proof must clear current guidance before recovery.');
+const reliability = read('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs');
+assert(reliability.includes('Volatile.Read(ref _typeTextFocusRecoveryInFlight) != 0'), 'Normal key verification must wait while the observer is proving input focus.');
 assert(guards.includes('入力確定時に案内対象の入力欄からフォーカスが外れている'), 'Lost-focus text entry must route into current-state recovery.');
 
 assert(stable.includes('AttachDeepAuditGuards();'), 'Deep-audit interaction guards must be attached with the live watcher.');
@@ -40,9 +44,10 @@ assert(watcher.includes('ExpandCollapsePattern.ExpandCollapseStateProperty'), 'E
 assert(watcher.includes('AutomationElement.HasKeyboardFocusProperty'), 'Focus changes must trigger the live watcher.');
 assert(watcher.includes('RemoveAutomationPropertyChangedEventHandler'), 'Semantic UIA subscriptions must be removed during scope changes/shutdown.');
 
-assert(qualityWindow.includes('var visualAction = decision.Action.Equals("double_click"'), 'Visual targets must preserve double-click semantics.');
-assert(qualityWindow.includes('new GuideDecision("target", "vision-target", visualAction'), 'Visual target runtime state must use the preserved action.');
-assert(!qualityWindow.includes('new GuideDecision("target", "vision-target", "left_click"'), 'Visual targets must not be forcibly downgraded to a single click.');
+assert(qualityWindow.includes('proposedVisualAction = decision.Action.Equals("double_click"'), 'Visual planning must carry the proposed physical action into local validation.');
+assert(qualityWindow.includes('NormalizeStructuredDecisionForTarget') && qualityWindow.includes('var visualAction = normalizedVisual.Action'), 'Visual targets must normalize click count against the real Windows control type.');
+assert(qualityWindow.includes('new GuideDecision("target", "vision-target", visualAction'), 'Visual runtime state must use the locally normalized action.');
+assert(!qualityWindow.includes('new GuideDecision("target", "vision-target", "left_click"'), 'Visual targets must not be unconditionally forced to a single click.');
 
 assert(qualityWorker.includes('guardVisionDecisionForTask'), 'Quality visual targets must pass the known-site vision safety guard.');
 assert(qualityWorker.includes("task?.kind === 'site' && task?.deterministic?.status !== 'done'"), 'Known-site done must require the official current browser domain.');

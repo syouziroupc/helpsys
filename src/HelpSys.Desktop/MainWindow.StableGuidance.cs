@@ -14,7 +14,7 @@ public partial class MainWindow
     private int _stablePulseQueued;
     private readonly DispatcherTimer _interactionForegroundSampler = new()
     {
-        Interval = TimeSpan.FromMilliseconds(30)
+        Interval = TimeSpan.FromMilliseconds(120)
     };
 
     private void MainWindow_StableLoaded(object sender, RoutedEventArgs e)
@@ -104,6 +104,15 @@ public partial class MainWindow
         }
 
         HideClarificationUiIfNeeded();
+
+        // The planner already performs its own bounded UIA capture/revalidation. Running the live
+        // topology scanner at the same time only creates contention. Security still runs in
+        // parallel through GuidanceStateWatcher.Changed -> privacy epoch invalidation.
+        if (_sessionState.PlannerInFlight)
+        {
+            ClearStableLiveChangeCandidate();
+            return;
+        }
 
         if (_activeRequest is null)
         {

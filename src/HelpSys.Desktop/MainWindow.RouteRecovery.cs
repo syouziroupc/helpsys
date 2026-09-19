@@ -221,23 +221,32 @@ public partial class MainWindow
         var bounds = frame.MapNormalizedBounds(recovery.X, recovery.Y, recovery.Width, recovery.Height);
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8) return false;
 
-        Rect? snapped = null;
-        try { snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
+        UiElementCandidate? snappedTarget = null;
+        try { snappedTarget = await _scanner.SnapToAccessibleCandidateAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { throw; }
         catch { }
 
         var current = _systemContext.Capture();
         if (!_sessionState.IsCurrent(generation) || !HasSameCaptureIdentity(context, current) || HasSystemTransitionV3(context, current)) return false;
-        if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
-        else if (recovery.Confidence < MinimumVisualOnlyTargetConfidence) return false;
+        if (snappedTarget is null ||
+            snappedTarget.Password ||
+            !snappedTarget.Interactable ||
+            !snappedTarget.Enabled ||
+            snappedTarget.Bounds.IsEmpty ||
+            snappedTarget.ProcessId != context.ForegroundProcessId)
+            return false;
 
-        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
-            ? "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
-            : decision.Instruction;
+        var normalizedVisual = NormalizeStructuredDecisionForTarget(
+            new GuideDecision("target", "vision-target", decision.Action, string.Empty, null, null, recovery.Confidence),
+            snappedTarget);
+        if (normalizedVisual is null) return false;
+
+        bounds = snappedTarget.Bounds;
+        var instruction = normalizedVisual.Instruction;
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return false;
-        _currentDecision = new GuideDecision("target", "vision-target", decision.Action, instruction, null, null, recovery.Confidence);
-        _currentTarget = null;
+        _currentDecision = new GuideDecision("target", "vision-target", normalizedVisual.Action, instruction, null, null, recovery.Confidence);
+        _currentTarget = snappedTarget;
         _stepBaseline = candidates;
         _stepSystemBaseline = context;
         _guidedBounds = bounds;

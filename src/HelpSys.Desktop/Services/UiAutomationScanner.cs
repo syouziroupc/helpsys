@@ -8,15 +8,35 @@ namespace HelpSys.Services;
 public sealed class UiAutomationScanner
 {
     private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
+    private static readonly Lazy<UiAutomationObserverClient> SharedObserver = new(() => new UiAutomationObserverClient());
     private readonly int _selfProcessId = Environment.ProcessId;
+    private readonly bool _forceLocal;
+
+    public UiAutomationScanner() : this(forceLocal: false) { }
+
+    internal UiAutomationScanner(bool forceLocal)
+    {
+        _forceLocal = forceLocal;
+    }
+
+    private bool UseObserver => !_forceLocal && !UiAutomationObserverHost.IsObserverProcess;
+
+    public static void ShutdownSharedObserver()
+    {
+        if (SharedObserver.IsValueCreated) SharedObserver.Value.Dispose();
+    }
 
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(int maxCandidates = 360, CancellationToken cancellationToken = default)
-        => Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken), cancellationToken);
+        => UseObserver
+            ? SharedObserver.Value.CaptureCandidatesAsync(maxCandidates, cancellationToken)
+            : Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken), cancellationToken);
 
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForProcessAsync(int processId, int maxCandidates = 360, CancellationToken cancellationToken = default)
     {
         if (processId <= 0) return Task.FromResult<IReadOnlyList<UiElementCandidate>>([]);
-        return Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
+        return UseObserver
+            ? SharedObserver.Value.CaptureCandidatesForProcessAsync(processId, maxCandidates, cancellationToken)
+            : Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
     }
 
     public Task<string> CaptureWindowDiagnosticsAsync(
@@ -25,7 +45,9 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         if (windowHandle == nint.Zero) return Task.FromResult("hwnd=missing");
-        return Task.Run(() => CaptureWindowDiagnostics(windowHandle, expectedProcessId, cancellationToken), cancellationToken);
+        return UseObserver
+            ? SharedObserver.Value.CaptureWindowDiagnosticsAsync(windowHandle, expectedProcessId, cancellationToken)
+            : Task.Run(() => CaptureWindowDiagnostics(windowHandle, expectedProcessId, cancellationToken), cancellationToken);
     }
 
     private static string CaptureWindowDiagnostics(nint windowHandle, int expectedProcessId, CancellationToken cancellationToken)
@@ -87,13 +109,24 @@ public sealed class UiAutomationScanner
     }
 
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, CancellationToken cancellationToken = default)
-        => Task.Run(() => RevalidateCandidate(candidate, null, cancellationToken), cancellationToken);
+        => UseObserver
+            ? SharedObserver.Value.RevalidateCandidateAsync(candidate, null, cancellationToken)
+            : Task.Run(() => RevalidateCandidate(candidate, null, cancellationToken), cancellationToken);
 
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, int rootProcessId, CancellationToken cancellationToken = default)
-        => Task.Run(() => RevalidateCandidate(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken), cancellationToken);
+        => UseObserver
+            ? SharedObserver.Value.RevalidateCandidateAsync(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken)
+            : Task.Run(() => RevalidateCandidate(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken), cancellationToken);
 
     public Task<Rect?> SnapToAccessibleBoundsAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
-        => Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
+        => UseObserver
+            ? SharedObserver.Value.SnapToAccessibleBoundsAsync(approximateBounds, cancellationToken)
+            : Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
+
+    public Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
+        => UseObserver
+            ? SharedObserver.Value.SnapToAccessibleCandidateAsync(approximateBounds, cancellationToken)
+            : Task.Run(() => SnapToAccessibleCandidate(approximateBounds, cancellationToken), cancellationToken);
 
     private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, int? rootProcessId, CancellationToken cancellationToken)
     {
@@ -173,6 +206,9 @@ public sealed class UiAutomationScanner
     }
 
     private Rect? SnapToAccessibleBounds(Rect approximateBounds, CancellationToken cancellationToken)
+        => SnapToAccessibleCandidate(approximateBounds, cancellationToken)?.Bounds;
+
+    private UiElementCandidate? SnapToAccessibleCandidate(Rect approximateBounds, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (approximateBounds.IsEmpty) return null;
@@ -208,7 +244,8 @@ public sealed class UiAutomationScanner
                     {
                         var inflated = approximateBounds;
                         inflated.Inflate(Math.Max(25, approximateBounds.Width * 0.45), Math.Max(25, approximateBounds.Height * 0.45));
-                        if (inflated.IntersectsWith(rect) || rect.Contains(point)) return rect;
+                        if (inflated.IntersectsWith(rect) || rect.Contains(point))
+                            return BuildSnapCandidate(element, current, typeName, rect);
                     }
                     element = walker.GetParent(element);
                 }
@@ -248,7 +285,44 @@ public sealed class UiAutomationScanner
             }
         }
 
-        return best is not null && bestScore >= 25 ? best.Bounds : null;
+        return best is not null && bestScore >= 25 ? best : null;
+    }
+
+    private static UiElementCandidate BuildSnapCandidate(
+        AutomationElement element,
+        AutomationElement.AutomationElementInformation current,
+        string typeName,
+        Rect rect)
+    {
+        var isPassword = current.IsPassword;
+        var actionState = ReadActionState(element, typeName, isPassword);
+        string processName;
+        try { processName = Process.GetProcessById(current.ProcessId).ProcessName; }
+        catch { processName = string.Empty; }
+
+        var rawName = current.Name ?? string.Empty;
+        var name = isPassword ? "[password field]" : rawName;
+        return new UiElementCandidate(
+            "snap-target",
+            Trim(name, 180),
+            Trim(current.AutomationId ?? string.Empty, 120),
+            Trim(current.ClassName ?? string.Empty, 120),
+            Trim(typeName.Replace("ControlType.", string.Empty), 80),
+            processName,
+            true,
+            current.IsEnabled,
+            current.IsKeyboardFocusable,
+            current.HasKeyboardFocus,
+            isPassword,
+            rect.X,
+            rect.Y,
+            rect.Width,
+            rect.Height,
+            current.ProcessId,
+            actionState.Value,
+            actionState.ToggleState,
+            actionState.Selected,
+            actionState.ExpandCollapseState);
     }
 
     private IReadOnlyList<UiElementCandidate> CaptureCandidates(int maxCandidates, CancellationToken cancellationToken, int? rootProcessId = null)
@@ -386,9 +460,12 @@ public sealed class UiAutomationScanner
             if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
                 element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
             {
-                // Keep only whether a value exists. The user-entered string itself is intentionally discarded
-                // immediately and never stored in UiElementCandidate, history, telemetry or cloud payloads.
-                value = string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present";
+                // UIA runs in the isolated observer process. Keep a bounded local value for ordinary
+                // non-password inputs so PrivacyGate can classify/sanitize it before any cloud egress.
+                // Password controls are excluded above and never expose their ValuePattern content.
+                var rawValue = valueValue.Current.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(rawValue))
+                    value = rawValue.Length <= 320 ? rawValue : rawValue[..320];
             }
         }
         catch (ElementNotAvailableException) { }

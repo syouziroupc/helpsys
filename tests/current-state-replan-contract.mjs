@@ -17,8 +17,10 @@ for (const delay of ['1 => 180', '2 => 420', '3 => 850', '_ => 1400'])
   if (!helper.includes(delay)) throw new Error(`adaptive settle delay missing: ${delay}`);
 if (!policy.includes('TryQueueCurrentStateReplan(reason, generation)'))
   throw new Error('technical uncertainty must first use bounded current-state replan');
-if (!policy.includes('StopWithMessage('))
-  throw new Error('technical uncertainty must still fail closed after the bounded re-observation budget');
+if (!policy.includes('QueueResilientRecovery(reason, generation)'))
+  throw new Error('technical uncertainty must move to the non-terminal resilience supervisor after the fast re-observation budget');
+if (policy.includes('StopWithMessage('))
+  throw new Error('technical uncertainty must never discard the active goal after the re-observation budget');
 if (policy.includes('WaitForClarification('))
   throw new Error('technical observer failure must not be converted into a user clarification question');
 if (policy.includes('TryRouteRecoveryAsync'))
@@ -49,4 +51,4 @@ if (!keyboardBlock.includes('ResetCurrentStateReplanBudget();'))
 if (!quality.includes('ResetCurrentStateReplanBudget();'))
   throw new Error('successful visual target guidance must reset the replan budget');
 
-console.log('HelpSys adaptive bounded current-state replan contract passed.');
+console.log('HelpSys adaptive current-state replan + non-terminal recovery contract passed.');
