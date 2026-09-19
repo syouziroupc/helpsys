@@ -76,6 +76,22 @@ internal sealed class UiAutomationObserverClient : IDisposable
             : null;
     }
 
+    public async Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(
+        Rect approximateBounds,
+        CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(
+            new UiAutomationObserverRequest(
+                NewId(),
+                "snap-candidate",
+                X: approximateBounds.X,
+                Y: approximateBounds.Y,
+                Width: approximateBounds.Width,
+                Height: approximateBounds.Height),
+            cancellationToken);
+        return response.Candidate;
+    }
+
     public async Task<string> CaptureWindowDiagnosticsAsync(
         nint windowHandle,
         int expectedProcessId,
