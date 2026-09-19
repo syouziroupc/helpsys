@@ -8,7 +8,11 @@ namespace HelpSys;
 public partial class MainWindow
 {
     private bool _privacyPaused;
+    private long _privacyEgressEpoch;
     private int _privacyPulseBusy;
+
+    private long CurrentPrivacyEgressEpoch => Interlocked.Read(ref _privacyEgressEpoch);
+    private bool IsPrivacyEgressEpochCurrent(long epoch) => CurrentPrivacyEgressEpoch == epoch;
     private readonly DispatcherTimer _privacyResumeTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(900)
@@ -18,6 +22,8 @@ public partial class MainWindow
     {
         MainWindow_CombinedLoaded(sender, e);
         _cloudGuide.PrivacyBlocked += CloudGuide_PrivacyBlocked;
+        _cloudGuide.UsePrivacyEpochProvider(() => CurrentPrivacyEgressEpoch);
+        _liveWatcher.Changed += PrivacyWatcher_Changed;
         _liveWatcher.Pulse += PrivacyWatcher_Pulse;
         _privacyResumeTimer.Tick += PrivacyResumeTimer_Tick;
         UpdatePrivacyButton();
@@ -42,6 +48,7 @@ public partial class MainWindow
         _privacyResumeTimer.Stop();
         _privacyResumeTimer.Tick -= PrivacyResumeTimer_Tick;
         _cloudGuide.PrivacyBlocked -= CloudGuide_PrivacyBlocked;
+        _liveWatcher.Changed -= PrivacyWatcher_Changed;
         _liveWatcher.Pulse -= PrivacyWatcher_Pulse;
     }
 
@@ -55,6 +62,7 @@ public partial class MainWindow
     private void EnterPrivacyMode(PrivacyAssessment assessment)
     {
         _privacyPaused = true;
+        Interlocked.Increment(ref _privacyEgressEpoch);
         CancelResilienceRecovery();
 
         try { _sessionCts?.Cancel(); } catch { }
@@ -100,6 +108,13 @@ public partial class MainWindow
         UpdatePrivacyButton();
         SetState("画面解析を再開できる安全な状態か確認しています…", speak: false);
         await TryResumePrivacyModeAsync();
+    }
+
+    private void PrivacyWatcher_Changed(object? sender, EventArgs e)
+    {
+        // This callback may run on a UI Automation thread. Keep it lock-free and local: it only
+        // invalidates egress leases; the normal watcher performs the heavier state analysis.
+        Interlocked.Increment(ref _privacyEgressEpoch);
     }
 
     private void PrivacyWatcher_Pulse(object? sender, EventArgs e)
