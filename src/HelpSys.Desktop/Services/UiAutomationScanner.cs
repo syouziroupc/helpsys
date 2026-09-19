@@ -414,9 +414,12 @@ public sealed class UiAutomationScanner
             if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
                 element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
             {
-                // Keep only whether a value exists. The user-entered string itself is intentionally discarded
-                // immediately and never stored in UiElementCandidate, history, telemetry or cloud payloads.
-                value = string.IsNullOrEmpty(valueValue.Current.Value) ? null : "present";
+                // UIA runs in the isolated observer process. Keep a bounded local value for ordinary
+                // non-password inputs so PrivacyGate can classify/sanitize it before any cloud egress.
+                // Password controls are excluded above and never expose their ValuePattern content.
+                var rawValue = valueValue.Current.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(rawValue))
+                    value = rawValue.Length <= 320 ? rawValue : rawValue[..320];
             }
         }
         catch (ElementNotAvailableException) { }
