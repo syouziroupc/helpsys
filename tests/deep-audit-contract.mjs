@@ -16,8 +16,12 @@ assert(!guards.includes('_actionObserver.LeftClick += ObserveOffRouteClickDeepAu
 assert(guards.includes('_actionObserver.KeyReleased -= OnObservedKeyReleasedV3;'), 'The type-text submit guard must run before the normal key verifier.');
 assert(guards.includes('_actionObserver.KeyReleased += ObserveTypeTextSubmitDeepAudit;'), 'A synchronous type-text submit guard must be installed.');
 assert(guards.includes('type_target_lost_focus'), 'Lost focus at text-submit time must be recorded as route-deviation evidence.');
-assert(guards.includes('IsCurrentTextTargetFocusedDeepAudit'), 'The finishing key must re-check the actual focused UIA target.');
-assert(guards.includes('ClearCurrentGuidanceV3();'), 'A bad finishing key must clear current guidance before normal verification can consume it.');
+assert(guards.includes('ValidateTypeTextSubmitFocusAsync'), 'The finishing key must asynchronously re-check the focused target through the isolated observer.');
+assert(guards.includes('_scanner.RevalidateCandidateAsync'), 'Type-text focus proof must use the isolated scanner observer.');
+assert(!guards.includes('AutomationElement.') && !guards.includes('TreeWalker.'), 'Deep-audit focus validation must not invoke UI Automation directly in the desktop process.');
+assert(guards.includes('ClearCurrentGuidanceV3();'), 'A failed observer focus proof must clear current guidance before recovery.');
+const reliability = read('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs');
+assert(reliability.includes('Volatile.Read(ref _typeTextFocusRecoveryInFlight) != 0'), 'Normal key verification must wait while the observer is proving input focus.');
 assert(guards.includes('入力確定時に案内対象の入力欄からフォーカスが外れている'), 'Lost-focus text entry must route into current-state recovery.');
 
 assert(stable.includes('AttachDeepAuditGuards();'), 'Deep-audit interaction guards must be attached with the live watcher.');
