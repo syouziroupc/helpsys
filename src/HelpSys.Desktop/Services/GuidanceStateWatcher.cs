@@ -38,24 +38,30 @@ public sealed class GuidanceStateWatcher : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(GuidanceStateWatcher));
         if (_cts is not null) return;
 
-        _cts = new CancellationTokenSource();
+        var owner = new CancellationTokenSource();
+        _cts = owner;
         Interlocked.Exchange(ref _queued, 0);
         Interlocked.Exchange(ref _lastSignalTicks, 0);
+        _pumpTask = Task.Run(() => PumpAsync(owner.Token));
 
-        lock (_subscriptionGate)
+        // UI Automation providers are external COM servers. Never register a global UIA handler
+        // synchronously on the WPF dispatcher; a broken provider must not block the HelpSys window.
+        _ = Task.Run(() =>
         {
-            try
+            lock (_subscriptionGate)
             {
-                Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
-                _focusSubscribed = true;
+                if (_disposed || !ReferenceEquals(_cts, owner) || owner.IsCancellationRequested) return;
+                try
+                {
+                    Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
+                    _focusSubscribed = true;
+                }
+                catch
+                {
+                    _focusSubscribed = false;
+                }
             }
-            catch
-            {
-                _focusSubscribed = false;
-            }
-        }
-
-        _pumpTask = Task.Run(() => PumpAsync(_cts.Token));
+        });
     }
 
     public Task SetForegroundProcessAsync(int processId, CancellationToken cancellationToken = default)
@@ -250,25 +256,14 @@ public sealed class GuidanceStateWatcher : IDisposable
         if (cts is null) return;
 
         cts.Cancel();
-        lock (_subscriptionGate)
-        {
-            RemoveStructureSubscriptionLocked();
-            _scopeProcessId = 0;
-            if (_focusSubscribed)
-            {
-                try { Automation.RemoveAutomationFocusChangedEventHandler(_focusHandler); } catch { }
-                _focusSubscribed = false;
-            }
-        }
-
         Interlocked.Exchange(ref _queued, 0);
 
-        // Stop may run from WPF Closing. Never synchronously wait for the background pump there;
-        // UIA callbacks can be delayed during window teardown. Drain and dispose off-thread.
-        _ = DrainStoppedPumpAsync(pump, cts);
+        // Removing UIA subscriptions can block inside an external provider. Closing HelpSys must
+        // therefore only schedule cleanup and return to the dispatcher immediately.
+        _ = DrainStoppedPumpAndSubscriptionsAsync(pump, cts);
     }
 
-    private static async Task DrainStoppedPumpAsync(Task? pump, CancellationTokenSource cts)
+    private async Task DrainStoppedPumpAndSubscriptionsAsync(Task? pump, CancellationTokenSource cts)
     {
         try
         {
@@ -276,6 +271,24 @@ public sealed class GuidanceStateWatcher : IDisposable
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
+        catch { }
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                lock (_subscriptionGate)
+                {
+                    RemoveStructureSubscriptionLocked();
+                    _scopeProcessId = 0;
+                    if (_focusSubscribed)
+                    {
+                        try { Automation.RemoveAutomationFocusChangedEventHandler(_focusHandler); } catch { }
+                        _focusSubscribed = false;
+                    }
+                }
+            }).ConfigureAwait(false);
+        }
         catch { }
         finally
         {
