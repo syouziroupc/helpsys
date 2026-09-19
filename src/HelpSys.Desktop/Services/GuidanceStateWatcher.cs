@@ -25,6 +25,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     private bool _disposed;
 
     public event EventHandler? Pulse;
+    public event EventHandler? Changed;
 
     public GuidanceStateWatcher()
     {
@@ -191,6 +192,7 @@ public sealed class GuidanceStateWatcher : IDisposable
     {
         if (_disposed) return;
         Interlocked.Exchange(ref _lastSignalTicks, DateTime.UtcNow.Ticks);
+        try { Changed?.Invoke(this, EventArgs.Empty); } catch { }
         if (Interlocked.Exchange(ref _queued, 1) != 0) return;
         try { _signal.Release(); }
         catch (SemaphoreFullException) { }
