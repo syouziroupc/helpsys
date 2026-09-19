@@ -229,7 +229,7 @@ public partial class MainWindow : Window
             if (!HasUsableForeground(systemContext))
             {
                 if (_sessionState.IsCurrent(generation))
-                    StopWithMessage("今操作しているアプリを確認できないため、背景画面を推測せず案内を停止しました。もう一度「案内」を押してください。");
+                    HandleTechnicalPlanningUncertainty("前面ウィンドウを特定できない", generation);
                 return;
             }
 
@@ -250,7 +250,7 @@ public partial class MainWindow : Window
             if (candidates.Count == 0)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("今の画面から次の操作を安全に決められませんでした。");
+                    HandleTechnicalPlanningUncertainty("現在画面から次の操作候補を確定できない", generation);
                 return;
             }
 
@@ -287,7 +287,7 @@ public partial class MainWindow : Window
             if (!decision.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || decision.Confidence < MinimumTargetConfidence)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("今の画面では、次にすることを安全に決められませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内判断の信頼度が不足している", generation);
                 return;
             }
 
@@ -300,7 +300,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("案内する場所を確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内対象IDを確定できない", generation);
                 return;
             }
 
@@ -308,7 +308,7 @@ public partial class MainWindow : Window
             if (target is null || !target.Interactable || target.Bounds.IsEmpty)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("案内する場所を今の画面で確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("案内対象が現在画面で操作可能ではない", generation);
                 return;
             }
 
@@ -316,13 +316,13 @@ public partial class MainWindow : Window
             if (!_sessionState.IsCurrent(generation)) return;
             if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
             {
-                StopWithMessage("操作中の画面が切り替わったため、古い案内を表示せず破棄しました。現在の画面で、もう一度「案内」を押してください。");
+                HandleTechnicalPlanningUncertainty("操作中に画面が切り替わった", generation);
                 return;
             }
             if (freshTarget is null)
             {
                 if (!await TryVisionFallbackAsync(candidates, systemContext, generation, cancellationToken) && _sessionState.IsCurrent(generation))
-                    StopWithMessage("画面が動いたため、押す場所をもう一度確認できませんでした。");
+                    HandleTechnicalPlanningUncertainty("表示直前に操作対象を再確認できない", generation);
                 return;
             }
 
@@ -331,11 +331,11 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             if (_sessionState.IsCurrent(generation) && _sessionCts is { IsCancellationRequested: false })
-                StopWithMessage("案内処理が規定時間内に完了しませんでした。通信障害とは断定せず、現在の画面からやり直します。もう一度「案内」を押してください。");
+                HandleTechnicalPlanningUncertainty("案内処理が工程期限内に完了しない", generation);
         }
         catch (Exception ex)
         {
-            if (_sessionState.IsCurrent(generation)) StopWithMessage($"画面を確認できませんでした: {ex.Message}");
+            if (_sessionState.IsCurrent(generation)) HandleTechnicalPlanningUncertainty($"画面確認例外: {ex.GetType().Name}", generation);
         }
         finally
         {
@@ -502,7 +502,7 @@ public partial class MainWindow : Window
         if (!_sessionState.IsCurrent(generation)) return false;
         if (HasSystemTransitionV3(systemContext, _systemContext.Capture()))
         {
-            StopWithMessage("画像確認中に操作対象の画面が切り替わったため、古い画像案内を表示せず破棄しました。");
+            HandleTechnicalPlanningUncertainty("画像確認中に操作対象の画面が切り替わった", generation);
             return true;
         }
 
