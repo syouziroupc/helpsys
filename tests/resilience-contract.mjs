@@ -6,6 +6,8 @@ const assert = (value, message) => { if (!value) throw new Error(message); };
 const app = read('src/HelpSys.Desktop/App.xaml.cs');
 const scanner = read('src/HelpSys.Desktop/Services/UiAutomationScanner.cs');
 const scannerFacade = read('src/HelpSys.Desktop/UiAutomationScanner.cs');
+const deepAudit = read('src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs');
+const reliability = read('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs');
 const observerClient = read('src/HelpSys.Desktop/Services/UiAutomationObserverClient.cs');
 const observerHost = read('src/HelpSys.Desktop/Services/UiAutomationObserverHost.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
@@ -27,6 +29,11 @@ assert(scanner.includes('SharedObserver') && scanner.includes('UseObserver'),
   'UIA scanner must route normal desktop calls through the isolated observer.');
 assert(!scannerFacade.includes('AutomationElement.') && !scannerFacade.includes('TreeWalker.') && !scannerFacade.includes('ValuePattern.'),
   'Main-process scanner facade must not perform direct UI Automation calls.');
+assert(!deepAudit.includes('AutomationElement.') && !deepAudit.includes('TreeWalker.'),
+  'Type-text completion audit must not perform direct UI Automation in the desktop process.');
+assert(deepAudit.includes('_scanner.RevalidateCandidateAsync') &&
+       reliability.includes('Volatile.Read(ref _typeTextFocusRecoveryInFlight) != 0'),
+  'Type-text completion must wait for observer-backed focus proof before marking the step successful.');
 assert(scanner.includes('var rawValue = valueValue.Current.Value?.Trim();'),
   'Ordinary non-password input evidence must be captured inside the isolated observer before local privacy filtering.');
 assert(scanner.includes('forceLocal: true') === false,
