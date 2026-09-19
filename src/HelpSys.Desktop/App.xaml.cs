@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using HelpSys.Services;
 
 namespace HelpSys;
 
@@ -10,6 +11,15 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (UiAutomationObserverHost.IsObserverProcess)
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            base.OnStartup(e);
+            try { UiAutomationObserverHost.RunAsync().GetAwaiter().GetResult(); }
+            finally { Shutdown(); }
+            return;
+        }
+
         _singleInstanceMutex = new Mutex(initiallyOwned: true, name: @"Local\HelpSys.Desktop.SingleInstance", createdNew: out var createdNew);
         if (!createdNew)
         {
@@ -36,6 +46,7 @@ public partial class App : Application
         _smokeListeningOverlay = null;
         try { _singleInstanceMutex?.ReleaseMutex(); } catch (ApplicationException) { }
         _singleInstanceMutex?.Dispose();
+        try { UiAutomationScanner.ShutdownSharedObserver(); } catch { }
         base.OnExit(e);
     }
 }
