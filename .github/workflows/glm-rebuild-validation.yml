@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - rebuild/glm-clean-20260918
+      - release/glm-resilient-vnext-20260919
   workflow_dispatch:
 
 jobs:
@@ -30,6 +31,7 @@ jobs:
           node worker/quality-guide-selftest.mjs
           node tests/commander-stability-contract.mjs
           node tests/current-state-replan-contract.mjs
+          node tests/resilience-contract.mjs
           node tests/ui-surface-contract.mjs
 
       - name: Restore Windows project
