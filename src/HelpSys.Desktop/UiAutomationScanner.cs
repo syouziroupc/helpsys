@@ -60,6 +60,11 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
         => _inner.SnapToAccessibleBoundsAsync(approximateBounds, cancellationToken);
 
+    public Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(
+        Rect approximateBounds,
+        CancellationToken cancellationToken = default)
+        => _inner.SnapToAccessibleCandidateAsync(approximateBounds, cancellationToken);
+
     private static IReadOnlyList<UiElementCandidate> ScopeToForegroundWindow(
         int processId,
         IReadOnlyList<UiElementCandidate> candidates)
