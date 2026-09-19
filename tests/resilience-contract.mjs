@@ -90,11 +90,15 @@ assert(main.includes('QueueResilientRecovery("技術的な画面不確実性が�
 assert(privacy.includes('CancelResilienceRecovery();') && privacy.includes('ResetResilienceRecovery();'),
   'Privacy pause/resume must coordinate with resilience retries without losing the goal.');
 
-assert(quality.includes('snapped is not { } accessible || accessible.IsEmpty'),
-  'Quality visual guidance must require a concrete Windows-accessible target.');
-assert(quality.includes('画像候補を現在のWindows操作要素へ対応付けできない'),
-  'Unconfirmed visual coordinates must be discarded and recovered.');
-assert(routeRecovery.includes('if (snapped is not { } accessible || accessible.IsEmpty) return false;'),
-  'Route recovery must not reintroduce visual-only click targets.');
+assert(quality.includes('SnapToAccessibleCandidateAsync') &&
+       quality.includes('snappedTarget.ProcessId != systemContext.ForegroundProcessId'),
+  'Quality visual guidance must require concrete metadata from the current foreground Windows target.');
+assert(quality.includes('NormalizeStructuredDecisionForTarget') &&
+       quality.includes('画像候補を現在のWindows操作要素へ対応付けできない'),
+  'Visual coordinates must be locally action-normalized or discarded.');
+assert(routeRecovery.includes('SnapToAccessibleCandidateAsync') &&
+       routeRecovery.includes('snappedTarget.ProcessId != context.ForegroundProcessId') &&
+       routeRecovery.includes('NormalizeStructuredDecisionForTarget'),
+  'Route recovery must require the same real-control metadata and action normalization.');
 
 console.log('HelpSys vNext resilience/freeze/misguidance contract passed.');
