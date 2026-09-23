@@ -21,6 +21,15 @@ public partial class MainWindow
     private void MainWindow_PrivacyLoaded(object sender, RoutedEventArgs e)
     {
         MainWindow_CombinedLoaded(sender, e);
+        if (OutlawModePolicy.Enabled)
+        {
+            _cloudGuide.UsePrivacyEpochProvider(() => 0);
+            UpdatePrivacyButton();
+            Dispatcher.BeginInvoke(new Action(SetPrivacyAwareStartupState));
+            LocalLogService.Write("mode", "outlaw privacy/sentinel bypass active");
+            return;
+        }
+
         _cloudGuide.PrivacyBlocked += CloudGuide_PrivacyBlocked;
         _cloudGuide.UsePrivacyEpochProvider(() => CurrentPrivacyEgressEpoch);
         _liveWatcher.Changed += PrivacyWatcher_Changed;
@@ -33,6 +42,12 @@ public partial class MainWindow
     private void SetPrivacyAwareStartupState()
     {
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+
+        if (OutlawModePolicy.Enabled)
+        {
+            SetState("HelpSys 無法者版：操作優先。セキュリティ停止は無効です。", speak: false);
+            return;
+        }
 
         if (!_cloudGuide.CloudEndpointConfigured)
         {
@@ -54,6 +69,7 @@ public partial class MainWindow
 
     private void CloudGuide_PrivacyBlocked(PrivacyAssessment assessment)
     {
+        if (OutlawModePolicy.Enabled) return;
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
         if (Dispatcher.CheckAccess()) EnterPrivacyMode(assessment);
         else Dispatcher.Invoke(() => EnterPrivacyMode(assessment));
@@ -61,6 +77,12 @@ public partial class MainWindow
 
     private void EnterPrivacyMode(PrivacyAssessment assessment)
     {
+        if (OutlawModePolicy.Enabled)
+        {
+            LocalLogService.Write("privacy_bypass", $"{assessment.ReasonCode}: {assessment.UserMessage}");
+            return;
+        }
+
         _privacyPaused = true;
         Interlocked.Increment(ref _privacyEgressEpoch);
         CancelResilienceRecovery();
@@ -92,6 +114,12 @@ public partial class MainWindow
 
     private async void PrivacyButton_Click(object sender, RoutedEventArgs e)
     {
+        if (OutlawModePolicy.Enabled)
+        {
+            SetState("無法者版ではセキュリティ停止を使用しません。", speak: false);
+            return;
+        }
+
         if (!_cloudGuide.PrivacyGate.ManualPause)
         {
             _cloudGuide.PrivacyGate.SetManualPause(true);
@@ -112,6 +140,7 @@ public partial class MainWindow
 
     private void PrivacyWatcher_Changed(object? sender, EventArgs e)
     {
+        if (OutlawModePolicy.Enabled) return;
         // This callback may run on a UI Automation thread. Keep it lock-free and local: it only
         // invalidates egress leases; the normal watcher performs the heavier state analysis.
         Interlocked.Increment(ref _privacyEgressEpoch);
@@ -129,6 +158,7 @@ public partial class MainWindow
 
     private void QueuePrivacyResumeCheck()
     {
+        if (OutlawModePolicy.Enabled) return;
         if (!_privacyPaused || _cloudGuide.PrivacyGate.ManualPause ||
             Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
         if (Interlocked.Exchange(ref _privacyPulseBusy, 1) != 0) return;
@@ -150,6 +180,12 @@ public partial class MainWindow
 
     private async Task TryResumePrivacyModeAsync()
     {
+        if (OutlawModePolicy.Enabled)
+        {
+            _privacyPaused = false;
+            return;
+        }
+
         if (!_privacyPaused || _cloudGuide.PrivacyGate.ManualPause) return;
 
         if (!_cloudGuide.CloudEndpointConfigured)
@@ -230,6 +266,14 @@ public partial class MainWindow
     private void UpdatePrivacyButton()
     {
         if (PrivacyButton is null) return;
+
+        if (OutlawModePolicy.Enabled)
+        {
+            PrivacyButton.Content = "無法者版";
+            PrivacyButton.ToolTip = "操作優先版：セキュリティ停止は無効";
+            PrivacyButton.IsEnabled = false;
+            return;
+        }
 
         if (_cloudGuide.PrivacyGate.ManualPause)
         {
