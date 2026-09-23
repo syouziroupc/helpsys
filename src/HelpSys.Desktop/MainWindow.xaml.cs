@@ -756,6 +756,7 @@ public partial class MainWindow : Window
         _speechInput.Dispose();
         _actionObserver.Dispose();
         _cloudGuide.Dispose();
+        _systemContext.Dispose();
         _hotKey.Dispose();
         _overlay.Close();
         _keyHint.Close();
