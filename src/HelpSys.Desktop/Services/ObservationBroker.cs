@@ -40,8 +40,15 @@ public sealed class ObservationBroker
                     cancellationToken)).ConfigureAwait(false);
 
         var after = _systemContext.Capture();
-        if (!HasSameIdentity(before, after))
+        if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))
             throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。");
+
+        if (OutlawModePolicy.Enabled && !HasSameIdentity(before, after))
+        {
+            LocalLogService.Write(
+                "outlaw_foreground_changed_during_scan",
+                $"before={before.ForegroundProcess}/{before.ForegroundProcessId};after={after.ForegroundProcess}/{after.ForegroundProcessId};candidates={elements.Count}");
+        }
 
         after = _systemContext.EnrichWithObservedElements(after, elements);
         var sequence = Interlocked.Increment(ref _sequence);
