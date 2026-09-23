@@ -31,6 +31,7 @@ jobs:
           node --check worker/transcribe.js
           node --check tests/run-contracts.mjs
           node --check tests/site-release-contract.mjs
+          node --check tests/why5-root-contract.mjs
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
           node --check tests/privacy-resume-contract.mjs
