@@ -1,6 +1,7 @@
 using System.IO;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 
 namespace HelpSys.Services;
 
@@ -10,6 +11,8 @@ public static class LocalLogService
     private static TextWriterTraceListener? _listener;
     private static StreamWriter? _writer;
     private static string? _path;
+    private static string? _artifactPrefix;
+    private static int _artifactSequence;
 
     public static string? CurrentPath
     {
@@ -28,9 +31,10 @@ public static class LocalLogService
                 "logs");
             Directory.CreateDirectory(root);
 
-            _path = Path.Combine(
-                root,
-                $"helpsys-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
+            var stem = $"helpsys-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}";
+            _path = Path.Combine(root, stem + ".log");
+            _artifactPrefix = Path.Combine(root, stem);
+            _artifactSequence = 0;
 
             var writer = new StreamWriter(_path, append: true, new UTF8Encoding(false))
             {
@@ -64,6 +68,64 @@ public static class LocalLogService
         }
     }
 
+    public static string? SaveDataUriImage(string kind, string? dataUri)
+    {
+        lock (Gate)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_artifactPrefix) || string.IsNullOrWhiteSpace(dataUri)) return null;
+                var comma = dataUri.IndexOf(',');
+                if (comma <= 0 || !dataUri[..comma].Contains(";base64", StringComparison.OrdinalIgnoreCase)) return null;
+
+                var header = dataUri[..comma];
+                var ext = header.Contains("image/jpeg", StringComparison.OrdinalIgnoreCase) ? "jpg" : "png";
+                var bytes = Convert.FromBase64String(dataUri[(comma + 1)..]);
+                var path = NextArtifactPath(kind, ext);
+                File.WriteAllBytes(path, bytes);
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\tartifact\t{kind}={path};bytes={bytes.Length}");
+                _writer?.Flush();
+                return path;
+            }
+            catch (Exception ex)
+            {
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\tartifact_error\t{kind}:{ex.GetType().Name}");
+                _writer?.Flush();
+                return null;
+            }
+        }
+    }
+
+    public static string? SaveJson(string kind, object? value)
+    {
+        lock (Gate)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_artifactPrefix)) return null;
+                var path = NextArtifactPath(kind, "json");
+                var json = JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\tartifact\t{kind}={path};chars={json.Length}");
+                _writer?.Flush();
+                return path;
+            }
+            catch (Exception ex)
+            {
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\tartifact_error\t{kind}:{ex.GetType().Name}");
+                _writer?.Flush();
+                return null;
+            }
+        }
+    }
+
+    private static string NextArtifactPath(string kind, string extension)
+    {
+        var safeKind = string.Concat((kind ?? "artifact").Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_'));
+        var seq = ++_artifactSequence;
+        return $"{_artifactPrefix}-{seq:D4}-{safeKind}.{extension}";
+    }
+
     public static void Shutdown()
     {
         lock (Gate)
@@ -84,6 +146,7 @@ public static class LocalLogService
             {
                 _listener = null;
                 _writer = null;
+                _artifactPrefix = null;
             }
         }
     }
