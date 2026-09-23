@@ -192,6 +192,17 @@ public sealed class CloudGuideService : IDisposable
             }
         };
 
+        LocalLogService.SaveJson("outlaw-evidence", new
+        {
+            request,
+            history,
+            systemContext = body.systemContext,
+            evidence,
+            elements,
+            capture = body.capture,
+            imageChars = frame.ImageDataUri.Length
+        });
+
         CloudAiResponse response;
         try
         {
@@ -234,8 +245,12 @@ public sealed class CloudGuideService : IDisposable
 
         try
         {
-            return JsonSerializer.Deserialize<QualityGuideDecision>(response.Body, _jsonOptions)
-                   ?? throw new JsonException("empty response");
+            var decision = JsonSerializer.Deserialize<QualityGuideDecision>(response.Body, _jsonOptions)
+                           ?? throw new JsonException("empty response");
+            LocalLogService.SaveJson("outlaw-decision", decision);
+            LocalLogService.Write("outlaw_decision",
+                $"status={decision.Status};action={decision.Action};target={decision.TargetId};confidence={decision.Confidence:F3}");
+            return decision;
         }
         catch (JsonException ex)
         {
