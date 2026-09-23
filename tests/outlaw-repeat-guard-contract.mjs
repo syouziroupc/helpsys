@@ -32,8 +32,14 @@ need(reliability,
   'var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;',
   'Outlaw verification history must retain the expanded 64-entry budget');
 need(guard,
-  'string.Equals(key, _outlawFailedGuidanceKey, StringComparison.Ordinal)',
-  'Outlaw repeat guard must compare the current action/state with the last failed action/state');
+  '_outlawFailedGuidanceKeys.Contains(key)',
+  'Outlaw repeat guard must block any previously failed action on the same observed state');
+need(guard,
+  'MaximumOutlawFailedGuidanceKeys = 64',
+  'Outlaw repeat guard must retain a bounded set of failed same-state actions');
+need(guard,
+  'RememberOutlawFailedGuidanceKey(key)',
+  'No-effect verification must accumulate failed action/state keys instead of overwriting only the latest failure');
 need(guard,
   'outlaw_repeat_blocked',
   'Outlaw repeat guard must write an explicit local history/log event');
@@ -42,3 +48,8 @@ need(guard,
   'Outlaw recovery budgets must reset only after verified progress');
 
 console.log('HelpSys Outlaw repeat-guard contract passed.');
+
+const sessionMain = main;
+need(sessionMain,
+  'ResetOutlawLoopGuard();',
+  'Starting/ending a guidance session must clear stale Outlaw loop-guard state');
