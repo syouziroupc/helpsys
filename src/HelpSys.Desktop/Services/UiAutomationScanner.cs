@@ -738,6 +738,25 @@ public sealed class UiAutomationScanner
         catch (InvalidOperationException) { }
     }
 
+    private static void EnqueueChildren(
+        TreeWalker walker,
+        AutomationElement parent,
+        int depth,
+        Queue<(AutomationElement Element, int Depth)> queue)
+    {
+        try
+        {
+            var child = walker.GetFirstChild(parent);
+            while (child is not null)
+            {
+                queue.Enqueue((child, depth));
+                child = walker.GetNextSibling(child);
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+    }
+
     private static void EnqueueChildrenCached(
         TreeWalker walker,
         AutomationElement parent,
