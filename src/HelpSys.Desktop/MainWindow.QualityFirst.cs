@@ -52,6 +52,7 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
+            _lastObservationFingerprint = snapshot.Fingerprint;
             var systemContext = snapshot.System;
             var candidates = snapshot.Elements;
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
