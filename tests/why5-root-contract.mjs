@@ -69,4 +69,12 @@ assert(knowledge.includes("elementRole(element) === 'web_search'"), 'Foreign-sit
 assert(knowledge.includes('taskInfo.forbiddenTargetIds'), 'Forbidden route targets must be rejected after model output.');
 assert(knowledge.includes('固定ルートを強制しない'), 'Site guidance must remain current-state based.');
 
+
+const mainWindow = read('src/HelpSys.Desktop/MainWindow.xaml.cs');
+const startSessionIndex = mainWindow.indexOf('private async Task StartOrContinueSessionAsync()');
+const commitForegroundIndex = mainWindow.indexOf('_systemContext.CommitStableForegroundForAssistantInteraction()', startSessionIndex);
+const advanceIndex = mainWindow.indexOf('await AdvanceGuideAsync();', startSessionIndex);
+assert(startSessionIndex >= 0 && commitForegroundIndex > startSessionIndex, 'Guide session must explicitly commit the sampled external foreground.');
+assert(advanceIndex < 0 || commitForegroundIndex < advanceIndex, 'External foreground must be committed before planner entry.');
+
 console.log('HelpSys Why5 root-cause architecture contract passed.');
