@@ -1,4 +1,5 @@
 const MODEL = '@cf/zai-org/glm-5.3-flash';
+const VERSION = 'outlaw-2026.09.23-r1';
 const MAX_BODY_BYTES = 30_000_000;
 const MAX_UI_ELEMENTS = 1600;
 const MAX_HISTORY = 32;
@@ -64,7 +65,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health/outlaw')
-      return json({ ok: true, service: 'helpsys-outlaw', model: MODEL, aiConfigured: Boolean(env?.AI) });
+      return json({ ok: true, service: 'helpsys-outlaw', version: VERSION, model: MODEL, aiConfigured: Boolean(env?.AI) });
     if (request.method !== 'POST' || url.pathname !== '/v1/outlaw-plan')
       return json({ error: 'not_found' }, 404);
     if (!env?.AI) return json({ error: 'workers_ai_unconfigured' }, 503);
