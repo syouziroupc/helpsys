@@ -23,7 +23,7 @@ public partial class MainWindow
             "route_replan",
             "現在の画面",
             $"同じ操作や別Plannerを反復せず、現在状態から通常Plannerを1回だけやり直す: {issue}"));
-        if (_history.Count > 12) _history.RemoveAt(0);
+        if (_history.Count > 64) _history.RemoveAt(0);
 
         _speechOutput.Stop();
         ClearCurrentGuidanceV3();
