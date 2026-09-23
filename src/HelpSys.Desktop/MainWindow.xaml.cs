@@ -519,7 +519,7 @@ public partial class MainWindow : Window
         if (snapped is not { } accessible || accessible.IsEmpty)
         {
             _history.Add(new GuideHistoryItem(_stepNumber, "vision_target_rejected", "画像候補", "画像AIの座標に現在押せるWindows要素が無いため、発話前に破棄した。"));
-            if (_history.Count > 12) _history.RemoveAt(0);
+            if (_history.Count > 64) _history.RemoveAt(0);
             return false;
         }
         bounds = accessible;
