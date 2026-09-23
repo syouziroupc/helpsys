@@ -1,0 +1,115 @@
+name: Deploy HelpSys Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/stable-router.js"
+      - "worker/stable-gemini.js"
+      - "worker/education-gemini.js"
+      - "worker/outlaw-guide.js"
+      - "wrangler.jsonc"
+      - "site/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: helpsys-worker-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate Worker sources
+        run: |
+          node --check worker/stable-gemini.js
+          node --check worker/education-gemini.js
+          node --check worker/outlaw-guide.js
+          node --check worker/stable-router.js
+
+      - name: Verify Cloudflare deployment credentials
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Repository secret CLOUDFLARE_API_TOKEN is missing."
+            exit 2
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Repository secret CLOUDFLARE_ACCOUNT_ID is missing."
+            exit 2
+          fi
+
+      - name: Install Wrangler
+        run: npm install --no-package-lock --ignore-scripts
+
+      - name: Deploy production Worker
+        run: npx wrangler deploy --config wrangler.jsonc
+
+      - name: Verify Outlaw production route
+        shell: bash
+        run: |
+          node <<'NODE'
+          const base='https://helpsys.syouziroupc.workers.dev';
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          let health=null;
+          for(let i=0;i<10;i++){
+            try{
+              const r=await fetch(base+'/health/outlaw',{cache:'no-store'});
+              if(r.ok){
+                const j=await r.json();
+                if(j?.ok===true && j?.service==='helpsys-outlaw' && j?.aiConfigured===true){
+                  health=j; break;
+                }
+              }
+            }catch{}
+            await sleep(3000);
+          }
+          if(!health) throw new Error('Outlaw production health endpoint did not converge.');
+
+          const body={
+            request:'設定を開く次の操作を案内して',
+            history:[],
+            systemContext:{
+              foregroundProcess:'explorer',
+              foregroundTitle:'デスクトップ',
+              foregroundProcessId:1234,
+              taskbarVisible:true,
+              runningApps:['explorer'],
+              browser:null
+            },
+            evidence:{screenshotPresent:false},
+            elements:[
+              {
+                id:'u1',name:'スタート',automationId:'Start',className:'',
+                controlType:'Button',processName:'explorer',interactable:true,
+                enabled:true,keyboardFocusable:true,focused:false,password:false,
+                processId:1234,value:null,toggleState:null,selected:null,
+                expandCollapseState:null,x:0,y:0,width:80,height:40
+              }
+            ]
+          };
+          const r=await fetch(base+'/v1/outlaw-plan',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:JSON.stringify(body)
+          });
+          const text=await r.text();
+          if(!r.ok) throw new Error('Outlaw planner HTTP '+r.status+': '+text.slice(0,400));
+          let parsed;
+          try{parsed=JSON.parse(text)}catch{throw new Error('Outlaw planner returned non-JSON');}
+          if(!['target','clarify','done','not_found'].includes(parsed?.status))
+            throw new Error('Outlaw planner returned invalid status: '+text.slice(0,400));
+          console.log('outlaw_health',JSON.stringify(health));
+          console.log('outlaw_smoke',JSON.stringify(parsed));
+          NODE
