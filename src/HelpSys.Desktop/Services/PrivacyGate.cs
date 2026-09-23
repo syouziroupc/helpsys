@@ -236,6 +236,45 @@ public sealed class PrivacyGate
         return new PrivacyApproval(assessment, body);
     }
 
+    public PrivacyApproval ApproveStablePlanCompatibility(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        SystemContextSnapshot systemContext)
+    {
+        var assessment = EvaluateState(systemContext, elements);
+        if (!assessment.CanSend) return new PrivacyApproval(assessment, null);
+
+        var body = new
+        {
+            goal = SanitizeOutboundText(request, 900),
+            processName = SanitizeOutboundText(systemContext.ForegroundProcess, 80),
+            windowTitle = SanitizeOutboundText(systemContext.ForegroundTitle, 260),
+            browserDomain = SanitizeOutboundText(systemContext.Browser?.Domain, 220),
+            controls = elements.Take(96).Select(x => new
+            {
+                id = x.Id,
+                name = SanitizeOutboundText(x.Name, 180),
+                automationId = SanitizeOutboundText(x.AutomationId, 120),
+                className = SanitizeOutboundText(x.ClassName, 120),
+                controlType = x.ControlType,
+                enabled = x.Enabled,
+                focused = x.Focused,
+                keyboardFocusable = x.KeyboardFocusable,
+                x = NormalizeStableCoordinate(x.X - frame.ScreenX, frame.ScreenWidth),
+                y = NormalizeStableCoordinate(x.Y - frame.ScreenY, frame.ScreenHeight),
+                width = NormalizeStableCoordinate(x.Width, frame.ScreenWidth),
+                height = NormalizeStableCoordinate(x.Height, frame.ScreenHeight)
+            }).ToArray(),
+            image = frame.ImageDataUri
+        };
+
+        return new PrivacyApproval(assessment, body);
+    }
+
+    private static double NormalizeStableCoordinate(double value, double total)
+        => total <= 0 ? 0 : Math.Clamp(value / total * 1000d, 0d, 1000d);
+
     public PrivacyApproval ApproveStructured(
         string request,
         IReadOnlyList<UiElementCandidate> elements,
