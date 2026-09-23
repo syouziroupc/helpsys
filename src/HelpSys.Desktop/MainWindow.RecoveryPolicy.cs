@@ -17,15 +17,13 @@ public partial class MainWindow
 
         _history.Add(new GuideHistoryItem(
             _stepNumber,
-            "technical_planning_uncertainty",
+            "automatic_replan_exhausted",
             "現在の画面",
-            $"現在状態の再取得を上限まで行ったが安全に確定できなかった。経路逸脱とは推測しない: {reason}"));
+            $"同一画面での自動再計画は1回で打ち切る: {reason}"));
         if (_history.Count > 12) _history.RemoveAt(0);
 
-        // Technical observer/planner uncertainty is never a reason to discard the user's goal.
-        // After the fast current-state budget is exhausted, move to the backed-off resilience
-        // supervisor. Security remains fail-closed at every egress boundary, but guidance recovers
-        // automatically when the desktop becomes observable again.
-        QueueResilientRecovery(reason, generation);
+        _liveReplanPending = false;
+        LocalLogService.Write("replan_stop", reason);
+        SetState("同じ画面での自動再計画は1回で打ち切りました。画面が変化したら現在位置から再判定します。", speak: false);
     }
 }
