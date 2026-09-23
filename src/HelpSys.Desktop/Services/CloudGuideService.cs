@@ -96,7 +96,55 @@ public sealed class CloudGuideService : IDisposable
 
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
-        var decision = await SendAsync<QualityGuideDecision>("/v2/plan", approval.Body!, cancellationToken);
+
+        QualityGuideDecision decision;
+        try
+        {
+            decision = await SendAsync<QualityGuideDecision>("/v2/plan", approval.Body!, cancellationToken);
+        }
+        catch (GuideServiceException ex) when (IsUnsupportedUnifiedRoute(ex))
+        {
+            // Temporary production compatibility: the currently deployed Stable 3.0 Worker
+            // exposes /v1/plan rather than /v2/plan. Re-run the same current observation through
+            // a privacy-approved compatibility payload; this is a route/schema adapter, not a
+            // second planning strategy.
+            var stableApproval = _privacyGate.ApproveStablePlanCompatibility(
+                request,
+                frame,
+                relevantElements,
+                systemContext);
+            EnsureApproved(stableApproval);
+            EnsurePlanningContextCurrent(systemContext);
+            EnsurePrivacyEpochCurrent(privacyEpoch);
+
+            var legacy = await SendAsync<StablePlanCompatibilityResponse>(
+                "/v1/plan",
+                stableApproval.Body!,
+                cancellationToken,
+                TimeSpan.FromSeconds(28));
+
+            var visualOnly =
+                string.IsNullOrWhiteSpace(legacy.TargetId) &&
+                legacy.Action is "left_click" or "double_click" &&
+                legacy.Width > 0 &&
+                legacy.Height > 0;
+
+            decision = new QualityGuideDecision(
+                legacy.Status,
+                visualOnly ? "vision-target" : legacy.TargetId,
+                legacy.Action,
+                legacy.Instruction,
+                legacy.Question,
+                legacy.Key,
+                legacy.Confidence,
+                legacy.X,
+                legacy.Y,
+                legacy.Width,
+                legacy.Height,
+                true,
+                "current screenshot + UI Automation (Stable 3.0 compatibility route)");
+        }
+
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
@@ -386,7 +434,11 @@ public sealed class CloudGuideService : IDisposable
             throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
-    private async Task<T> SendAsync<T>(string path, object body, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(
+        string path,
+        object body,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout = null)
     {
         EnsureCircuitAllowsRequest();
         GuideServiceException? lastTransientError = null;
@@ -400,7 +452,7 @@ public sealed class CloudGuideService : IDisposable
             {
                 var response = await PerformanceTrace.MeasureAsync(
                     CloudPhase(path),
-                    () => _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken));
+                    () => _adapter.PostJsonAsync(path, body, timeout ?? AttemptTimeout, cancellationToken));
                 if (response.IsSuccessStatusCode)
                 {
                     ResetCircuit();
@@ -482,6 +534,24 @@ public sealed class CloudGuideService : IDisposable
             _circuitOpenUntilUtc = DateTime.MinValue;
         }
     }
+
+    private static bool IsUnsupportedUnifiedRoute(GuideServiceException error)
+        => error.Kind == GuideFailureKind.Rejected &&
+           (error.Message.Contains("HelpSys API 404", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("HelpSys API 405", StringComparison.OrdinalIgnoreCase));
+
+    private sealed record StablePlanCompatibilityResponse(
+        string Status,
+        string Action,
+        string Instruction,
+        string? Question,
+        string? TargetId,
+        string? Key,
+        double Confidence,
+        double X,
+        double Y,
+        double Width,
+        double Height);
 
     private static string CloudPhase(string path)
     {
