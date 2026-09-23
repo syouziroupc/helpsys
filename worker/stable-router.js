@@ -12,7 +12,7 @@ export default {
     if (url.pathname === '/v1/education/assist' || url.pathname === '/health/education')
       return education.fetch(request, env, ctx);
 
-    if (url.pathname === '/v1/outlaw-plan')
+    if (url.pathname === '/v1/outlaw-plan' || url.pathname === '/health/outlaw')
       return outlaw.fetch(request, env, ctx);
 
     if (['/v1/guide', '/v1/quality-guide', '/v1/vision-guide'].includes(url.pathname)) {
