@@ -27,7 +27,7 @@ public sealed class UiAutomationScanner
         CancellationToken cancellationToken = default)
     {
         var candidates = await _inner.CaptureCandidatesForProcessAsync(processId, maxCandidates, cancellationToken);
-        return ScopeToForegroundWindow(processId, candidates);
+        return OutlawModePolicy.Enabled ? candidates : ScopeToForegroundWindow(processId, candidates);
     }
 
     public Task<string> CaptureWindowDiagnosticsAsync(
@@ -97,6 +97,7 @@ public sealed class UiAutomationScanner
 
     private static bool IsAllowedByForegroundWindow(UiElementCandidate candidate, int expectedProcessId)
     {
+        if (OutlawModePolicy.Enabled) return true;
         if (expectedProcessId <= 0) return true;
         if (IsShellSurfaceProcess(expectedProcessId))
             return candidate.ProcessId <= 0 || candidate.ProcessId == expectedProcessId;
