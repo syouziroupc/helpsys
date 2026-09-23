@@ -286,7 +286,7 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($diagnostics.path -notin @('/v1/guide','/v1/quality-guide')) {
+  if ($diagnostics.path -notin @('/v2/plan','/v1/guide','/v1/quality-guide')) {
     throw "UI performance smoke reached an unexpected route: $($diagnostics.path)"
   }
   if ($diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -ne $true) {
