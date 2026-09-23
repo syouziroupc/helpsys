@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly GuidanceSessionController _sessionState = new();
     private readonly DiagnosticModePolicy _diagnosticMode = new();
     private readonly ObservationBroker _observationBroker;
+    private string _lastObservationFingerprint = string.Empty;
 
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _voiceCts;
