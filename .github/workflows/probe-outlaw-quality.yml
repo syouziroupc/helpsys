@@ -1,0 +1,133 @@
+name: Probe HelpSys Outlaw Guidance Quality
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/probe-outlaw-quality.yml"
+  workflow_dispatch:
+
+jobs:
+  probe-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run production guidance scenarios
+        shell: bash
+        run: |
+          node <<'NODE'
+          const base='https://helpsys.syouziroupc.workers.dev';
+          const expected='outlaw-2026.09.23-r3.1';
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+          let ready=false;
+          for(let i=0;i<20;i++){
+            const r=await fetch(base+'/health/outlaw',{cache:'no-store'});
+            const t=await r.text();
+            console.log('health',i+1,r.status,t.slice(0,500));
+            if(r.ok){
+              const j=JSON.parse(t);
+              if(j?.version===expected && j?.reasoningModel==='@cf/zai-org/glm-5.3'){
+                ready=true;
+                break;
+              }
+            }
+            await sleep(6000);
+          }
+          if(!ready) throw new Error('Outlaw r3.1 not live');
+
+          const el=(id,name,type='Button',extra={})=>({
+            id,name,automationId:id,className:'',controlType:type,processName:extra.processName||'explorer',
+            interactable:extra.interactable!==false,enabled:extra.enabled!==false,
+            keyboardFocusable:extra.keyboardFocusable!==false,focused:extra.focused===true,password:false,
+            processId:extra.processId||100,value:extra.value??null,toggleState:null,selected:null,expandCollapseState:null,
+            x:extra.x??100,y:extra.y??100,width:extra.width??120,height:extra.height??50
+          });
+
+          const scenarios=[
+            {
+              name:'desktop-settings',
+              request:'設定を開きたい',
+              context:{foregroundProcess:'explorer',foregroundTitle:'デスクトップ',foregroundProcessId:100,taskbarVisible:true,runningApps:['explorer'],browser:null},
+              elements:[
+                el('u1','スタート','Button',{automationId:'Start'}),
+                el('u2','ごみ箱','ListItem',{x:300,y:200})
+              ],
+              check:o=>o.status==='target' && (o.targetId==='u1' || (o.action==='press_key' && /windows/i.test(String(o.key))))
+            },
+            {
+              name:'settings-wifi',
+              request:'Wi-Fiの設定を開きたい',
+              context:{foregroundProcess:'SystemSettings',foregroundTitle:'設定',foregroundProcessId:200,taskbarVisible:true,runningApps:['SystemSettings'],browser:null},
+              elements:[
+                el('u1','ネットワークとインターネット','Button',{processName:'SystemSettings',processId:200}),
+                el('u2','Bluetooth とデバイス','Button',{processName:'SystemSettings',processId:200,x:100,y:180}),
+                el('u3','システム','Button',{processName:'SystemSettings',processId:200,x:100,y:260})
+              ],
+              check:o=>o.status==='target' && o.targetId==='u1'
+            },
+            {
+              name:'overwrite-choice',
+              request:'このファイルを保存したい',
+              context:{foregroundProcess:'explorer',foregroundTitle:'ファイルの置換またはスキップ',foregroundProcessId:300,taskbarVisible:true,runningApps:['explorer'],browser:null},
+              elements:[
+                el('u1','ファイルを置き換える','Button',{processId:300}),
+                el('u2','このファイルをスキップする','Button',{processId:300,x:100,y:180}),
+                el('u3','ファイルごとに決定する','Button',{processId:300,x:100,y:260})
+              ],
+              check:o=>o.status==='clarify'
+            },
+            {
+              name:'recover-to-browser',
+              request:'YouTubeを開きたい',
+              context:{foregroundProcess:'notepad',foregroundTitle:'無題 - メモ帳',foregroundProcessId:400,taskbarVisible:true,runningApps:['notepad','chrome'],browser:null},
+              elements:[
+                el('u1','ファイル','MenuItem',{processName:'notepad',processId:400}),
+                el('u2','Google Chrome','Button',{processName:'explorer',processId:100,x:500,y:1000})
+              ],
+              check:o=>o.status==='target' && (o.targetId==='u2' || o.action==='press_key')
+            },
+            {
+              name:'official-result',
+              request:'YouTubeを開きたい',
+              context:{foregroundProcess:'chrome',foregroundTitle:'YouTube - Google 検索',foregroundProcessId:500,taskbarVisible:true,runningApps:['chrome'],browser:{processName:'chrome',windowTitle:'YouTube - Google 検索',url:'https://www.google.com/search?q=youtube',domain:'www.google.com',https:true,addressFieldFocused:false}},
+              elements:[
+                el('u1','広告 YouTube 動画サービス example-video.test','Hyperlink',{processName:'chrome',processId:500}),
+                el('u2','YouTube https://www.youtube.com/','Hyperlink',{processName:'chrome',processId:500,x:200,y:250}),
+                el('c1','検索結果 YouTube','Text',{processName:'chrome',processId:500,interactable:false,x:150,y:150,width:500})
+              ],
+              check:o=>o.status==='target' && o.targetId==='u2'
+            }
+          ];
+
+          let failures=0;
+          for(const s of scenarios){
+            const body={
+              request:s.request,
+              history:[],
+              systemContext:s.context,
+              evidence:{screenshotPresent:false,uiElementCount:s.elements.length},
+              elements:s.elements
+            };
+            const started=Date.now();
+            const r=await fetch(base+'/v1/outlaw-plan',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify(body)
+            });
+            const raw=await r.text();
+            const ms=Date.now()-started;
+            let parsed=null;
+            try{parsed=JSON.parse(raw)}catch{}
+            const ok=r.ok && parsed && s.check(parsed);
+            console.log('SCENARIO',s.name,'http',r.status,'ms',ms,'ok',ok,'output',raw.slice(0,1500));
+            if(!ok) failures++;
+          }
+
+          console.log('QUALITY_SUMMARY',JSON.stringify({total:scenarios.length,failures,success:scenarios.length-failures}));
+          if(failures>0) throw new Error('Outlaw guidance quality scenarios failed: '+failures);
+          NODE
