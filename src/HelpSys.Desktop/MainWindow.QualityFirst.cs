@@ -458,7 +458,7 @@ public partial class MainWindow
         if (expectedProcessId <= 0 || expectedProcessId != expectedContext.ForegroundProcessId)
             throw new InvalidOperationException("操作対象プロセスと前面ウィンドウを安全に対応付けできないため、画面画像を送信しません。");
 
-        var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
+        var sensitiveBounds = ScreenshotRedactionPolicy.Build(candidates);
         _speechInput.HideOverlay();
         _overlay.Hide();
         _keyHint.Hide();
@@ -476,7 +476,7 @@ public partial class MainWindow
             throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
 
         return await _screenCapture.CaptureAsync(
-            passwordBounds,
+            sensitiveBounds,
             expectedProcessId,
             expectedContext.ForegroundWindowHandle,
             cancellationToken);
