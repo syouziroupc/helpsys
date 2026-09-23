@@ -159,8 +159,26 @@ function Browser-ReachedYoutube {
 }
 
 try {
-  Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
   $env:HELPSYS_TEST_DIAGNOSTICS = '1'
+  $apiBase = $env:HELPSYS_API_BASE
+  if ([string]::IsNullOrWhiteSpace($apiBase)) { throw 'HELPSYS_API_BASE was not provided to the YouTube E2E step.' }
+
+  $health = $null
+  try {
+    $health = Invoke-RestMethod -Method Get -Uri ($apiBase.TrimEnd('/') + '/health') -TimeoutSec 20
+  }
+  catch {
+    [ordered]@{
+      apiBase = $apiBase
+      healthError = $_.Exception.Message
+    } | ConvertTo-Json -Depth 6 | Set-Content artifacts/helpsys-youtube-api-preflight.json -Encoding UTF8
+    throw
+  }
+
+  [ordered]@{
+    apiBase = $apiBase
+    health = $health
+  } | ConvertTo-Json -Depth 8 | Set-Content artifacts/helpsys-youtube-api-preflight.json -Encoding UTF8
 
   $browserCandidates = @(
     @{ name='msedge'; path="$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
