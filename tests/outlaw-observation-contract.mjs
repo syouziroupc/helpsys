@@ -21,10 +21,12 @@ need(broker, 'if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))'
   'Outlaw must not discard a deep all-desktop observation solely because foreground changed during the scan');
 need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
   'Outlaw quality planner must retain the expanded 4000-element observation budget');
-need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 24000 : 4500',
-  'Outlaw UIA traversal must retain the 24k node budget');
-need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 9000 : 1400',
-  'Outlaw UIA traversal must retain the 9s observation budget');
+need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 40000 : 4500',
+  'Outlaw UIA traversal must retain the 40k node budget');
+need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 15000 : 1400',
+  'Outlaw UIA traversal must retain the 15s observation budget');
+need(scanner, 'depthLimit = OutlawModePolicy.Enabled ? 24 : 10',
+  'Outlaw UIA traversal must retain the 24-level depth budget');
 need(scanner, 'ReadOutlawVisibleText',
   'Outlaw must retain TextPattern-backed semantic text extraction');
 need(facade, 'return OutlawModePolicy.Enabled ? candidates : ScopeToForegroundWindow(processId, candidates);',
