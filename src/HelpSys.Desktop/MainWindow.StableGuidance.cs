@@ -220,7 +220,7 @@ public partial class MainWindow
                         semanticChange
                             ? "選択・ON/OFF・展開・フォーカスなどの意味状態が変わったため、古い案内を破棄して現在状態から再計画する。"
                             : "一時的な入力変化ではなく、安定した画面遷移を確認したため、古い案内を破棄して現在状態から再計画する。"));
-                    if (_history.Count > 12) _history.RemoveAt(0);
+                    if (_history.Count > 64) _history.RemoveAt(0);
                 }
 
                 InvalidatePlannerForLiveContextChange();
