@@ -385,7 +385,7 @@ public sealed class UiAutomationScanner
         catch { processName = string.Empty; }
 
         var rawName = current.Name ?? string.Empty;
-        var name = isPassword ? "[password field]" : rawName;
+        var name = OutlawModePolicy.Enabled ? rawName : isPassword ? "[password field]" : rawName;
         return new UiElementCandidate(
             "snap-target",
             Trim(name, 180),
@@ -418,15 +418,18 @@ public sealed class UiAutomationScanner
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildrenCached(walker, root, 0, queue, cacheRequest);
 
-        var interactivePoolLimit = Math.Max(360, maxCandidates * 2);
-        var contextPoolLimit = Math.Max(90, maxCandidates / 3);
+        var interactivePoolLimit = OutlawModePolicy.Enabled ? Math.Max(3600, maxCandidates * 3) : Math.Max(360, maxCandidates * 2);
+        var contextPoolLimit = OutlawModePolicy.Enabled ? Math.Max(1800, maxCandidates * 2) : Math.Max(90, maxCandidates / 3);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);
         var context = new List<UiElementCandidate>(contextPoolLimit);
         var processNames = new Dictionary<int, string>();
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        while (queue.Count > 0 && visited < 4500 && stopwatch.ElapsedMilliseconds < 1400)
+        var visitedLimit = OutlawModePolicy.Enabled ? 16000 : 4500;
+        var elapsedLimitMs = OutlawModePolicy.Enabled ? 6000 : 1400;
+
+        while (queue.Count > 0 && visited < visitedLimit && stopwatch.ElapsedMilliseconds < elapsedLimitMs)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth, cached) = queue.Dequeue();
@@ -443,13 +446,16 @@ public sealed class UiAutomationScanner
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
                     var rawName = current.Name ?? string.Empty;
 
-                    // Name/AutomationId/ClassName are already fetched in the traversal cache.
-                    // Avoid a second TextPattern roundtrip for every context node.
-                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : NormalizeReadableText(rawName, 420);
+                    // Outlaw deliberately spends more time on semantic text extraction. TextPattern is
+                    // expensive cross-process evidence, but it often contains the exact document/page
+                    // text that Name alone loses.
+                    var name = OutlawModePolicy.Enabled
+                        ? ReadOutlawVisibleText(element, typeName, rawName)
+                        : isPassword ? "[password field]" : isInput ? "[input field]" : NormalizeReadableText(rawName, 420);
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
                     var processName = GetProcessName(current.ProcessId, processNames);
-                    if (isInput && !isPassword)
+                    if (isInput && (OutlawModePolicy.Enabled || !isPassword))
                         automationId = AnnotateInputSemanticRole(automationId, rawName, className, processName);
                     var isInteractive = IsInteractiveType(typeName);
                     var isContext = !isInteractive && IsContextType(typeName, name, rect);
@@ -458,7 +464,7 @@ public sealed class UiAutomationScanner
                     {
                         var actionState = ReadActionState(element, typeName, isPassword, cached);
                         interactive.Add(new UiElementCandidate(
-                            $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
+                            $"u{interactive.Count + 1}", Trim(name, OutlawModePolicy.Enabled ? 900 : 180), Trim(automationId, OutlawModePolicy.Enabled ? 300 : 120), Trim(className, OutlawModePolicy.Enabled ? 300 : 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             true, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId,
@@ -467,7 +473,7 @@ public sealed class UiAutomationScanner
                     else if (isContext && context.Count < contextPoolLimit)
                     {
                         context.Add(new UiElementCandidate(
-                            $"c{context.Count + 1}", Trim(name, 420), Trim(automationId, 120), Trim(className, 120),
+                            $"c{context.Count + 1}", Trim(name, OutlawModePolicy.Enabled ? 1400 : 420), Trim(automationId, OutlawModePolicy.Enabled ? 300 : 120), Trim(className, OutlawModePolicy.Enabled ? 300 : 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
                             false, current.IsEnabled, current.IsKeyboardFocusable, current.HasKeyboardFocus, isPassword,
                             rect.X, rect.Y, rect.Width, rect.Height, current.ProcessId));
@@ -480,7 +486,9 @@ public sealed class UiAutomationScanner
             if (depth < 10) EnqueueChildrenCached(walker, element, depth + 1, queue, cacheRequest);
         }
 
-        var contextBudget = Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
+        var contextBudget = OutlawModePolicy.Enabled
+            ? Math.Min(context.Count, Math.Max(240, maxCandidates / 2))
+            : Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
         var interactiveBudget = Math.Max(0, maxCandidates - contextBudget);
         var rankedInteractive = interactive
             .OrderByDescending(CandidatePriority)
@@ -515,6 +523,38 @@ public sealed class UiAutomationScanner
         return request;
     }
 
+    private static string ReadOutlawVisibleText(AutomationElement element, string typeName, string fallback)
+    {
+        var normalizedFallback = NormalizeReadableText(fallback, 1400);
+        var textBearing = typeName.EndsWith("Document", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Text", StringComparison.Ordinal) ||
+                          typeName.EndsWith("DataItem", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Table", StringComparison.Ordinal) ||
+                          typeName.EndsWith("List", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Pane", StringComparison.Ordinal) ||
+                          typeName.EndsWith("Group", StringComparison.Ordinal);
+        if (!textBearing) return normalizedFallback;
+
+        try
+        {
+            if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pattern) && pattern is TextPattern textPattern)
+            {
+                var extracted = NormalizeReadableText(textPattern.DocumentRange.GetText(1800), 1400);
+                if (!string.IsNullOrWhiteSpace(extracted))
+                {
+                    if (string.IsNullOrWhiteSpace(normalizedFallback)) return extracted;
+                    if (extracted.Equals(normalizedFallback, StringComparison.OrdinalIgnoreCase)) return normalizedFallback;
+                    return NormalizeReadableText($"{normalizedFallback} | {extracted}", 1400);
+                }
+            }
+        }
+        catch (ElementNotAvailableException) { }
+        catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
+
+        return normalizedFallback;
+    }
+
     private static string NormalizeReadableText(string? value, int max)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
@@ -535,14 +575,18 @@ public sealed class UiAutomationScanner
 
         try
         {
-            if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)))
+            if ((OutlawModePolicy.Enabled || !isPassword) &&
+                (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)))
             {
                 ValuePattern? pattern = cached
                     ? element.GetCachedPattern(ValuePattern.Pattern) as ValuePattern
                     : element.TryGetCurrentPattern(ValuePattern.Pattern, out var currentPattern) ? currentPattern as ValuePattern : null;
                 var rawValue = cached ? pattern?.Cached.Value?.Trim() : pattern?.Current.Value?.Trim();
                 if (!string.IsNullOrWhiteSpace(rawValue))
-                    value = rawValue.Length <= 320 ? rawValue : rawValue[..320];
+                {
+                    var maxValue = OutlawModePolicy.Enabled ? 1400 : 320;
+                    value = rawValue.Length <= maxValue ? rawValue : rawValue[..maxValue];
+                }
             }
         }
         catch (ElementNotAvailableException) { }
