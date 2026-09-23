@@ -22,6 +22,13 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify Outlaw observation contract
+        run: node tests/outlaw-observation-contract.mjs
+
       - name: Restore
         run: dotnet restore HelpSys.sln
 
@@ -70,10 +77,15 @@ jobs:
           $notes = @"
           HelpSys Outlaw — operation-first experimental build
 
-          - Privacy/Sentinel blocking disabled in this edition
-          - Automatic same-state replanning is limited to one pass
-          - Resilience retry is limited to one pass
-          - Local runtime logs are always written under %LOCALAPPDATA%\HelpSys\logs
+          - Privacy/Sentinel blocking and screenshot redaction disabled in this edition
+          - Full-monitor screenshots up to 2560x1440
+          - Full-desktop UI Automation observation: up to 2200 candidates / 24000 visited nodes / 9 seconds
+          - UIA TextPattern semantic text extraction enabled
+          - Visual-only targets are retained even when UIA exposes no matching control
+          - Cross-process UI changes are watched during guidance
+          - Up to 64 guidance-history entries are retained
+          - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
+          - Dedicated Outlaw cloud planner with extended reasoning budget
           - Windows 10 / 11 x64 self-contained
           "@
 
