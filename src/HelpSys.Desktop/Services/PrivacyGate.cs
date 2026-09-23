@@ -14,7 +14,8 @@ public enum PrivacyClassification
 public enum PrivacyPolicyProfile
 {
     Normal,
-    Safe
+    Safe,
+    Outlaw
 }
 
 public sealed record PrivacyAssessment(
@@ -143,6 +144,12 @@ public sealed class PrivacyGate
 
     public PrivacyAssessment EvaluateState(SystemContextSnapshot systemContext, IReadOnlyList<UiElementCandidate> elements)
     {
+        if (OutlawModePolicy.Enabled)
+            return Remember(new PrivacyAssessment(
+                PrivacyClassification.Safe,
+                "outlaw_bypass",
+                "無法者版ではセキュリティ判定による停止を行いません。"));
+
         if (_manualPause)
             return Remember(new PrivacyAssessment(
                 PrivacyClassification.ManualPause,
@@ -554,7 +561,9 @@ public sealed class PrivacyGate
 
     private static PrivacyPolicyProfile ResolveProfile()
     {
-#if HELPSYS_SAFE_BUILD
+#if HELPSYS_OUTLAW_BUILD
+        return PrivacyPolicyProfile.Outlaw;
+#elif HELPSYS_SAFE_BUILD
         return PrivacyPolicyProfile.Safe;
 #else
         return PrivacyPolicyProfile.Normal;
