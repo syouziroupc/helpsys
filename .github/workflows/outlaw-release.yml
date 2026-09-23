@@ -79,13 +79,13 @@ jobs:
 
           - Privacy/Sentinel blocking and screenshot redaction disabled in this edition
           - Full-monitor screenshots up to 2560x1440
-          - Full-desktop UI Automation observation: up to 2200 candidates / 24000 visited nodes / 9 seconds
+          - Full-desktop UI Automation observation: up to 4000 candidates / 24000 visited nodes / 9 seconds
           - UIA TextPattern semantic text extraction enabled
           - Visual-only targets are retained even when UIA exposes no matching control
           - Cross-process UI changes are watched during guidance
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
-          - Dedicated Outlaw cloud planner with extended reasoning budget
+          - Dedicated Outlaw cloud planner with up to 120-second client deadline and high reasoning
           - Windows 10 / 11 x64 self-contained
           "@
 
