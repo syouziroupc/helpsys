@@ -20,8 +20,8 @@ public sealed class ScreenCaptureService
     private const uint Blackness = 0x00000042;
     private const uint GwHwndPrev = 3;
     private const uint MonitorDefaultToNearest = 0x00000002;
-    private const int MaxImageWidth = 1280;
-    private const int MaxImageHeight = 720;
+    private const int MaxImageWidth = 2560;
+    private const int MaxImageHeight = 1440;
 
     private static readonly HashSet<string> FullMonitorShellProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -64,9 +64,10 @@ public sealed class ScreenCaptureService
         cancellationToken.ThrowIfCancellationRequested();
         var captureArea = ResolveCaptureArea(expectedProcessId, expectedWindowHandle);
 
-        // Z-order is checked before and after BitBlt to close the visible-occluder race without
-        // invoking UIA from the capture process.
-        var occludersBefore = CaptureOccluderBounds(captureArea, cancellationToken);
+        // Outlaw keeps the real pixels. Normal builds redact windows that occlude the verified target.
+        var occludersBefore = OutlawModePolicy.Enabled
+            ? Array.Empty<Rect>()
+            : CaptureOccluderBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
         if (desktopDc == IntPtr.Zero) throw new InvalidOperationException("画面キャプチャーを開始できませんでした。");
@@ -88,13 +89,17 @@ public sealed class ScreenCaptureService
             if (!BitBlt(memoryDc, 0, 0, captureArea.Width, captureArea.Height, desktopDc, captureArea.X, captureArea.Y, Srccopy | CaptureBlt))
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
-            var occludersAfter = CaptureOccluderBounds(captureArea, cancellationToken);
-            var all = redactions
-                .Concat(occludersBefore)
-                .Concat(occludersAfter)
-                .Where(x => !x.IsEmpty)
-                .Distinct()
-                .ToArray();
+            var occludersAfter = OutlawModePolicy.Enabled
+                ? Array.Empty<Rect>()
+                : CaptureOccluderBounds(captureArea, cancellationToken);
+            var all = OutlawModePolicy.Enabled
+                ? Array.Empty<Rect>()
+                : redactions
+                    .Concat(occludersBefore)
+                    .Concat(occludersAfter)
+                    .Where(x => !x.IsEmpty)
+                    .Distinct()
+                    .ToArray();
 
             foreach (var rect in all)
             {
@@ -171,7 +176,7 @@ public sealed class ScreenCaptureService
         if (monitorArea.Width <= 0 || monitorArea.Height <= 0)
             throw new InvalidOperationException("操作中のモニター領域が不正なため、画面画像を送信しません。");
 
-        if (shellSurface) return monitorArea;
+        if (OutlawModePolicy.Enabled || shellSurface) return monitorArea;
 
         if (!GetWindowRect(hwnd, out var windowRect))
             throw new InvalidOperationException("操作対象ウィンドウの領域を取得できないため、画面画像を送信しません。");
