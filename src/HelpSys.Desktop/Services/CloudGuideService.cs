@@ -234,34 +234,38 @@ public sealed class CloudGuideService : IDisposable
 
         relevant = FilterWindowChromeForTask(relevant, request);
 
+        const int totalBudget = 96;
         var office = foregroundName.Equals("excel", StringComparison.OrdinalIgnoreCase) ||
                      foregroundName.Equals("winword", StringComparison.OrdinalIgnoreCase) ||
                      foregroundName.Equals("powerpnt", StringComparison.OrdinalIgnoreCase);
-        var contextBudget = systemContext.Browser is not null ? 110 : office ? 100 : 60;
-        var interactiveBudget = 280 - contextBudget;
+        var contextBudget = systemContext.Browser is not null ? 28 : office ? 32 : 20;
+        var interactiveBudget = totalBudget - contextBudget;
+        var goalTerms = GoalTerms(request);
 
-        var selected = new List<UiElementCandidate>(280);
+        var selected = new List<UiElementCandidate>(totalBudget);
         selected.AddRange(relevant
             .Where(x => x.Interactable)
-            .OrderByDescending(x => x.Focused)
+            .OrderByDescending(x => CandidateGoalPriority(x, goalTerms))
+            .ThenByDescending(x => x.Focused)
             .ThenByDescending(x => x.Enabled)
             .ThenByDescending(x => !string.IsNullOrWhiteSpace(x.Name))
             .Take(interactiveBudget));
 
         selected.AddRange(relevant
             .Where(x => !x.Interactable && !string.IsNullOrWhiteSpace(x.Name))
-            .OrderByDescending(ContextPriority)
+            .OrderByDescending(x => ContextPriority(x) + CandidateGoalPriority(x, goalTerms))
             .Take(contextBudget));
 
-        if (selected.Count < 280)
+        if (selected.Count < totalBudget)
         {
             var selectedIds = selected.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
             selected.AddRange(relevant
                 .Where(x => !selectedIds.Contains(x.Id))
-                .Take(280 - selected.Count));
+                .OrderByDescending(x => CandidateGoalPriority(x, goalTerms))
+                .Take(totalBudget - selected.Count));
         }
 
-        return selected.Take(280).ToArray();
+        return selected.Take(totalBudget).ToArray();
     }
 
     private static UiElementCandidate[] FilterWindowChromeForTask(
@@ -319,6 +323,41 @@ public sealed class CloudGuideService : IDisposable
             "minimize", "maximise", "maximize", "restore window", "close window", "window size"
         ];
         return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string[] GoalTerms(string? request)
+    {
+        if (string.IsNullOrWhiteSpace(request)) return [];
+        return request
+            .ToLowerInvariant()
+            .Split([' ', '　', '\t', '\r', '\n', '、', '。', ',', '.', '/', '／'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(x => x.Length >= 2)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToArray();
+    }
+
+    private static int CandidateGoalPriority(UiElementCandidate item, IReadOnlyList<string> goalTerms)
+    {
+        var score = item.Focused ? 120 : 0;
+        if (item.Enabled) score += 15;
+        if (item.Interactable) score += 20;
+        if ((item.AutomationId ?? string.Empty).Contains("role:", StringComparison.OrdinalIgnoreCase)) score += 35;
+
+        var haystack = $"{item.Name} {item.AutomationId} {item.ClassName}".ToLowerInvariant();
+        foreach (var term in goalTerms)
+        {
+            if (haystack.Contains(term, StringComparison.OrdinalIgnoreCase)) score += 45;
+        }
+
+        score += item.ControlType switch
+        {
+            "Edit" or "ComboBox" => 28,
+            "Button" or "Hyperlink" or "MenuItem" => 24,
+            "TabItem" or "ListItem" or "TreeItem" => 18,
+            _ => 0
+        };
+        return score;
     }
 
     private static int ContextPriority(UiElementCandidate item)
