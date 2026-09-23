@@ -148,11 +148,8 @@ public partial class MainWindow
         var targetName = _localChoiceTargetActive
             ? "利用者が選んだアカウント"
             : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
-        string? retryMessage = null;
-        string? routeRecoveryIssue = null;
         bool replan = false;
         bool advance = false;
-        bool forceVision = false;
 
         try
         {
