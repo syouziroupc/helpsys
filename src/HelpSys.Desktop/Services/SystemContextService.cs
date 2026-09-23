@@ -5,7 +5,7 @@ using HelpSys.Models;
 
 namespace HelpSys.Services;
 
-public sealed class SystemContextService
+public sealed class SystemContextService : IDisposable
 {
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
@@ -18,7 +18,8 @@ public sealed class SystemContextService
     private readonly object _cacheGate = new();
     private readonly object _foregroundGate = new();
     private readonly WinEventDelegate _foregroundDelegate;
-    private readonly nint _foregroundHook;
+    private nint _foregroundHook;
+    private int _disposed;
 
     private IReadOnlyList<string> _runningCache = [];
     private DateTime _runningCacheUtc = DateTime.MinValue;
@@ -54,7 +55,27 @@ public sealed class SystemContextService
 
     ~SystemContextService()
     {
-        if (_foregroundHook != nint.Zero) UnhookWinEvent(_foregroundHook);
+        Dispose(false);
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var hook = Interlocked.Exchange(ref _foregroundHook, nint.Zero);
+        if (hook != nint.Zero)
+        {
+            try { UnhookWinEvent(hook); } catch { }
+        }
+
+        // The native hook stores a function pointer. Keep the delegate rooted through UnhookWinEvent
+        // so it cannot be collected while user32 is tearing the callback down.
+        GC.KeepAlive(_foregroundDelegate);
     }
 
     public SystemContextSnapshot Capture()
@@ -345,6 +366,7 @@ public sealed class SystemContextService
         uint eventThread,
         uint eventTime)
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
         if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd, eventTime);
     }
 
