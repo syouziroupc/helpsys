@@ -17,6 +17,7 @@ const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
 const trace = read('src/HelpSys.Desktop/Services/PerformanceTrace.cs');
 const observerClient = read('src/HelpSys.Desktop/Services/UiAutomationObserverClient.cs');
 const knowledge = read('worker/windows-knowledge.js');
+const workerGuard = read('worker/reliability-v4-guard.js');
 
 // Freeze root cause: UIA has exactly one process-side owner and one MTA execution lane.
 assert(observerHost.includes('ApartmentState.MTA'), 'Observer must own a dedicated MTA automation thread.');
@@ -53,10 +54,13 @@ assert(cloud.includes('for (var attempt = 0; attempt < 2; attempt++)'), 'Transpo
 assert(cloud.includes('CircuitFailureThreshold = 3'), 'Repeated service failures must open a circuit.');
 assert(cloud.includes('CircuitOpenDuration = TimeSpan.FromSeconds(8)'), 'Circuit breaker duration must remain explicit and bounded.');
 assert(cloud.includes('const int totalBudget = 96'), 'Cloud evidence must remain goal-ranked and bounded.');
+assert(cloud.includes('"/v2/plan"'), 'Desktop normal planning must use the unified v2 planner endpoint.');
+assert(workerGuard.includes("url.pathname === '/v2/plan'"), 'Worker must expose the unified v2 planner boundary.');
+assert(workerGuard.includes("hasImage ? '/v1/quality-guide' : '/v1/guide'"), 'The unified boundary must select exactly one internal planner based on available image evidence.');
 assert(trace.includes('MaxEvents = 256'), 'Performance tracing must remain bounded in memory.');
 assert(trace.includes('HELPSYS_DIAGNOSTIC_MODE'), 'Performance trace mirroring must remain explicitly diagnostic.');
 assert(observerClient.includes('"uia.capture-process"'), 'UIA latency must be measured by operation.');
-assert(cloud.includes('"cloud.quality-plan"'), 'Planner latency must be measured independently.');
+assert(cloud.includes('"cloud.plan"'), 'Unified planner latency must be measured independently.');
 assert(capture.includes('"screenshot.capture"'), 'Screenshot latency must be measured independently.');
 
 // Route knowledge constrains unsafe actions instead of forcing recipes.
