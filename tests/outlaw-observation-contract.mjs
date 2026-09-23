@@ -37,8 +37,12 @@ need(capture, 'if (OutlawModePolicy.Enabled || shellSurface) return monitorArea;
   'Outlaw must capture the full target monitor');
 need(capture, 'var all = OutlawModePolicy.Enabled\n                ? Array.Empty<Rect>()',
   'Outlaw must not redact captured pixels');
-need(watcher, 'if (!OutlawModePolicy.Enabled)',
-  'Outlaw watcher must accept WinEvents from processes outside the original foreground PID');
+need(watcher, 'EventSystemForeground = 0x0003',
+  'Outlaw watcher must subscribe to global foreground ownership changes');
+need(watcher, 'if (eventType == EventSystemForeground)',
+  'Foreground ownership changes must bypass the scoped object-event filter');
+need(watcher, 'if (unchecked((int)pid) != scope) return;',
+  'Background object/property churn must remain scoped to the current foreground process');
 need(live, 'outlaw_vision_target_kept',
   'Outlaw must keep grounded vision-only targets even without a UIA snap target');
 need(cloud, '"/v1/outlaw-plan"',
