@@ -27,7 +27,7 @@ const CORE_KNOWLEDGE = `Windows操作の基本知識:
 - 背後に見えているデスクトップや別アプリを、前面ウィンドウ越しに押させない。
 - 画面に目的の物が無いことは異常ではない。関係のない物を代わりに選ばない。
 - アプリが見えない場合は、画面下のボタンを探し回るより、キーボードの Windows キーを使って検索画面を開く方法を優先する。
-- 失敗した操作のあとに別の無関係な経路へ飛ばない。現在状態を再確認し、同じ標準経路から復帰する。
+- 失敗した操作をそのまま繰り返さない。現在状態と失敗履歴を再確認し、目的への進捗が最大になる別の安全な1手を選ぶ。
 - 現在画面の認識不足は利用者への質問で埋めない。UI Automation・前面ウィンドウ・画面画像を再取得して自動復帰し、なお安全に確定できなければ推測せず停止する。
 - 「クリック」「ダブルクリック」「アイコン」「タスクバー」「デスクトップ」「アドレスバー」「URL」「プロファイル」などの用語を初心者向け説明で裸のまま使わない。
 - マウス操作は「左ボタンを1回押す」「左ボタンを、間をあけずに2回押す」のように実際の手の動きを書く。
@@ -37,11 +37,12 @@ const CORE_KNOWLEDGE = `Windows操作の基本知識:
 const KNOWLEDGE_SECTIONS = [
   {
     test: /youtube|ユーチューブ|ホームページ|ウェブ|web|サイト|インターネット|検索したい|楽天|yahoo|amazon|アマゾン/i,
-    text: `ブラウザー操作:
-- 目的のサイトへ行くときは、原則「新しいタブを開く → 画面内に見えている検索欄へサイト名を入力する → 公式サイトの検索結果を確認して開く」。ドメイン文字列の直入力を初心者へ要求しない。
-- Webページ内の検索欄とブラウザー上部のアドレス兼検索欄が両方ある場合、Webページ内の見えている検索欄を必ず優先する。上部の欄は画面内検索欄を確認できない場合だけ使う。
+    text: `ブラウザー操作の制約:
+- 現在のページ、目的のサイト、利用可能な操作を比較し、目的への進捗が大きい最小の1操作を選ぶ。固定手順を先に決めない。
+- 現在サイト内の検索欄は、そのサイト内の情報を探す目的にだけ使う。別サイトへ移動する目的では、現在サイト内検索へ目的サイト名を入力しない。
+- 別サイトへ移動する場合は、現在状態に応じて新しいタブ、ブラウザー上部の検索兼用欄、検索結果などのうち最小で安全な遷移を選ぶ。
 - 既に目的サイトが開いていれば同じ作業を繰り返さない。
-- 検索結果の「広告」「スポンサー」は原則選ばない。
+- 検索結果の「広告」「スポンサー」は選ばない。
 - 既知サービスは公式ドメインと一致する結果だけを案内する。似た綴りのドメインを選ばない。
 - ブラウザーが危険・詐欺・フィッシング・証明書エラー等を警告している場合、警告を突破させず前のページへ戻す。`
   },
@@ -144,14 +145,21 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
   const browser = systemContext?.browser || null;
   const currentDomain = normalizeHost(browser?.domain);
   const currentUrl = String(browser?.url || '');
+  const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
 
   if (currentDomain && domainMatchesAny(currentDomain, site.domains)) {
     return task('site', knowledge, {
-      status: 'done', targetId: null, action: 'none', instruction: `${site.display}を開けました。`, question: null, key: null, confidence: 0.99
+      status: 'done', targetId: null, action: 'none',
+      instruction: `${site.display}を開けました。`,
+      question: null, key: null, confidence: 0.99
     }, false, null, null, true, site);
   }
 
-  const onSearchResults = currentDomain && SEARCH_DOMAINS.some(domain => domainMatches(currentDomain, domain)) && urlLooksLikeSearch(currentUrl, site.search);
+  const onSearchResults =
+    currentDomain &&
+    SEARCH_DOMAINS.some(domain => domainMatches(currentDomain, domain)) &&
+    urlLooksLikeSearch(currentUrl, site.search);
+
   if (onSearchResults) {
     const official = findOfficialSearchResult(site, elements);
     if (official) {
@@ -161,99 +169,76 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
         question: null, key: null, confidence: 0.99
       }, false, new Set([official.id]), null, true, site);
     }
-    return task('site', `${knowledge}\n\n検索結果から ${site.domains.join(' または ')} と表示された非広告の公式結果だけを探す。`, null, true, new Set(), null, true, site);
+
+    return task(
+      'site',
+      `${knowledge}\n\n現在は検索結果画面。広告を避け、表示ドメインが ${site.domains.join(' または ')} と一致する公式結果だけを候補にする。`,
+      null,
+      true,
+      null,
+      null,
+      true,
+      site);
   }
 
-  const browserForeground = browser && BROWSER_PROCESSES.includes(String(systemContext?.foregroundProcess || '').toLowerCase());
+  const browserForeground = BROWSER_PROCESSES.includes(foreground);
   if (browserForeground) {
-    const webSearchField = findWebSearchField(elements, systemContext);
-    if (webSearchField?.focused) {
-      return task('site', knowledge, {
-        status: 'target', targetId: webSearchField.id, action: 'type_text',
-        instruction: `画面の中の検索欄に、キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-        question: null, key: 'Enter', confidence: 0.99
-      }, false, new Set([webSearchField.id]), null, true, site);
-    }
-    if (webSearchField) {
-      return task('site', knowledge, {
-        status: 'target', targetId: webSearchField.id, action: 'left_click',
-        instruction: '青い枠の、ページの中にある検索欄で、マウスの左ボタンを1回押してください。',
-        question: null, key: null, confidence: 0.99
-      }, false, new Set([webSearchField.id]), null, true, site);
-    }
-
-    if (looksLikeNewTab(browser)) {
-      const addressField = findBrowserAddressField(elements, systemContext);
-      if (addressField?.focused || browser.addressFieldFocused) {
-        const target = addressField || findFocusedEdit(elements, systemContext);
-        if (target) {
-          return task('site', `${knowledge}\n\nページ内の検索欄を構造情報で確認できなかったため、ブラウザー上部の検索兼用欄を代替として使う。`, {
-            status: 'target', targetId: target.id, action: 'type_text',
-            instruction: `キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-            question: null, key: 'Enter', confidence: 0.92
-          }, false, new Set([target.id]), null, true, site);
-        }
-      }
-      return task('site', `${knowledge}\n\nページ内の検索欄を確認できない場合だけ、上部の検索兼用欄を代替として使う。`, {
-        status: 'target', targetId: null, action: 'press_key',
-        instruction: 'キーボードの「Ctrl」と書かれたキーを押したまま、「L」と書かれたキーを1回押してください。',
-        question: null, key: 'Ctrl+L', confidence: 0.90
-      }, false, new Set(), null, true, site);
-    }
-
-    if (currentDomain && !isNeutralBrowserPage(currentDomain, currentUrl)) {
-      return task('site', knowledge, {
-        status: 'target', targetId: null, action: 'press_key',
-        instruction: '今のページはそのまま残します。「Ctrl」と書かれたキーを押したまま、「T」と書かれたキーを1回押してください。',
-        question: null, key: 'Ctrl+T', confidence: 0.99
-      }, false, new Set(), null, true, site);
-    }
-
-    const addressField = findBrowserAddressField(elements, systemContext);
-    if (addressField?.focused || browser?.addressFieldFocused) {
-      const target = addressField || findFocusedEdit(elements, systemContext);
-      if (target) return task('site', `${knowledge}\n\nページ内の検索欄を確認できなかった場合の代替経路。`, {
-        status: 'target', targetId: target.id, action: 'type_text',
-        instruction: `キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-        question: null, key: 'Enter', confidence: 0.90
-      }, false, new Set([target.id]), null, true, site);
-    }
-
-    return task('site', knowledge, {
-      status: 'target', targetId: null, action: 'press_key',
-      instruction: '新しい検索画面を開きます。「Ctrl」と書かれたキーを押したまま、「T」と書かれたキーを1回押してください。',
-      question: null, key: 'Ctrl+T', confidence: 0.99
-    }, false, new Set(), null, true, site);
+    const currentSite = currentDomain || '不明';
+    return task(
+      'site',
+      `${knowledge}\n\n目的: ${site.display} を開く。現在のブラウザードメイン: ${currentSite}。
+現在サイトが目的サイトと異なる場合、そのサイト内検索欄へ「${site.search}」を入力してはいけない。
+現在のUI要素から、目的サイトへ移るための最小で安全な1操作だけを選ぶ。固定ルートを強制しない。
+公式ドメイン: ${site.domains.join(', ')}`,
+      null,
+      false,
+      null,
+      null,
+      true,
+      site);
   }
 
   const runningBrowser = chooseRunningBrowser(systemContext);
   if (runningBrowser) {
-    const browserApp = runningBrowser === 'chrome' ? APP_DEFINITIONS.find(x => x.id === 'chrome') : APP_DEFINITIONS.find(x => x.id === 'edge');
+    const browserApp = runningBrowser === 'chrome'
+      ? APP_DEFINITIONS.find(x => x.id === 'chrome')
+      : APP_DEFINITIONS.find(x => x.id === 'edge');
     const candidate = browserApp ? findAppTarget(browserApp, elements, systemContext, true) : null;
-    if (candidate) return task('site', knowledge, {
-      status: 'target', targetId: candidate.id, action: 'left_click',
-      instruction: '青い枠のインターネットを見るアプリで、マウスの左ボタンを1回押してください。',
-      question: null, key: null, confidence: 0.96
-    }, false, new Set([candidate.id]), null, true, site);
+    if (candidate) {
+      return task('site', knowledge, {
+        status: 'target', targetId: candidate.id, action: 'left_click',
+        instruction: '青い枠のインターネットを見るアプリで、マウスの左ボタンを1回押してください。',
+        question: null, key: null, confidence: 0.96
+      }, false, new Set([candidate.id]), null, true, site);
+    }
   }
 
   const searchField = findWindowsSearchField(elements);
   const edgeTarget = findAppTarget(APP_DEFINITIONS.find(x => x.id === 'edge'), elements, systemContext, true);
-  if (edgeTarget) return task('site', knowledge, {
-    status: 'target', targetId: edgeTarget.id, action: 'left_click',
-    instruction: '青い枠の「Microsoft Edge」で、マウスの左ボタンを1回押してください。',
-    question: null, key: null, confidence: 0.97
-  }, false, new Set([edgeTarget.id]), null, true, site);
-  if (searchField?.focused) return task('site', knowledge, {
-    status: 'target', targetId: searchField.id, action: 'type_text',
-    instruction: 'キーボードで「Microsoft Edge」と入力し、最後に「Enter」と書かれたキーを1回押してください。',
-    question: null, key: 'Enter', confidence: 0.98
-  }, false, new Set([searchField.id]), null, true, site);
-  if (searchField) return task('site', knowledge, {
-    status: 'target', targetId: searchField.id, action: 'left_click',
-    instruction: '青い枠の検索の欄で、マウスの左ボタンを1回押してください。',
-    question: null, key: null, confidence: 0.98
-  }, false, new Set([searchField.id]), null, true, site);
+
+  if (edgeTarget) {
+    return task('site', knowledge, {
+      status: 'target', targetId: edgeTarget.id, action: 'left_click',
+      instruction: '青い枠の「Microsoft Edge」で、マウスの左ボタンを1回押してください。',
+      question: null, key: null, confidence: 0.97
+    }, false, new Set([edgeTarget.id]), null, true, site);
+  }
+
+  if (searchField?.focused) {
+    return task('site', knowledge, {
+      status: 'target', targetId: searchField.id, action: 'type_text',
+      instruction: 'キーボードで「Microsoft Edge」と入力し、最後に「Enter」と書かれたキーを1回押してください。',
+      question: null, key: 'Enter', confidence: 0.98
+    }, false, new Set([searchField.id]), null, true, site);
+  }
+
+  if (searchField) {
+    return task('site', knowledge, {
+      status: 'target', targetId: searchField.id, action: 'left_click',
+      instruction: '青い枠の検索の欄で、マウスの左ボタンを1回押してください。',
+      question: null, key: null, confidence: 0.98
+    }, false, new Set([searchField.id]), null, true, site);
+  }
 
   return task('site', knowledge, {
     status: 'target', targetId: null, action: 'press_key',
