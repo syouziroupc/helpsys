@@ -1,4 +1,5 @@
 using HelpSys.Models;
+using HelpSys.Services;
 
 namespace HelpSys;
 
