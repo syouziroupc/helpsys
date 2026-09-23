@@ -413,7 +413,7 @@ public sealed class UiAutomationScanner
     {
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
-        using var cacheRequest = CreateTraversalCacheRequest();
+        var cacheRequest = CreateTraversalCacheRequest();
         var queue = new Queue<(AutomationElement Element, int Depth, bool Cached)>();
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildrenCached(walker, root, 0, queue, cacheRequest);
@@ -724,13 +724,15 @@ public sealed class UiAutomationScanner
 
     private static string Trim(string value, int max) => value.Length <= max ? value : value[..max];
 
-    private static void EnqueueProcessRoots(int processId, Queue<(AutomationElement Element, int Depth)> queue)
+    private static void EnqueueProcessRoots(
+        int processId,
+        Queue<(AutomationElement Element, int Depth, bool Cached)> queue)
     {
         try
         {
             var condition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
             var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, condition);
-            foreach (AutomationElement root in roots) queue.Enqueue((root, 0));
+            foreach (AutomationElement root in roots) queue.Enqueue((root, 0, false));
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
