@@ -160,6 +160,7 @@ function Browser-ReachedYoutube {
 
 try {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
+  $env:HELPSYS_TEST_DIAGNOSTICS = '1'
 
   $browserCandidates = @(
     @{ name='msedge'; path="$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
@@ -303,6 +304,7 @@ try {
   Write-Host "HelpSys YouTube end-to-end scenario reached YouTube in $($steps.Count) observed actions."
 }
 finally {
+  Remove-Item Env:HELPSYS_TEST_DIAGNOSTICS -ErrorAction SilentlyContinue
   if ($null -ne $helpSys -and -not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force -ErrorAction SilentlyContinue }
   Get-Process msedge,chrome,firefox -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
