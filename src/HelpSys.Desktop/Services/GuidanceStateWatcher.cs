@@ -4,6 +4,7 @@ namespace HelpSys.Services;
 
 public sealed class GuidanceStateWatcher : IDisposable
 {
+    private const uint EventSystemForeground = 0x0003;
     private const uint EventObjectShow = 0x8002;
     private const uint EventObjectValueChange = 0x800E;
     private const uint WineventOutofcontext = 0x0000;
@@ -16,7 +17,8 @@ public sealed class GuidanceStateWatcher : IDisposable
     private readonly WinEventDelegate _eventDelegate;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
-    private nint _eventHook;
+    private nint _objectEventHook;
+    private nint _foregroundEventHook;
     private int _scopeProcessId;
     private int _queued;
     private long _lastSignalTicks;
@@ -35,9 +37,18 @@ public sealed class GuidanceStateWatcher : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(GuidanceStateWatcher));
         if (_cts is not null) return;
 
-        _eventHook = SetWinEventHook(
+        _objectEventHook = SetWinEventHook(
             EventObjectShow,
             EventObjectValueChange,
+            nint.Zero,
+            _eventDelegate,
+            0,
+            0,
+            WineventOutofcontext | WineventSkipownprocess);
+
+        _foregroundEventHook = SetWinEventHook(
+            EventSystemForeground,
+            EventSystemForeground,
             nint.Zero,
             _eventDelegate,
             0,
@@ -71,14 +82,22 @@ public sealed class GuidanceStateWatcher : IDisposable
         uint eventTime)
     {
         if (_disposed || hwnd == nint.Zero) return;
+
+        // Foreground ownership changes are globally relevant because they define which process
+        // should become the next observation scope. Object/property churn from unrelated
+        // background applications is not relevant and can otherwise prevent the quiet period
+        // from ever being reached.
+        if (eventType == EventSystemForeground)
+        {
+            Signal();
+            return;
+        }
+
         var scope = Volatile.Read(ref _scopeProcessId);
+        if (scope <= 0) return;
 
         _ = GetWindowThreadProcessId(hwnd, out var pid);
-        if (!OutlawModePolicy.Enabled)
-        {
-            if (scope <= 0) return;
-            if (unchecked((int)pid) != scope) return;
-        }
+        if (unchecked((int)pid) != scope) return;
 
         Signal();
     }
@@ -152,10 +171,16 @@ public sealed class GuidanceStateWatcher : IDisposable
         Interlocked.Exchange(ref _scopeProcessId, 0);
         Interlocked.Exchange(ref _queued, 0);
 
-        if (_eventHook != nint.Zero)
+        if (_objectEventHook != nint.Zero)
         {
-            try { UnhookWinEvent(_eventHook); } catch { }
-            _eventHook = nint.Zero;
+            try { UnhookWinEvent(_objectEventHook); } catch { }
+            _objectEventHook = nint.Zero;
+        }
+
+        if (_foregroundEventHook != nint.Zero)
+        {
+            try { UnhookWinEvent(_foregroundEventHook); } catch { }
+            _foregroundEventHook = nint.Zero;
         }
 
         if (cts is null) return;
