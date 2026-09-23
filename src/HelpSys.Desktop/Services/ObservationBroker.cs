@@ -17,7 +17,7 @@ public sealed class ObservationBroker
     }
 
     public async Task<ObservationSnapshot> CaptureAsync(
-        int maxCandidates = 420,
+        int maxCandidates = 240,
         CancellationToken cancellationToken = default)
     {
         var before = _systemContext.Capture();
