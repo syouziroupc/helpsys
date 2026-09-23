@@ -184,18 +184,29 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
   const browserForeground = BROWSER_PROCESSES.includes(foreground);
   if (browserForeground) {
     const currentSite = currentDomain || '不明';
-    return task(
-      'site',
-      `${knowledge}\n\n目的: ${site.display} を開く。現在のブラウザードメイン: ${currentSite}。
+    const foreignSite = currentDomain && !isNeutralBrowserPage(currentDomain, currentUrl);
+    const forbiddenTargetIds = foreignSite
+      ? new Set(elements
+          .filter(element => elementRole(element) === 'web_search')
+          .map(element => element.id)
+          .filter(Boolean))
+      : new Set();
+
+    return {
+      ...task(
+        'site',
+        `${knowledge}\n\n目的: ${site.display} を開く。現在のブラウザードメイン: ${currentSite}。
 現在サイトが目的サイトと異なる場合、そのサイト内検索欄へ「${site.search}」を入力してはいけない。
 現在のUI要素から、目的サイトへ移るための最小で安全な1操作だけを選ぶ。固定ルートを強制しない。
 公式ドメイン: ${site.domains.join(', ')}`,
-      null,
-      false,
-      null,
-      null,
-      true,
-      site);
+        null,
+        false,
+        null,
+        null,
+        true,
+        site),
+      forbiddenTargetIds
+    };
   }
 
   const runningBrowser = chooseRunningBrowser(systemContext);
@@ -252,6 +263,7 @@ export function guardDecisionForTask(taskInfo, decision) {
   if (decision.status === 'clarify' && taskInfo.kind !== 'choice') return notFound(decision.confidence);
   if (decision.status !== 'target') return decision;
   if (decision.action === 'press_key' && !decision.targetId) return decision;
+  if (taskInfo.forbiddenTargetIds instanceof Set && taskInfo.forbiddenTargetIds.has(decision.targetId)) return notFound(decision.confidence);
   if (taskInfo.allowedTargetIds && taskInfo.allowedTargetIds.size > 0 && !taskInfo.allowedTargetIds.has(decision.targetId)) return notFound(decision.confidence);
   if (taskInfo.kind === 'site' && /https?:\/\/|www\.|\.com|\.jp/i.test(decision.instruction || '')) return notFound(decision.confidence);
   return decision;
