@@ -161,20 +161,36 @@ public partial class MainWindow
             {
                 _consecutiveFailures++;
                 _doubleClickCount = 0;
+                RecordOutlawGuidanceOutcome(
+                    decision,
+                    _currentTarget,
+                    _stepBaseline,
+                    _stepSystemBaseline,
+                    _guidedBounds,
+                    changed: false);
                 _history.Add(new GuideHistoryItem(
                     _stepNumber,
                     $"no_effect_{decision.Action}",
                     targetName,
                     "案内した操作の期待結果を確認できなかったため、同じ操作を繰り返さず現在状態から再計画する。"));
-                if (_history.Count > 12) _history.RemoveAt(0);
+                var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
+                if (_history.Count > historyLimit) _history.RemoveAt(0);
                 ClearCurrentGuidanceV3();
                 replan = true;
             }
             else
             {
                 _consecutiveFailures = 0;
+                RecordOutlawGuidanceOutcome(
+                    decision,
+                    _currentTarget,
+                    _stepBaseline,
+                    _stepSystemBaseline,
+                    _guidedBounds,
+                    changed: true);
                 _history.Add(new GuideHistoryItem(++_stepNumber, decision.Action, targetName, decision.Instruction));
-                if (_history.Count > 12) _history.RemoveAt(0);
+                var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
+                if (_history.Count > historyLimit) _history.RemoveAt(0);
                 ClearCurrentGuidanceV3();
                 _rejectedVisionTargets = 0;
                 advance = true;
