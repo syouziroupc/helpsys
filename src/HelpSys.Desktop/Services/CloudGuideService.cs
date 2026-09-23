@@ -88,6 +88,9 @@ public sealed class CloudGuideService : IDisposable
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken)
     {
+        if (OutlawModePolicy.Enabled)
+            return await PlanOutlawQualityAsync(request, frame, elements, history, systemContext, cancellationToken);
+
         EnsureCloudConfigured();
         var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
@@ -148,6 +151,99 @@ public sealed class CloudGuideService : IDisposable
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
+    }
+
+    private async Task<QualityGuideDecision> PlanOutlawQualityAsync(
+        string request,
+        ScreenCaptureFrame frame,
+        IReadOnlyList<UiElementCandidate> elements,
+        IReadOnlyList<GuideHistoryItem> history,
+        SystemContextSnapshot systemContext,
+        CancellationToken cancellationToken)
+    {
+        EnsureCloudConfigured();
+
+        var evidence = GuidanceEvidenceService.Build(true, elements, history, systemContext);
+        var body = new
+        {
+            request,
+            history,
+            systemContext = new
+            {
+                systemContext.ForegroundProcess,
+                systemContext.ForegroundTitle,
+                systemContext.ForegroundProcessId,
+                foregroundWindowHandle = systemContext.ForegroundWindowHandle.ToInt64(),
+                systemContext.TaskbarVisible,
+                runningApps = systemContext.RunningApps,
+                browser = systemContext.Browser
+            },
+            evidence,
+            elements,
+            image = frame.ImageDataUri,
+            capture = new
+            {
+                frame.ScreenX,
+                frame.ScreenY,
+                frame.ScreenWidth,
+                frame.ScreenHeight,
+                frame.ImageWidth,
+                frame.ImageHeight
+            }
+        };
+
+        CloudAiResponse response;
+        try
+        {
+            response = await PerformanceTrace.MeasureAsync(
+                "cloud.outlaw-plan",
+                () => _adapter.PostJsonAsync(
+                    "/v1/outlaw-plan",
+                    body,
+                    TimeSpan.FromSeconds(55),
+                    cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            throw new GuideServiceException(
+                GuideFailureKind.ServiceUnavailable,
+                "無法者版GLMの判断が55秒以内に完了しませんでした。",
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new GuideServiceException(
+                GuideFailureKind.Network,
+                "無法者版GLM APIへの通信に失敗しました。",
+                ex);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var kind = IsTransientStatus(response.StatusCode)
+                ? GuideFailureKind.ServiceUnavailable
+                : GuideFailureKind.Rejected;
+            throw new GuideServiceException(
+                kind,
+                $"Outlaw API {response.StatusCode}: {Short(response.Body)}");
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<QualityGuideDecision>(response.Body, _jsonOptions)
+                   ?? throw new JsonException("empty response");
+        }
+        catch (JsonException ex)
+        {
+            throw new GuideServiceException(
+                GuideFailureKind.InvalidResponse,
+                "無法者版GLMの応答形式が不正です。",
+                ex);
+        }
     }
 
     public async Task<GuideDecision> PlanAsync(
