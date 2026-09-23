@@ -1,6 +1,6 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
-const VERSION = 'outlaw-2026.09.23-r3';
+const VERSION = 'outlaw-2026.09.23-r3.1';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 2400;
 const MAX_HISTORY = 64;
@@ -193,18 +193,30 @@ async function runGuidance(env, model, system, payload, image) {
 }
 
 function enforceVisionGeometry(finalDecision, preliminary) {
-  if (finalDecision.status !== 'target' || finalDecision.targetId !== 'vision-target')
-    return finalDecision;
+  // Only the vision-capable first stage saw raw pixels. The text-only reviewer may
+  // strengthen/correct reasoning, but it may never upgrade screenshot confirmation.
+  const screenshotConfirmed =
+    preliminary?.screenConfirmed === true && finalDecision?.screenConfirmed === true;
+
+  if (finalDecision.status !== 'target' || finalDecision.targetId !== 'vision-target') {
+    return {
+      ...finalDecision,
+      screenConfirmed: screenshotConfirmed,
+      visualEvidence: preliminary?.visualEvidence || finalDecision.visualEvidence
+    };
+  }
+
   if (preliminary.status !== 'target' || preliminary.targetId !== 'vision-target')
     return null;
+
   return {
     ...finalDecision,
     x: preliminary.x,
     y: preliminary.y,
     width: preliminary.width,
     height: preliminary.height,
-    screenConfirmed: preliminary.screenConfirmed,
-    visualEvidence: finalDecision.visualEvidence || preliminary.visualEvidence
+    screenConfirmed: screenshotConfirmed,
+    visualEvidence: preliminary.visualEvidence || finalDecision.visualEvidence
   };
 }
 
