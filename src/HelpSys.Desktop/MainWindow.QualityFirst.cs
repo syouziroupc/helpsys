@@ -419,10 +419,22 @@ public partial class MainWindow
             "outlaw_visual_target",
             $"confidence={quality.Confidence:F2} bounds={bounds} evidence={quality.VisualEvidence}");
 
+        var visualDecision = new GuideDecision(
+            "target",
+            "vision-target",
+            visualAction,
+            instruction,
+            null,
+            null,
+            quality.Confidence);
+        if (!TryAcceptOutlawGuidance(visualDecision, null, candidates, systemContext, bounds, generation)) return;
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
-        ResetCurrentStateReplanBudget();
-        ResetResilienceRecovery();
-        _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
+        if (!OutlawModePolicy.Enabled)
+        {
+            ResetCurrentStateReplanBudget();
+            ResetResilienceRecovery();
+        }
+        _currentDecision = visualDecision;
         _currentTarget = null;
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;
