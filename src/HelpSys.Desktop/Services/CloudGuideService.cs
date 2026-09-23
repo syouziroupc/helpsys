@@ -13,7 +13,7 @@ public sealed class CloudGuideService : IDisposable
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
 
-    private SystemContextService _contextVerifier = new();
+    private SystemContextService? _contextVerifier;
     private Func<long>? _privacyEpochProvider;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly PrivacyGate _privacyGate;
@@ -417,7 +417,10 @@ public sealed class CloudGuideService : IDisposable
 
     private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
     {
-        var current = _contextVerifier.Capture();
+        var verifier = _contextVerifier ?? throw new GuideServiceException(
+            GuideFailureKind.ContextChanged,
+            "現在画面の検証器が初期化されていないため、案内結果を使用しません。");
+        var current = verifier.Capture();
         var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
                                 expected.ForegroundProcessId != current.ForegroundProcessId ||
                                 !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
