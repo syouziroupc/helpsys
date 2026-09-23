@@ -63,6 +63,8 @@ OUTPUT:
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/health/outlaw')
+      return json({ ok: true, service: 'helpsys-outlaw', model: MODEL, aiConfigured: Boolean(env?.AI) });
     if (request.method !== 'POST' || url.pathname !== '/v1/outlaw-plan')
       return json({ error: 'not_found' }, 404);
     if (!env?.AI) return json({ error: 'workers_ai_unconfigured' }, 503);
