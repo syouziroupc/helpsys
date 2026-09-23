@@ -229,7 +229,10 @@ public partial class MainWindow
                 return;
             }
 
-            var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
+            var freshTarget = await _scanner.RevalidateCandidateAsync(
+                target,
+                OutlawModePolicy.Enabled ? target.ProcessId : systemContext.ForegroundProcessId,
+                cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
             if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
             {
@@ -317,7 +320,10 @@ public partial class MainWindow
         var target = candidates.FirstOrDefault(x => string.Equals(x.Id, quick.TargetId, StringComparison.Ordinal));
         if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty) return false;
 
-        var fresh = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
+        var fresh = await _scanner.RevalidateCandidateAsync(
+            target,
+            OutlawModePolicy.Enabled ? target.ProcessId : expectedContext.ForegroundProcessId,
+            cancellationToken);
         if (!_sessionState.IsCurrent(generation) || fresh is null) return false;
         if (!HasSameCaptureIdentity(expectedContext, _systemContext.Capture())) return false;
 
