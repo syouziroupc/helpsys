@@ -358,11 +358,13 @@ public partial class MainWindow
             "outlaw_capture",
             $"pid={expectedContext.ForegroundProcessId} hwnd={expectedContext.ForegroundWindowHandle} candidates={candidates.Count}");
 
-        return await _screenCapture.CaptureAsync(
+        var frame = await _screenCapture.CaptureAsync(
             Array.Empty<Rect>(),
             expectedContext.ForegroundProcessId,
             expectedContext.ForegroundWindowHandle,
             cancellationToken);
+        LocalLogService.SaveDataUriImage("outlaw-screen", frame.ImageDataUri);
+        return frame;
     }
 
     private static bool HasSameCaptureIdentity(SystemContextSnapshot expected, SystemContextSnapshot current)
