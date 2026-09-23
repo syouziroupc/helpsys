@@ -13,6 +13,15 @@ async function guide(body) {
   return response.json();
 }
 
+async function unifiedPlan(body) {
+  const request = new Request('https://example.test/v2/plan', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const response = await guard.fetch(request, {}, {});
+  assert(response.status === 200, `unexpected unified-plan status ${response.status}`);
+  return response.json();
+}
+
 const boundaryInput = {
   request: 'contact alice@example.com phone 090-1234-5678 postal 123-4567 password=hunter2 card 4242 4242 4242 4242 open https://example.com/reset?token=REQUEST_TOKEN#fragment',
   routeIssue: 'Bearer AbCdEfGhIjKlMnOpQrStUvWxYz012345',
@@ -69,6 +78,33 @@ const foreground = await guide({
 assert(foreground.status === 'done', 'foreground Excel should remain completed');
 
 console.log('reliability v4 guard self-test passed.');
+
+const unifiedStructured = await unifiedPlan({
+  request: 'Excelを開いて',
+  history: [],
+  systemContext: { foregroundProcess: 'notepad', foregroundProcessId: 22, runningApps: ['notepad'], taskbarVisible: true },
+  elements: [{ id: 'u1', name: '本文', automationId: 'Editor', className: 'Edit', controlType: 'Edit', processName: 'notepad', interactable: true, enabled: true, keyboardFocusable: true, focused: true, password: false, x: 10, y: 10, width: 400, height: 300 }]
+});
+assert(unifiedStructured.status === 'target' && unifiedStructured.action === 'press_key' && /windows/i.test(unifiedStructured.key || ''), '/v2/plan without image must route through the structured planner exactly once');
+
+const unifiedQuality = await unifiedPlan({
+  request: 'YouTubeが見たい',
+  history: [],
+  systemContext: {
+    foregroundProcess: 'chrome', foregroundTitle: 'Chrome はどなたが使用しますか？',
+    foregroundProcessId: 33, runningApps: ['chrome'], taskbarVisible: true,
+    browser: { processName: 'chrome', domain: null, https: null, addressFieldFocused: false }
+  },
+  elements: [
+    { id: 'c1', name: 'Chrome はどなたが使用しますか？', controlType: 'Text', processName: 'chrome', interactable: false, enabled: true, password: false },
+    { id: 'u1', name: '正二郎', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true, password: false },
+    { id: 'u2', name: 'ゲストモード', controlType: 'Button', processName: 'chrome', interactable: true, enabled: true, password: false }
+  ],
+  image: 'data:image/png;base64,AAAA'
+});
+assert(unifiedQuality.status === 'clarify', '/v2/plan with image must route through the quality planner and preserve user-choice branches');
+console.log('unified v2 planner boundary self-test passed.');
+
 
 const secretClarify = guardSecretClarification({
   status: 'clarify', question: 'パスワードを入力してください。', instruction: '', confidence: 0.9

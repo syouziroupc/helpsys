@@ -148,9 +148,10 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  $qualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
-  $structuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
-  if (-not ($qualityRoute -or $structuredRoute)) {
+  $unifiedRoute = $diagnostics.path -eq '/v2/plan'
+  $legacyQualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
+  $legacyStructuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
+  if (-not ($unifiedRoute -or $legacyQualityRoute -or $legacyStructuredRoute)) {
     throw "Real-click smoke reached an unexpected planner route. path=$($diagnostics.path) screenshot=$($diagnostics.hasScreenshot)"
   }
   if ([int]$diagnostics.foregroundProcessId -ne $target.Id) {

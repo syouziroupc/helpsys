@@ -29,36 +29,33 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(38));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(15));
         var cancellationToken = planningCts.Token;
 
         try
         {
             SetState("今の画面と操作できる場所を確認しています…", speak: false);
-            var systemContext = _systemContext.Capture();
-            if (!HasUsableForeground(systemContext))
+            ObservationSnapshot snapshot;
+            try
             {
-                await Task.Delay(220, cancellationToken);
-                if (!_sessionState.IsCurrent(generation)) return;
-                systemContext = _systemContext.Capture();
+                snapshot = await _observationBroker.CaptureAsync(240, cancellationToken);
             }
-
-            if (!HasUsableForeground(systemContext))
+            catch (ObservationChangedException)
             {
-                await Task.Delay(480, cancellationToken);
-                if (!_sessionState.IsCurrent(generation)) return;
-                systemContext = _systemContext.Capture();
+                HandleTechnicalPlanningUncertainty("観測中に前面画面が切り替わった", generation);
+                return;
             }
-
-            if (!HasUsableForeground(systemContext))
+            catch (InvalidOperationException)
             {
-                HandleTechnicalPlanningUncertainty("再確認しても前面ウィンドウを特定できない", generation);
+                HandleTechnicalPlanningUncertainty("前面ウィンドウを特定できない", generation);
                 return;
             }
 
-            await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
-            var candidates = await _scanner.CaptureCandidatesForProcessAsync(systemContext.ForegroundProcessId, 420, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
+            _lastObservationFingerprint = snapshot.Fingerprint;
+            var systemContext = snapshot.System;
+            var candidates = snapshot.Elements;
+            await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
 
             if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
             {
@@ -77,13 +74,6 @@ public partial class MainWindow
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
-            if (candidates.Count > 0)
-            {
-                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-                if (await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
-                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Capturing)) return;
-            }
-
             var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
             try
@@ -93,8 +83,8 @@ public partial class MainWindow
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                HandleTechnicalPlanningUncertainty("Privacy Gateにより画面画像を利用できない", generation);
+                if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
+                HandleTechnicalPlanningUncertainty("Privacy Gateにより画像を使えず、構造情報でも次の操作を確定できない", generation);
                 return;
             }
             catch (OperationCanceledException)
@@ -104,8 +94,8 @@ public partial class MainWindow
             catch
             {
                 if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
-                HandleTechnicalPlanningUncertainty("画面画像を取得できない", generation);
+                if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
+                HandleTechnicalPlanningUncertainty("画像を取得できず、構造情報でも次の操作を確定できない", generation);
                 return;
             }
 
@@ -116,8 +106,7 @@ public partial class MainWindow
                 return;
             }
 
-            var afterCaptureContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, afterCaptureContext))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
@@ -149,10 +138,12 @@ public partial class MainWindow
                     HandleTechnicalPlanningUncertainty("通常計画中に画面状態が変化した", generation);
                     return;
                 }
-                if (_sessionState.IsCurrent(generation) && await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 if (_sessionState.IsCurrent(generation) && error.Kind is GuideFailureKind.Network or GuideFailureKind.ServiceUnavailable or GuideFailureKind.InvalidResponse)
                 {
-                    HandleTechnicalPlanningUncertainty("案内サービスの一時的な応答失敗", generation);
+                    var reason = IsLocalSmokeEndpoint()
+                        ? $"案内サービスの一時的な応答失敗: {error.Message}"
+                        : "案内サービスの一時的な応答失敗";
+                    HandleTechnicalPlanningUncertainty(reason, generation);
                     return;
                 }
                 if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
@@ -160,8 +151,7 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
-            var postPlanContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, postPlanContext))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
@@ -198,7 +188,6 @@ public partial class MainWindow
                 quality.Confidence < MinimumQualityTargetConfidence ||
                 (!quality.ScreenConfirmed && !structuredFusionTarget))
             {
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 HandleTechnicalPlanningUncertainty(
                     string.IsNullOrWhiteSpace(quality.Instruction)
                         ? "次の操作を十分な信頼度で確定できない"
@@ -235,7 +224,6 @@ public partial class MainWindow
 
             if (string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 HandleTechnicalPlanningUncertainty("操作内容は候補になったが対象を特定できない", generation);
                 return;
             }
@@ -243,22 +231,19 @@ public partial class MainWindow
             var target = candidates.FirstOrDefault(x => string.Equals(x.Id, decision.TargetId, StringComparison.Ordinal));
             if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty)
             {
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 HandleTechnicalPlanningUncertainty("選ばれた対象を現在画面で操作できない", generation);
                 return;
             }
 
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
-            var prePresentContext = _systemContext.Capture();
-            if (!HasSameCaptureIdentity(systemContext, prePresentContext))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
             if (freshTarget is null)
             {
-                if (await TryStructuredFallbackAsync(candidates, systemContext, generation, cancellationToken)) return;
                 HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
                 return;
             }
@@ -368,65 +353,6 @@ public partial class MainWindow
         return false;
     }
 
-    private async Task<bool> TryStructuredFallbackAsync(
-        IReadOnlyList<UiElementCandidate> previousCandidates,
-        SystemContextSnapshot expectedContext,
-        long generation,
-        CancellationToken cancellationToken)
-    {
-        if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
-        var currentBeforeScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforeScan)) return false;
-
-        SetState("画像だけでは確定できないため、Windowsの構造情報から次の操作を再確認しています…", speak: false);
-
-        IReadOnlyList<UiElementCandidate> candidates;
-        try
-        {
-            candidates = await _scanner.CaptureCandidatesForProcessAsync(expectedContext.ForegroundProcessId, 420, cancellationToken);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
-
-        if (!_sessionState.IsCurrent(generation) || candidates.Count == 0) return false;
-        var currentAfterScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterScan)) return false;
-
-        GuideDecision fallback;
-        try
-        {
-            fallback = await _cloudGuide.PlanAsync(_activeRequest, candidates, _history, expectedContext, cancellationToken);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
-
-        if (!_sessionState.IsCurrent(generation)) return false;
-        var currentAfterPlan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterPlan)) return false;
-
-        if (fallback.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(fallback.Question))
-        {
-            WaitForClarification(fallback.Question, generation);
-            return true;
-        }
-
-        if (!fallback.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
-            fallback.Confidence < MinimumStructuredFallbackConfidence ||
-            string.IsNullOrWhiteSpace(fallback.TargetId))
-            return false;
-
-        var target = candidates.FirstOrDefault(x => string.Equals(x.Id, fallback.TargetId, StringComparison.Ordinal));
-        if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty) return false;
-
-        var freshTarget = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
-        if (!_sessionState.IsCurrent(generation) || freshTarget is null) return false;
-        var currentBeforePresent = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforePresent)) return false;
-
-        ShowStructuredTarget(fallback, freshTarget, candidates, expectedContext, generation);
-        return true;
-    }
-
     private async Task<ScreenCaptureFrame> CaptureQualityFrameAsync(
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot expectedContext,
@@ -458,7 +384,7 @@ public partial class MainWindow
         if (expectedProcessId <= 0 || expectedProcessId != expectedContext.ForegroundProcessId)
             throw new InvalidOperationException("操作対象プロセスと前面ウィンドウを安全に対応付けできないため、画面画像を送信しません。");
 
-        var passwordBounds = candidates.Where(x => x.Password).Select(x => x.Bounds).ToArray();
+        var sensitiveBounds = ScreenshotRedactionPolicy.Build(candidates);
         _speechInput.HideOverlay();
         _overlay.Hide();
         _keyHint.Hide();
@@ -476,7 +402,7 @@ public partial class MainWindow
             throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
 
         return await _screenCapture.CaptureAsync(
-            passwordBounds,
+            sensitiveBounds,
             expectedProcessId,
             expectedContext.ForegroundWindowHandle,
             cancellationToken);

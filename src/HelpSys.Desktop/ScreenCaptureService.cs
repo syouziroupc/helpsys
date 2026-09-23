@@ -1,19 +1,18 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using HelpSys.Models;
+using HelpSys.Services;
 
 namespace HelpSys;
 
-// MainWindow-facing capture boundary. It keeps the exact PID/HWND binding and whole-window
-// occluder protection, but does not erase every ordinary Edit/ComboBox. Sensitive fields are
-// identified locally from password semantics and the value patterns below; only the resulting
-// rectangles are blacked before any image can leave the machine.
+// MainWindow-facing capture boundary.
+// UI Automation is deliberately absent here. Redaction rectangles must already belong to the
+// immutable observation snapshot used for planning. This keeps screenshot capture bounded to Win32
+// window identity/Z-order checks and removes a second, potentially blocking UIA tree walk.
 public sealed class ScreenCaptureService
 {
     private const uint Srccopy = 0x00CC0020;
@@ -29,46 +28,6 @@ public sealed class ScreenCaptureService
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost"
     };
 
-    private static readonly string[] SensitiveInputTerms =
-    [
-        "password", "passwd", "passcode", "パスワード", "暗証番号", "pin", "otp", "totp", "2fa", "mfa",
-        "one-time", "verification code", "security code", "認証コード", "確認コード", "ワンタイム",
-        "api key", "apikey", "apiキー", "client secret", "secret key", "access token", "refresh token",
-        "session token", "bearer token", "秘密鍵", "private key", "backup code", "recovery code",
-        "cvv", "cvc", "card number", "カード番号"
-    ];
-
-    private static readonly Regex VisibleEmailRegex = new(
-        @"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleJapanesePhoneRegex = new(
-        @"(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisiblePostalCodeRegex = new(
-        @"(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleLabeledSecretRegex = new(
-        @"(?i)\b(password|passwd|passcode|otp|totp|2fa|mfa|api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|backup[ _-]?code|recovery[ _-]?code)\b\s*[:=]\s*([^\s,;]{3,})",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleBearerRegex = new(
-        @"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleJwtRegex = new(
-        @"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleApiKeyRegex = new(
-        @"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisiblePrivateKeyRegex = new(
-        @"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-    private static readonly Regex VisibleCardNumberRegex = new(
-        @"(?<!\d)(?:\d[ -]?){13,19}(?!\d)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex VisibleSensitiveUrlRegex = new(
-        @"https?://[^\s<>""']*[?#][^\s<>""']+",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-
     private readonly int _selfProcessId = Environment.ProcessId;
 
     public Task<ScreenCaptureFrame> CaptureAsync(
@@ -76,7 +35,11 @@ public sealed class ScreenCaptureService
         int expectedProcessId,
         nint expectedWindowHandle,
         CancellationToken cancellationToken = default)
-        => Task.Run(() => Capture(redactions, expectedProcessId, expectedWindowHandle, cancellationToken), cancellationToken);
+        => PerformanceTrace.MeasureAsync(
+            "screenshot.capture",
+            () => Task.Run(
+                () => Capture(redactions, expectedProcessId, expectedWindowHandle, cancellationToken),
+                cancellationToken));
 
     public Task<ScreenCaptureFrame> CaptureAsync(
         IReadOnlyList<Rect> redactions,
@@ -101,7 +64,8 @@ public sealed class ScreenCaptureService
         cancellationToken.ThrowIfCancellationRequested();
         var captureArea = ResolveCaptureArea(expectedProcessId, expectedWindowHandle);
 
-        var sensitiveBefore = CaptureSensitiveBounds(captureArea, cancellationToken);
+        // Z-order is checked before and after BitBlt to close the visible-occluder race without
+        // invoking UIA from the capture process.
         var occludersBefore = CaptureOccluderBounds(captureArea, cancellationToken);
 
         var desktopDc = GetDC(IntPtr.Zero);
@@ -124,11 +88,8 @@ public sealed class ScreenCaptureService
             if (!BitBlt(memoryDc, 0, 0, captureArea.Width, captureArea.Height, desktopDc, captureArea.X, captureArea.Y, Srccopy | CaptureBlt))
                 throw new InvalidOperationException("画面を取得できませんでした。");
 
-            var sensitiveAfter = CaptureSensitiveBounds(captureArea, cancellationToken);
             var occludersAfter = CaptureOccluderBounds(captureArea, cancellationToken);
             var all = redactions
-                .Concat(sensitiveBefore)
-                .Concat(sensitiveAfter)
                 .Concat(occludersBefore)
                 .Concat(occludersAfter)
                 .Where(x => !x.IsEmpty)
@@ -263,133 +224,6 @@ public sealed class ScreenCaptureService
         return result;
     }
 
-    private IReadOnlyList<Rect> CaptureSensitiveBounds(CaptureArea captureArea, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var captureRect = new Rect(captureArea.X, captureArea.Y, captureArea.Width, captureArea.Height);
-            var walker = TreeWalker.ControlViewWalker;
-            var queue = new Queue<AutomationElement>();
-            var roots = AutomationElement.RootElement.FindAll(TreeScope.Children, System.Windows.Automation.Condition.TrueCondition);
-
-            foreach (AutomationElement root in roots)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    var current = root.Current;
-                    var inspect = current.ProcessId == captureArea.TargetProcessId ||
-                                  (captureArea.ShellSurface && IsRelatedShellProcess(current.ProcessId));
-                    if (!inspect || current.ProcessId == _selfProcessId || current.IsOffscreen) continue;
-                    var bounds = current.BoundingRectangle;
-                    if (!bounds.IsEmpty && captureRect.IntersectsWith(bounds)) queue.Enqueue(root);
-                }
-                catch (ElementNotAvailableException) { }
-            }
-
-            var result = new List<Rect>();
-            var visited = 0;
-            var stopwatch = Stopwatch.StartNew();
-            while (queue.Count > 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (++visited > 18000 || stopwatch.Elapsed > TimeSpan.FromSeconds(2.8))
-                    throw new InvalidOperationException("画面の秘密情報確認を規定範囲内で完了できませんでした。");
-
-                var element = queue.Dequeue();
-                try
-                {
-                    var current = element.Current;
-                    if (current.ProcessId != _selfProcessId && !current.IsOffscreen)
-                    {
-                        var bounds = current.BoundingRectangle;
-                        if (!bounds.IsEmpty && captureRect.IntersectsWith(bounds) && ShouldRedactElement(element, current))
-                            result.Add(bounds);
-                    }
-
-                    var child = walker.GetFirstChild(element);
-                    while (child is not null)
-                    {
-                        queue.Enqueue(child);
-                        child = walker.GetNextSibling(child);
-                    }
-                }
-                catch (ElementNotAvailableException) { }
-                catch (InvalidOperationException) { }
-            }
-
-            return result;
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException("秘密情報を安全に確認できないため、画面画像は送信しません。", ex);
-        }
-    }
-
-    private static bool ShouldRedactElement(
-        AutomationElement element,
-        AutomationElement.AutomationElementInformation current)
-    {
-        if (current.IsPassword) return true;
-        if (ShouldRedactVisibleSensitiveText(current.Name)) return true;
-
-        if (current.ControlType is not null &&
-            (current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox))
-        {
-            var hint = $"{current.Name} {current.AutomationId} {current.ClassName}";
-            if (ContainsSensitiveInputHint(hint)) return true;
-
-            try
-            {
-                if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
-                    return ShouldRedactVisibleSensitiveText(valuePattern.Current.Value);
-            }
-            catch (ElementNotAvailableException) { return true; }
-            catch (InvalidOperationException) { return true; }
-        }
-
-        return false;
-    }
-
-    private static bool ContainsSensitiveInputHint(string value)
-        => SensitiveInputTerms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
-
-    private static bool ShouldRedactVisibleSensitiveText(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return false;
-        var value = text.Length <= 1000 ? text : text[..1000];
-        if (VisibleEmailRegex.IsMatch(value) || VisibleJapanesePhoneRegex.IsMatch(value) || VisiblePostalCodeRegex.IsMatch(value) ||
-            VisibleLabeledSecretRegex.IsMatch(value) || VisibleBearerRegex.IsMatch(value) || VisibleJwtRegex.IsMatch(value) ||
-            VisibleApiKeyRegex.IsMatch(value) || VisiblePrivateKeyRegex.IsMatch(value) || VisibleSensitiveUrlRegex.IsMatch(value))
-            return true;
-
-        foreach (Match match in VisibleCardNumberRegex.Matches(value))
-        {
-            var digits = new string(match.Value.Where(char.IsDigit).ToArray());
-            if (digits.Length is >= 13 and <= 19 && PassesLuhn(digits)) return true;
-        }
-        return false;
-    }
-
-    private static bool PassesLuhn(string digits)
-    {
-        var sum = 0;
-        var alternate = false;
-        for (var index = digits.Length - 1; index >= 0; index--)
-        {
-            var number = digits[index] - '0';
-            if (alternate)
-            {
-                number *= 2;
-                if (number > 9) number -= 9;
-            }
-            sum += number;
-            alternate = !alternate;
-        }
-        return sum % 10 == 0;
-    }
-
     private bool BelongsToSelf(IntPtr hwnd)
     {
         if (hwnd == IntPtr.Zero) return false;
@@ -439,7 +273,7 @@ public sealed class ScreenCaptureService
         var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom - screenY) + guard, 0, screenHeight);
         if (right <= left || bottom <= top) return;
         if (!PatBlt(dc, left, top, right - left, bottom - top, Blackness))
-            throw new InvalidOperationException("秘密情報の領域を安全に黒塗りできないため、画面画像は送信しません。");
+            throw new InvalidOperationException("秘密情報の領域を安全に黒塗りできないため、画面画像を送信しません。");
     }
 
     private readonly record struct CaptureArea(

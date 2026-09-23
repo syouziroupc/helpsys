@@ -22,14 +22,12 @@ jobs:
       - name: Check Worker and contract syntax
         run: |
           node --check worker/index.js
-          node --check worker/entry.js
-          node --check worker/visible-first.js
-          node --check worker/start-state-guard.js
-          node --check worker/deliberation-guard.js
           node --check worker/reliability-v4-guard.js
           node --check worker/quality-guide.js
           node --check worker/transcribe.js
+          node --check tests/run-contracts.mjs
           node --check tests/site-release-contract.mjs
+          node --check tests/why5-root-contract.mjs
           node --check tests/privacy-contract.mjs
           node --check tests/privacy-capability-contract.mjs
           node --check tests/privacy-resume-contract.mjs
@@ -37,20 +35,7 @@ jobs:
           node --check tests/worker-data-handling-contract.mjs
 
       - name: Test Worker and privacy contracts
-        run: |
-          node worker/selftest.mjs
-          node worker/policy-selftest.mjs
-          node worker/visible-first-selftest.mjs
-          node worker/deliberation-selftest.mjs
-          node worker/reliability-v4-selftest.mjs
-          node worker/quality-guide-selftest.mjs
-          node worker/transcribe-selftest.mjs
-          node tests/privacy-contract.mjs
-          node tests/privacy-capability-contract.mjs
-          node tests/privacy-resume-contract.mjs
-          node tests/safe-edition-contract.mjs
-          node tests/worker-data-handling-contract.mjs
-          node tests/site-release-contract.mjs
+        run: node tests/run-contracts.mjs
 
       - name: Restore
         run: dotnet restore HelpSys.sln

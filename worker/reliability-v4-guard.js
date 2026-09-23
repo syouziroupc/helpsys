@@ -1,10 +1,10 @@
-import base from './deliberation-guard.js';
+import base from './index.js';
 import education from './education.js';
 import quality from './quality-guide.js';
 import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
-const SCREEN_ROUTES = new Set(['/v1/quality-guide', '/v1/guide', '/v1/vision-guide']);
+const SCREEN_ROUTES = new Set(['/v2/plan', '/v1/quality-guide', '/v1/guide', '/v1/vision-guide']);
 const EMAIL = /(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])/g;
 const JP_PHONE = /(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)/g;
 const JP_POSTAL = /(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)/g;
@@ -50,6 +50,12 @@ export default {
         screenBody = null;
         screenRequest = request;
       }
+    }
+
+    if (url.pathname === '/v2/plan') {
+      const hasImage = typeof screenBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(screenBody.image);
+      screenRequest = rewriteRequestPath(screenRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
+      if (hasImage) return quality.fetch(screenRequest, privateEnv, ctx);
     }
 
     if (url.pathname === '/v1/quality-guide') {
@@ -214,7 +220,6 @@ function isStructuredGuide(request) {
 
 function preventBackgroundDone(body, decision) {
   if (!decision || String(decision.status || '').toLowerCase() !== 'done') return null;
-  if (!/すでに開いて|既に開いて/i.test(String(decision.instruction || ''))) return null;
 
   const goal = String(body?.request || '');
   const rule = APP_RULES.find(x => x.goal.test(goal));
@@ -223,41 +228,11 @@ function preventBackgroundDone(body, decision) {
   const foreground = String(body?.systemContext?.foregroundProcess ?? body?.systemContext?.ForegroundProcess ?? '').toLowerCase();
   if (rule.processes.includes(foreground)) return null;
 
-  const elements = usable(body?.elements);
-  const search = elements.find(x => String(x.controlType || '').toLowerCase() === 'edit' &&
-    /(検索|search)/i.test(`${x.name || ''} ${x.automationId || ''}`) &&
-    /searchhost|startmenuexperiencehost|explorer/i.test(String(x.processName || '')));
-
-  if (search?.focused === true) {
-    return {
-      status: 'target', targetId: String(search.id), action: 'type_text',
-      instruction: `キーボードで「${rule.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
-      question: null, key: 'Enter', confidence: 0.99
-    };
-  }
-  if (search) {
-    return {
-      status: 'target', targetId: String(search.id), action: 'left_click',
-      instruction: '開いている検索画面の、文字を入力できる欄で、マウスの左ボタンを1回押してください。',
-      question: null, key: null, confidence: 0.99
-    };
-  }
-
-  const startOpen = START_PROCESS.test(foreground) || elements.some(x =>
-    START_PROCESS.test(String(x.processName || '')) &&
-    (x.focused === true || /(検索|search|ピン留め|pinned|おすすめ|すべて)/i.test(String(x.name || ''))));
-  if (startOpen) {
-    return {
-      status: 'not_found', targetId: null, action: 'none',
-      instruction: '目的のアプリは別の画面で開いていますが、今見えている画面にはまだ出ていません。現在の検索画面から安全に選べる場所を確認し直します。',
-      question: null, key: null, confidence: 0.99
-    };
-  }
-
+  // Final guard is validation-only. Never invent a replacement route after the planner.
   return {
-    status: 'target', targetId: null, action: 'press_key',
-    instruction: '目的のアプリは別の画面で開いています。今操作できる画面へ出すため、キーボードの左下にある窓の形の「Windows」キーを1回押してください。',
-    question: null, key: 'Windows', confidence: 0.99
+    status: 'not_found', targetId: null, action: 'none',
+    instruction: '目的のアプリは実行中ですが、現在の前面画面では完了を確認できません。現在状態から案内を作り直します。',
+    question: null, key: null, confidence: 0
   };
 }
 
@@ -276,6 +251,12 @@ function privacyHardenedEnv(env) {
       return Reflect.get(target, property, receiver);
     }
   });
+}
+
+function rewriteRequestPath(request, pathname) {
+  const url = new URL(request.url);
+  url.pathname = pathname;
+  return new Request(url.toString(), request);
 }
 
 function rebuildJsonRequest(request, body) {

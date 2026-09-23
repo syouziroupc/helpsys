@@ -166,6 +166,14 @@ public sealed class CloudAiAdapter : IDisposable
         if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             throw new InvalidOperationException("AI APIのベースURLに認証情報・クエリ・フラグメントを含めることはできません。");
 
+#if HELPSYS_TEST_BUILD
+        // CI may exercise the exact pull-request Worker preview with real Workers AI.
+        // Distributed builds never compile this allowance and remain pinned to production.
+        if (uri.Host.EndsWith("-helpsys.syouziroupc.workers.dev", StringComparison.OrdinalIgnoreCase) &&
+            uri.AbsolutePath == "/")
+            return value;
+#endif
+
         var approved = new Uri(DefaultApiBase, UriKind.Absolute);
         var sameApprovedOrigin =
             uri.Scheme.Equals(approved.Scheme, StringComparison.OrdinalIgnoreCase) &&

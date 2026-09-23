@@ -1,7 +1,7 @@
 import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTask } from './windows-knowledge.js';
 
 const DEFAULT_MODEL = '@cf/zai-org/glm-5.3-flash';
-const MAX_UI_ELEMENTS = 280;
+const MAX_UI_ELEMENTS = 96;
 const MAX_HISTORY = 8;
 const MAX_IMAGE_CHARS = 6_500_000;
 const MIN_TARGET_CONFIDENCE = 0.80;
@@ -48,7 +48,7 @@ MULTI-SOURCE EVIDENCE FUSION:
 - systemContext: evidence for the actual foreground process/window, taskbar, running apps and browser domain-level context. Full browser URLs are intentionally unavailable.
 - evidenceSummary: a compact inventory of which sources are actually present, counts, focused controls and recent targets. Use it to avoid acting as though missing evidence exists.
 - completedSteps: sequence evidence. It explains how the current state may have been reached and which actions already failed, but never overrides current state.
-- windowsKnowledge/canonicalConstraint: Windows behavior and known standard paths. Standard paths are useful references, not a substitute for observing the current state.
+- windowsKnowledge/canonicalConstraint: Windows physical/safety constraints and invariants. They must not force a fixed route when current-state evidence supports a shorter safe path.
 - Compare all independent evidence that is available. Prefer a next step supported by at least two current-state signals when two or more exist.
 - If sources conflict, decide what each source can actually establish. Current foreground/window state beats stale history. A current actionable UIA node can establish control identity even when text is visually hard to read.
 - When the screenshot is ambiguous but UIA plus foreground/system state strongly identify a current actionable control, you may return that real UI element id with screenConfirmed=false. This path requires high confidence and will be revalidated by the desktop immediately before display.
@@ -59,7 +59,7 @@ ROUTE RECOVERY:
 - A user may click the wrong thing, open a different window, arrive at an unexpected dialog, or take a different valid path. This is normal state, not a reason to stop.
 - In recoveryMode, first infer WHERE THE USER IS NOW from all evidence. Then choose the smallest safe next operation that moves the current state back toward the goal.
 - Do not require the current screen to match an earlier expected route. A recovery step may close an irrelevant dialog, switch to the relevant app, reopen search, move to a parent view, or use another safe path when that action is grounded in the current evidence.
-- Do not repeat an action recorded as failed unless current evidence shows the cause of failure has changed.
+- Do not repeat an action recorded as failed unless current evidence shows the cause of failure has changed. Prefer a different safe action that makes more progress.
 - canonicalConstraint is a route reference during recoveryMode, not a veto, except safety warnings and user-choice branches remain hard constraints.
 - Known-site identity is a safety invariant, not a route preference. Recovery may change the route, but it may never relax official-domain, non-sponsored, or browser-warning checks.
 - In recoveryMode, prefer a grounded target or a necessary clarification over not_found. Use not_found only when no safe next operation can be grounded from the available evidence.
@@ -74,7 +74,7 @@ PHYSICAL WINDOWS RULES:
 - Never point through a foreground window to an item behind it.
 
 QUALITY AND SPEED:
-- Inspect only what is necessary to decide the next step; do not generate a long plan.
+- Inspect only what is necessary to decide the next step; do not generate a long plan. Among safe grounded actions, prefer the one with the fewest user operations and the greatest immediate progress toward the goal.
 - status=done only when the requested goal itself is visibly achieved now. Set screenConfirmed=true and state the visible proof.
 - status=target only when the action and target are supported by the current evidence. For a UIA target, prefer an actual current uiElements id; for a visual-only target use vision-target.
 - screenConfirmed means the screenshot itself supports the claimed visible state. Do not set it merely because UIA or systemContext says the control exists.

@@ -77,12 +77,27 @@ async function runBrowserNewTabCase() {
       ForegroundProcess: 'chrome', ForegroundTitle: 'Yahoo! JAPAN - Google Chrome', ForegroundProcessId: 2, TaskbarVisible: false, RunningApps: ['chrome'],
       Browser: { ProcessName: 'chrome', WindowTitle: 'Yahoo! JAPAN - Google Chrome', Url: 'https://www.yahoo.co.jp/', Domain: 'www.yahoo.co.jp', Https: true, AddressFieldFocused: false }
     },
-    elements: [{ id: 'u2', name: '検索', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 10, y: 10, width: 300, height: 40 }]
+    elements: [{ id: 'u2', name: '検索', automationId: 'role:web_search', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 10, y: 10, width: 300, height: 40 }]
   };
-  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: expected }] });
+
+  const proposed = {
+    status: 'target', targetId: null, action: 'press_key',
+    instruction: '「Ctrl」を押したまま「T」を1回押してください。',
+    question: null, key: 'Ctrl+T', confidence: 0.97
+  };
+  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: proposed }] });
   const json = await response.json();
-  assert(json.action === 'press_key' && json.key === 'Ctrl+T', 'website navigation from another page must open a new tab first');
+  assert(json.status === 'target' && json.action === 'press_key' && json.key === 'Ctrl+T', 'a safe new-tab transition proposed from a foreign site must remain valid');
   assert(!/youtube\.com/i.test(json.instruction), 'website guidance must not ask beginners to type a domain directly');
+
+  const internalSearchProposal = {
+    status: 'target', targetId: 'u2', action: 'left_click',
+    instruction: '検索欄を押してください。',
+    question: null, key: null, confidence: 0.99
+  };
+  const rejected = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: internalSearchProposal }] });
+  const rejectedJson = await rejected.json();
+  assert(rejectedJson.status === 'not_found', 'a foreign website internal search box must be structurally rejected for cross-site navigation');
 }
 
 async function runVisibleWebSearchPriorityCase() {
@@ -97,10 +112,15 @@ async function runVisibleWebSearchPriorityCase() {
       { id: 'omnibox', name: '[input field]', automationId: 'role:browser_address', controlType: 'Edit', processName: 'chrome', interactable: true, enabled: true, keyboardFocusable: true, focused: false, x: 100, y: 50, width: 800, height: 36 }
     ]
   };
-  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: expected }] });
+  const proposal = {
+    status: 'target', targetId: 'page-search', action: 'left_click',
+    instruction: '画面の検索欄で、マウスの左ボタンを1回押してください。',
+    question: null, key: null, confidence: 0.97
+  };
+  const response = await invoke('/v1/guide', body, { tool_calls: [{ name: 'return_guidance', arguments: proposal }] });
   const json = await response.json();
-  assert(json.status === 'target' && json.targetId === 'page-search' && json.action === 'left_click', 'visible webpage search field must outrank the browser address field');
-  assert(json.key === null, 'visible webpage search field must not be replaced by Ctrl+L');
+  assert(json.status === 'target' && json.targetId === 'page-search' && json.action === 'left_click', 'a global search field on a neutral search page must remain usable');
+  assert(json.key === null, 'global search field must not be replaced by an unrelated key route');
 }
 
 async function runTechnicalClarifyRejectionCase() {

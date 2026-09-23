@@ -25,6 +25,8 @@ public partial class MainWindow : Window
     private readonly List<GuideHistoryItem> _history = [];
     private readonly GuidanceSessionController _sessionState = new();
     private readonly DiagnosticModePolicy _diagnosticMode = new();
+    private readonly ObservationBroker _observationBroker;
+    private string _lastObservationFingerprint = string.Empty;
 
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _voiceCts;
@@ -50,6 +52,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _observationBroker = new ObservationBroker(_systemContext, _scanner);
         InitializeComponent();
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
@@ -161,6 +164,11 @@ public partial class MainWindow : Window
             SetState(_awaitingClarification ? (_clarificationQuestion ?? "質問への答えを入力してください。") : "やりたいことを入力してください。", speak: true);
             return;
         }
+
+        // The Guide click itself brings HelpSys to the foreground. Freeze the most recently
+        // sampled external foreground window here so the snapshot broker observes the user's
+        // actual work surface rather than HelpSys.
+        _systemContext.CommitStableForegroundForAssistantInteraction();
 
         if (_awaitingClarification && _activeRequest is not null && _sessionCts is not null)
         {
@@ -748,6 +756,7 @@ public partial class MainWindow : Window
         _speechInput.Dispose();
         _actionObserver.Dispose();
         _cloudGuide.Dispose();
+        _systemContext.Dispose();
         _hotKey.Dispose();
         _overlay.Close();
         _keyHint.Close();

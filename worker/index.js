@@ -2,7 +2,7 @@ import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTa
 
 const DEFAULT_TEXT_MODEL = '@cf/zai-org/glm-4.7-flash';
 const DEFAULT_VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
-const MAX_UI_ELEMENTS = 420;
+const MAX_UI_ELEMENTS = 96;
 const MAX_HISTORY = 12;
 const MAX_IMAGE_CHARS = 6_500_000;
 
@@ -58,7 +58,7 @@ You receive:
 - goal: what the user wants
 - completedSteps: only successful steps plus explicit failure notes
 - systemContext: foreground app/window, running apps, taskbar visibility, and best-effort browser URL/domain when available
-- windowsKnowledge: canonical Windows procedures and task-specific safety rules
+- windowsKnowledge: Windows physical/safety constraints and current-task invariants; it does not mandate a fixed route
 - uiElements: visible Windows UI Automation elements from all monitors
 
 Rules:
@@ -69,9 +69,9 @@ Rules:
 5. Never invent controls, apps, labels, coordinates, completed actions, URLs, or domains.
 6. The screen is not the complete list of Windows capabilities. If the desired object is absent, use windowsKnowledge. Never pick an unrelated visible object as a substitute.
 7. If a canonical next control is not visible, prefer a safe keyboard route when windowsKnowledge provides one.
-8. If the previous operation failed, remain on the canonical route. Do not jump to a different unrelated strategy.
+8. If the previous operation failed, do not repeat it blindly. Re-evaluate the current state and choose the smallest safe action with the best progress toward the goal.
 9. If multiple choices affect identity, account, saved data, overwrite/delete, payment/purchase, permissions, or defaults, return clarify instead of deciding for the user.
-10. For website navigation, follow windowsKnowledge. Do not instruct beginners to type a domain or URL directly unless the user explicitly asked to enter an exact address.
+10. For website navigation, treat windowsKnowledge as safety and physical constraints, not a mandatory route. Never use the current website's internal search box merely to navigate to a different website. Do not instruct beginners to type a domain or URL directly unless the user explicitly asked to enter an exact address.
 11. Never guide through a browser security, phishing, malware, certificate, or privacy warning. Never tell the user to bypass or ignore a warning.
 12. Search-result ads/sponsored results are not preferred. For a known service, only guide to a result whose visible domain matches the official domain supplied by windowsKnowledge.
 13. If the current browser domain does not match the intended known service after navigation, do not continue deeper into the site.

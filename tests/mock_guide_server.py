@@ -98,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "invalid_json"}, 400)
             return
 
-        if self.path in ("/v1/guide", "/v1/quality-guide"):
+        if self.path in ("/v2/plan", "/v1/guide", "/v1/quality-guide"):
             system_context = field(payload, "systemContext", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
             request = str(field(payload, "request", "") or "")
@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
             # structured route deliberately inconclusive so production must exercise its normal
             # quality/screenshot fallback instead of allowing a successful /v1/guide response to
             # skip the redaction path entirely.
-            if self.path == "/v1/guide" and "OCCLUDER redaction smoke" in request:
+            if self.path in ("/v1/guide", "/v2/plan") and not has_image and "OCCLUDER redaction smoke" in request:
                 self._json(
                     {
                         "status": "not_found",
@@ -176,8 +176,10 @@ class Handler(BaseHTTPRequestHandler):
                     eligible[0] if eligible else None,
                 )
 
+            quality_shape = self.path == "/v1/quality-guide" or (self.path == "/v2/plan" and has_image)
+
             if target is None:
-                if self.path == "/v1/quality-guide":
+                if quality_shape:
                     self._json(
                         {
                             "status": "not_found",
@@ -209,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 return
 
-            if self.path == "/v1/quality-guide":
+            if quality_shape:
                 self._json(
                     {
                         "status": "target",

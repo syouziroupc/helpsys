@@ -99,6 +99,15 @@ function Find-MainWindow([System.Diagnostics.Process]$process) {
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
 }
 
+function Find-TopLevelProcessElement([System.Diagnostics.Process]$process) {
+  if ($null -eq $process -or $process.HasExited) { return $null }
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $process.Id)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+}
+
 function Save-Screenshot([string]$name) {
   $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
   $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -265,6 +274,13 @@ try {
   $valuePattern.SetValue('open the test target')
   $invokePattern = $controls['GuideButton'].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
 
+  # The planner now requires a verified external work surface. Establish one before measuring
+  # Guide-to-planner latency; focus-retention under a physical click remains covered separately.
+  $targetWindow = Find-TopLevelProcessElement $target
+  if ($null -eq $targetWindow) { throw 'Smoke target top-level UI element was unavailable before planner latency measurement.' }
+  try { $targetWindow.SetFocus() } catch { }
+  Start-Sleep -Milliseconds 420
+
   $guideTimer = [System.Diagnostics.Stopwatch]::StartNew()
   $invokePattern.Invoke()
   while ($guideTimer.Elapsed.TotalMilliseconds -lt $guideMaximumMs -and -not (Test-Path 'artifacts/mock-last-request.json')) {
@@ -279,15 +295,15 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($diagnostics.path -notin @('/v1/guide','/v1/quality-guide')) {
+  if ($diagnostics.path -notin @('/v2/plan','/v1/guide','/v1/quality-guide')) {
     throw "UI performance smoke reached an unexpected route: $($diagnostics.path)"
   }
   if ($diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -ne $true) {
     throw 'UI performance quality route lost its screenshot.'
   }
   # Target-focus retention is exercised separately by real_click_guidance_smoke.ps1, which
-  # physically foregrounds the target and clicks HelpSys. This smoke measures surface and
-  # planner latency only and intentionally does not manufacture a foreground-target precondition.
+  # physically foregrounds the target and clicks HelpSys. This smoke only establishes the valid
+  # external work-surface precondition, then measures surface and planner latency.
 
   $metrics = [ordered]@{
     visibleSurfaceMilliseconds = $surfaceVisibleAtMs

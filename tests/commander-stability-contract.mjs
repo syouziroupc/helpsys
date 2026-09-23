@@ -48,21 +48,21 @@ assert(!window.includes('もう一度「ねえコマンダー」と呼'), 'Spoke
 assert(window.includes('wakeReleased = true'), 'Commander must release wake listening before a potentially long planning pass.');
 assert(window.indexOf('_commander.CompleteWakeInteraction();\n            wakeReleased = true;') < window.indexOf('var planningTask = StartOrContinueSessionAsync();'), 'Commander wake release must occur before long planning begins.');
 
-assert(qualityWindow.includes('TryStructuredFallbackAsync'), 'Quality-first guidance must have a fresh UIA fallback when image confirmation is unavailable.');
-assert(qualityWindow.includes('MinimumStructuredFallbackConfidence = 0.93'), 'Structured fallback confidence threshold regression.');
-assert(qualityWindow.includes('string.IsNullOrWhiteSpace(fallback.TargetId)'), 'Structured fallback must require a concrete UIA target.');
-assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'Structured fallback must revalidate the target immediately before showing guidance.');
+assert(qualityWindow.includes('_observationBroker.CaptureAsync(240'), 'Quality-first guidance must start from one bounded immutable observation snapshot.');
+assert(!qualityWindow.includes('TryStructuredFallbackAsync'), 'Legacy rescan-and-replan UIA fallback must stay removed.');
+assert(qualityWindow.includes('MinimumStructuredFallbackConfidence = 0.93'), 'Structured-only target confidence threshold regression.');
+assert(qualityWindow.includes('_scanner.RevalidateCandidateAsync'), 'The chosen target must still be revalidated immediately before guidance is shown.');
 assert(qualityWindow.includes('_speechInput.HideOverlay();'), 'Screen capture must remove the speech overlay first.');
 
 assert(cloud.includes('AttemptTimeout = TimeSpan.FromSeconds(6)'), 'Cloud guidance calls must have a short per-attempt timeout.');
 assert(cloudAdapter.includes('x-helpsys-request-id'), 'Cloud AI adapter must attach request IDs for production debugging.');
 
-assert(!watcher.includes('pump.GetAwaiter().GetResult()'), 'Live watcher shutdown must never synchronously block the WPF thread.');
-assert(watcher.includes('DrainStoppedPumpAndSubscriptionsAsync'), 'Live watcher pump and UIA subscriptions must drain asynchronously.');
+assert(!watcher.includes('System.Windows.Automation'), 'Live watcher must not own UI Automation in the WPF process.');
+assert(watcher.includes('SetWinEventHook(') && watcher.includes('UnhookWinEvent'), 'Live watcher must use bounded WinEvent subscription lifecycle.');
 assert(stable.includes('_stablePulseQueued'), 'Rapid screen-change pulses must be coalesced before entering the dispatcher.');
-assert(systemContext.includes('GetCachedBrowser'), 'Browser UIA context must use a cached/background path.');
-assert(systemContext.includes('QueueBrowserRefresh'), 'Browser UIA context must refresh outside the caller path.');
-assert(!/Capture\(\)[\s\S]{0,2500}\?\s*TryCaptureBrowser\(/.test(systemContext), 'SystemContext Capture must not directly perform browser UIA traversal on the caller thread.');
+assert(!systemContext.includes('System.Windows.Automation') && !systemContext.includes('AutomationElement'), 'SystemContext must not perform browser UIA traversal.');
+assert(systemContext.includes('EnrichWithObservedElements'), 'Browser context must be enriched from the already-captured observer snapshot.');
+assert(systemContext.includes('role:browser_address'), 'Browser-address semantics must come from observer candidates, not a second UIA walk.');
 
 const config = JSON.parse(wrangler);
 const educationConfig = JSON.parse(educationWrangler);

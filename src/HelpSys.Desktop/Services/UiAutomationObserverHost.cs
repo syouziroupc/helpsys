@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
@@ -19,7 +20,7 @@ internal static class UiAutomationObserverHost
         var parentProcessId = ReadParentProcessId();
         if (parentProcessId > 0) _ = Task.Run(() => MonitorParentAsync(parentProcessId));
 
-        var scanner = new UiAutomationScanner(forceLocal: true);
+        using var executor = new MtaAutomationExecutor();
         string? line;
         while ((line = await Console.In.ReadLineAsync()) is not null)
         {
@@ -28,7 +29,7 @@ internal static class UiAutomationObserverHost
             {
                 var request = JsonSerializer.Deserialize<UiAutomationObserverRequest>(line, JsonOptions)
                               ?? throw new InvalidOperationException("Observer request was empty.");
-                response = await ExecuteAsync(scanner, request);
+                response = await executor.ExecuteAsync(request).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -45,7 +46,7 @@ internal static class UiAutomationObserverHost
         return 0;
     }
 
-    private static async Task<UiAutomationObserverResponse> ExecuteAsync(
+    private static UiAutomationObserverResponse ExecuteOnAutomationThread(
         UiAutomationScanner scanner,
         UiAutomationObserverRequest request)
     {
@@ -56,40 +57,40 @@ internal static class UiAutomationObserverHost
                 "capture" => new UiAutomationObserverResponse(
                     request.Id,
                     true,
-                    Candidates: await scanner.CaptureCandidatesAsync(
-                        request.MaxCandidates <= 0 ? 360 : request.MaxCandidates)),
+                    Candidates: scanner.CaptureCandidatesAsync(
+                        request.MaxCandidates <= 0 ? 360 : request.MaxCandidates).GetAwaiter().GetResult()),
 
                 "capture-process" => new UiAutomationObserverResponse(
                     request.Id,
                     true,
-                    Candidates: await scanner.CaptureCandidatesForProcessAsync(
+                    Candidates: scanner.CaptureCandidatesForProcessAsync(
                         request.ProcessId,
-                        request.MaxCandidates <= 0 ? 360 : request.MaxCandidates)),
+                        request.MaxCandidates <= 0 ? 360 : request.MaxCandidates).GetAwaiter().GetResult()),
 
                 "revalidate" when request.Candidate is not null => new UiAutomationObserverResponse(
                     request.Id,
                     true,
                     Candidate: request.RootProcessId > 0
-                        ? await scanner.RevalidateCandidateAsync(request.Candidate, request.RootProcessId)
-                        : await scanner.RevalidateCandidateAsync(request.Candidate)),
+                        ? scanner.RevalidateCandidateAsync(request.Candidate, request.RootProcessId).GetAwaiter().GetResult()
+                        : scanner.RevalidateCandidateAsync(request.Candidate).GetAwaiter().GetResult()),
 
                 "snap" => BuildBoundsResponse(
                     request.Id,
-                    await scanner.SnapToAccessibleBoundsAsync(
-                        new Rect(request.X, request.Y, request.Width, request.Height))),
+                    scanner.SnapToAccessibleBoundsAsync(
+                        new Rect(request.X, request.Y, request.Width, request.Height)).GetAwaiter().GetResult()),
 
                 "snap-candidate" => new UiAutomationObserverResponse(
                     request.Id,
                     true,
-                    Candidate: await scanner.SnapToAccessibleCandidateAsync(
-                        new Rect(request.X, request.Y, request.Width, request.Height))),
+                    Candidate: scanner.SnapToAccessibleCandidateAsync(
+                        new Rect(request.X, request.Y, request.Width, request.Height)).GetAwaiter().GetResult()),
 
                 "diagnostics" => new UiAutomationObserverResponse(
                     request.Id,
                     true,
-                    Diagnostics: await scanner.CaptureWindowDiagnosticsAsync(
+                    Diagnostics: scanner.CaptureWindowDiagnosticsAsync(
                         (nint)request.WindowHandle,
-                        request.ExpectedProcessId)),
+                        request.ExpectedProcessId).GetAwaiter().GetResult()),
 
                 _ => new UiAutomationObserverResponse(request.Id, false, "unknown_operation")
             };
@@ -101,6 +102,65 @@ internal static class UiAutomationObserverHost
                 false,
                 $"{ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    private sealed class MtaAutomationExecutor : IDisposable
+    {
+        private readonly BlockingCollection<WorkItem> _queue = new();
+        private readonly Thread _thread;
+        private bool _disposed;
+
+        public MtaAutomationExecutor()
+        {
+            _thread = new Thread(Run)
+            {
+                IsBackground = true,
+                Name = "HelpSys.UIAutomation.MTA"
+            };
+            _thread.SetApartmentState(ApartmentState.MTA);
+            _thread.Start();
+        }
+
+        public Task<UiAutomationObserverResponse> ExecuteAsync(UiAutomationObserverRequest request)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var completion = new TaskCompletionSource<UiAutomationObserverResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _queue.Add(new WorkItem(request, completion));
+            return completion.Task;
+        }
+
+        private void Run()
+        {
+            var scanner = new UiAutomationScanner(forceLocal: true);
+            foreach (var item in _queue.GetConsumingEnumerable())
+            {
+                try
+                {
+                    item.Completion.TrySetResult(ExecuteOnAutomationThread(scanner, item.Request));
+                }
+                catch (Exception ex)
+                {
+                    item.Completion.TrySetResult(new UiAutomationObserverResponse(
+                        item.Request.Id,
+                        false,
+                        $"{ex.GetType().Name}: {ex.Message}"));
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _queue.CompleteAdding();
+            try { _thread.Join(TimeSpan.FromSeconds(1)); } catch { }
+            _queue.Dispose();
+        }
+
+        private sealed record WorkItem(
+            UiAutomationObserverRequest Request,
+            TaskCompletionSource<UiAutomationObserverResponse> Completion);
     }
 
     private static UiAutomationObserverResponse BuildBoundsResponse(string id, Rect? bounds) =>

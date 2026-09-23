@@ -1,27 +1,25 @@
-using System.Windows.Automation;
+using System.Runtime.InteropServices;
 
 namespace HelpSys.Services;
 
 public sealed class GuidanceStateWatcher : IDisposable
 {
-    private static readonly TimeSpan QuietPeriod = TimeSpan.FromMilliseconds(650);
-    private static readonly TimeSpan HeartbeatPeriod = TimeSpan.FromMilliseconds(1400);
+    private const uint EventObjectShow = 0x8002;
+    private const uint EventObjectValueChange = 0x800E;
+    private const uint WineventOutofcontext = 0x0000;
+    private const uint WineventSkipownprocess = 0x0002;
+
+    private static readonly TimeSpan QuietPeriod = TimeSpan.FromMilliseconds(320);
+    private static readonly TimeSpan HeartbeatPeriod = TimeSpan.FromSeconds(5);
 
     private readonly SemaphoreSlim _signal = new(0, 1);
-    private readonly object _subscriptionGate = new();
-    private readonly AutomationFocusChangedEventHandler _focusHandler;
-    private readonly StructureChangedEventHandler _structureHandler;
-    private readonly AutomationPropertyChangedEventHandler _propertyHandler;
+    private readonly WinEventDelegate _eventDelegate;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
-    private AutomationElement? _structureRoot;
+    private nint _eventHook;
     private int _scopeProcessId;
     private int _queued;
     private long _lastSignalTicks;
-    private long _scopeRequestVersion;
-    private bool _focusSubscribed;
-    private bool _structureSubscribed;
-    private bool _propertySubscribed;
     private bool _disposed;
 
     public event EventHandler? Pulse;
@@ -29,9 +27,7 @@ public sealed class GuidanceStateWatcher : IDisposable
 
     public GuidanceStateWatcher()
     {
-        _focusHandler = (_, _) => Signal();
-        _structureHandler = (_, _) => Signal();
-        _propertyHandler = (_, _) => Signal();
+        _eventDelegate = OnWinEvent;
     }
 
     public void Start()
@@ -39,153 +35,48 @@ public sealed class GuidanceStateWatcher : IDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(GuidanceStateWatcher));
         if (_cts is not null) return;
 
+        _eventHook = SetWinEventHook(
+            EventObjectShow,
+            EventObjectValueChange,
+            nint.Zero,
+            _eventDelegate,
+            0,
+            0,
+            WineventOutofcontext | WineventSkipownprocess);
+
         var owner = new CancellationTokenSource();
         _cts = owner;
         Interlocked.Exchange(ref _queued, 0);
         Interlocked.Exchange(ref _lastSignalTicks, 0);
         _pumpTask = Task.Run(() => PumpAsync(owner.Token));
-
-        // UI Automation providers are external COM servers. Never register a global UIA handler
-        // synchronously on the WPF dispatcher; a broken provider must not block the HelpSys window.
-        _ = Task.Run(() =>
-        {
-            lock (_subscriptionGate)
-            {
-                if (_disposed || !ReferenceEquals(_cts, owner) || owner.IsCancellationRequested) return;
-                try
-                {
-                    Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
-                    _focusSubscribed = true;
-                }
-                catch
-                {
-                    _focusSubscribed = false;
-                }
-            }
-        });
     }
 
     public Task SetForegroundProcessAsync(int processId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_disposed) return Task.CompletedTask;
 
-        lock (_subscriptionGate)
-        {
-            if (_disposed) return Task.CompletedTask;
-            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed))
-                return Task.CompletedTask;
-        }
-
-        var requestVersion = Interlocked.Increment(ref _scopeRequestVersion);
-        return Task.Run(() => SetForegroundProcess(processId, requestVersion, cancellationToken), cancellationToken);
+        var previous = Interlocked.Exchange(ref _scopeProcessId, Math.Max(0, processId));
+        if (previous != processId) Signal();
+        return Task.CompletedTask;
     }
 
-    private void SetForegroundProcess(int processId, long requestVersion, CancellationToken cancellationToken)
+    private void OnWinEvent(
+        nint hook,
+        uint eventType,
+        nint hwnd,
+        int idObject,
+        int idChild,
+        uint eventThread,
+        uint eventTime)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (_disposed || requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
+        if (_disposed || hwnd == nint.Zero) return;
+        var scope = Volatile.Read(ref _scopeProcessId);
+        if (scope <= 0) return;
 
-        lock (_subscriptionGate)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (_disposed || requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
-            if (processId == _scopeProcessId && (processId <= 0 || _structureSubscribed)) return;
-
-            RemoveStructureSubscriptionLocked();
-            _scopeProcessId = processId;
-            if (processId <= 0) return;
-
-            AutomationElement? root = null;
-            AutomationElement? fallbackRoot = null;
-            try
-            {
-                var condition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
-                var candidates = AutomationElement.RootElement.FindAll(TreeScope.Children, condition);
-                foreach (AutomationElement candidate in candidates)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
-                    try
-                    {
-                        var current = candidate.Current;
-                        if (current.IsOffscreen) continue;
-                        var bounds = current.BoundingRectangle;
-                        if (bounds.IsEmpty || bounds.Width < 80 || bounds.Height < 60) continue;
-
-                        fallbackRoot ??= candidate;
-                        if (!current.HasKeyboardFocus) continue;
-                        root = candidate;
-                        break;
-                    }
-                    catch (ElementNotAvailableException) { }
-                    catch (InvalidOperationException) { }
-                }
-            }
-            catch (ElementNotAvailableException) { }
-            catch (InvalidOperationException) { }
-
-            if (requestVersion != Volatile.Read(ref _scopeRequestVersion)) return;
-            root ??= fallbackRoot;
-
-            if (root is null) return;
-
-            try
-            {
-                Automation.AddStructureChangedEventHandler(root, TreeScope.Subtree, _structureHandler);
-                if (requestVersion != Volatile.Read(ref _scopeRequestVersion))
-                {
-                    try { Automation.RemoveStructureChangedEventHandler(root, _structureHandler); } catch { }
-                    return;
-                }
-                _structureRoot = root;
-                _structureSubscribed = true;
-            }
-            catch
-            {
-                _structureRoot = null;
-                _structureSubscribed = false;
-            }
-
-            if (_structureRoot is not null)
-            {
-                try
-                {
-                    Automation.AddAutomationPropertyChangedEventHandler(
-                        _structureRoot,
-                        TreeScope.Subtree,
-                        _propertyHandler,
-                        AutomationElement.HasKeyboardFocusProperty,
-                        TogglePattern.ToggleStateProperty,
-                        SelectionItemPattern.IsSelectedProperty,
-                        ExpandCollapsePattern.ExpandCollapseStateProperty);
-                    _propertySubscribed = true;
-                }
-                catch
-                {
-                    _propertySubscribed = false;
-                }
-            }
-        }
-    }
-
-    private void RemoveStructureSubscriptionLocked()
-    {
-        if (_structureRoot is not null && _propertySubscribed)
-        {
-            try { Automation.RemoveAutomationPropertyChangedEventHandler(_structureRoot, _propertyHandler); } catch { }
-        }
-        _propertySubscribed = false;
-
-        if (!_structureSubscribed || _structureRoot is null)
-        {
-            _structureRoot = null;
-            _structureSubscribed = false;
-            return;
-        }
-
-        try { Automation.RemoveStructureChangedEventHandler(_structureRoot, _structureHandler); } catch { }
-        _structureRoot = null;
-        _structureSubscribed = false;
+        _ = GetWindowThreadProcessId(hwnd, out var pid);
+        if (unchecked((int)pid) != scope) return;
+        Signal();
     }
 
     private void Signal()
@@ -193,6 +84,7 @@ public sealed class GuidanceStateWatcher : IDisposable
         if (_disposed) return;
         Interlocked.Exchange(ref _lastSignalTicks, DateTime.UtcNow.Ticks);
         try { Changed?.Invoke(this, EventArgs.Empty); } catch { }
+
         if (Interlocked.Exchange(ref _queued, 1) != 0) return;
         try { _signal.Release(); }
         catch (SemaphoreFullException) { }
@@ -238,64 +130,33 @@ public sealed class GuidanceStateWatcher : IDisposable
             var ticks = Volatile.Read(ref _lastSignalTicks);
             if (ticks <= 0) return;
 
-            var lastSignalUtc = new DateTime(ticks, DateTimeKind.Utc);
-            var quietFor = DateTime.UtcNow - lastSignalUtc;
+            var quietFor = DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc);
             if (quietFor >= QuietPeriod) return;
 
             var remaining = QuietPeriod - quietFor;
-            var delay = remaining < TimeSpan.FromMilliseconds(120) ? remaining : TimeSpan.FromMilliseconds(120);
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(
+                remaining < TimeSpan.FromMilliseconds(80) ? remaining : TimeSpan.FromMilliseconds(80),
+                cancellationToken).ConfigureAwait(false);
         }
     }
 
     public void Stop()
     {
         var cts = _cts;
-        var pump = _pumpTask;
         _cts = null;
         _pumpTask = null;
-        Interlocked.Increment(ref _scopeRequestVersion);
-        if (cts is null) return;
-
-        cts.Cancel();
+        Interlocked.Exchange(ref _scopeProcessId, 0);
         Interlocked.Exchange(ref _queued, 0);
 
-        // Removing UIA subscriptions can block inside an external provider. Closing HelpSys must
-        // therefore only schedule cleanup and return to the dispatcher immediately.
-        _ = DrainStoppedPumpAndSubscriptionsAsync(pump, cts);
-    }
+        if (_eventHook != nint.Zero)
+        {
+            try { UnhookWinEvent(_eventHook); } catch { }
+            _eventHook = nint.Zero;
+        }
 
-    private async Task DrainStoppedPumpAndSubscriptionsAsync(Task? pump, CancellationTokenSource cts)
-    {
-        try
-        {
-            if (pump is not null) await pump.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
-        catch { }
-
-        try
-        {
-            await Task.Run(() =>
-            {
-                lock (_subscriptionGate)
-                {
-                    RemoveStructureSubscriptionLocked();
-                    _scopeProcessId = 0;
-                    if (_focusSubscribed)
-                    {
-                        try { Automation.RemoveAutomationFocusChangedEventHandler(_focusHandler); } catch { }
-                        _focusSubscribed = false;
-                    }
-                }
-            }).ConfigureAwait(false);
-        }
-        catch { }
-        finally
-        {
-            try { cts.Dispose(); } catch { }
-        }
+        if (cts is null) return;
+        try { cts.Cancel(); } catch { }
+        cts.Dispose();
     }
 
     public void Dispose()
@@ -304,5 +165,32 @@ public sealed class GuidanceStateWatcher : IDisposable
         _disposed = true;
         Stop();
         _signal.Dispose();
+        GC.SuppressFinalize(this);
     }
+
+    private delegate void WinEventDelegate(
+        nint hWinEventHook,
+        uint eventType,
+        nint hwnd,
+        int idObject,
+        int idChild,
+        uint idEventThread,
+        uint eventTime);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        nint hmodWinEventProc,
+        WinEventDelegate lpfnWinEventProc,
+        uint idProcess,
+        uint idThread,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
 }

@@ -1,12 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows.Automation;
 using HelpSys.Models;
 
 namespace HelpSys.Services;
 
-public sealed class SystemContextService
+public sealed class SystemContextService : IDisposable
 {
     private const uint EventSystemForeground = 0x0003;
     private const uint WineventOutofcontext = 0x0000;
@@ -15,20 +14,15 @@ public sealed class SystemContextService
     private const uint InteractionCandidateMaximumAgeMilliseconds = 2500;
     private const uint AutomaticInteractionHandoffMaximumAgeMilliseconds = 600;
     private static readonly TimeSpan RunningCacheTtl = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan BrowserCacheTtl = TimeSpan.FromMilliseconds(450);
     private readonly int _selfProcessId = Environment.ProcessId;
     private readonly object _cacheGate = new();
     private readonly object _foregroundGate = new();
     private readonly WinEventDelegate _foregroundDelegate;
-    private readonly nint _foregroundHook;
+    private nint _foregroundHook;
+    private int _disposed;
 
     private IReadOnlyList<string> _runningCache = [];
     private DateTime _runningCacheUtc = DateTime.MinValue;
-    private BrowserContextSnapshot? _browserCache;
-    private nint _browserCacheHwnd;
-    private string _browserCacheProcess = string.Empty;
-    private string _browserCacheTitle = string.Empty;
-    private DateTime _browserCacheUtc = DateTime.MinValue;
     private nint _lastExternalForeground;
     private nint _observedExternalForeground;
     private uint _observedExternalSinceTick;
@@ -38,7 +32,6 @@ public sealed class SystemContextService
     private uint _interactionCandidateCapturedTick;
     private nint _assistantInteractionForeground;
     private int _runningRefreshInFlight;
-    private int _browserRefreshInFlight;
 
     private static readonly HashSet<string> BrowserProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -62,7 +55,27 @@ public sealed class SystemContextService
 
     ~SystemContextService()
     {
-        if (_foregroundHook != nint.Zero) UnhookWinEvent(_foregroundHook);
+        Dispose(false);
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var hook = Interlocked.Exchange(ref _foregroundHook, nint.Zero);
+        if (hook != nint.Zero)
+        {
+            try { UnhookWinEvent(hook); } catch { }
+        }
+
+        // The native hook stores a function pointer. Keep the delegate rooted through UnhookWinEvent
+        // so it cannot be collected while user32 is tearing the callback down.
+        GC.KeepAlive(_foregroundDelegate);
     }
 
     public SystemContextSnapshot Capture()
@@ -87,7 +100,7 @@ public sealed class SystemContextService
         var running = GetCachedRunningProcesses(processName);
         var taskbarVisible = IsTaskbarActuallyVisible();
         var browser = BrowserProcesses.Contains(processName)
-            ? GetCachedBrowser(hwnd, processName, title)
+            ? new BrowserContextSnapshot(processName, title, null, null, null, false)
             : null;
 
         return new SystemContextSnapshot(processName, title, processId, taskbarVisible, running, browser)
@@ -203,56 +216,78 @@ public sealed class SystemContextService
         });
     }
 
-    private BrowserContextSnapshot GetCachedBrowser(nint hwnd, string processName, string title)
+    public SystemContextSnapshot EnrichWithObservedElements(
+        SystemContextSnapshot context,
+        IReadOnlyList<UiElementCandidate> elements)
     {
-        BrowserContextSnapshot? cached;
-        nint cachedHwnd;
-        string cachedProcess;
-        string cachedTitle;
-        DateTime capturedUtc;
-        lock (_cacheGate)
+        if (!BrowserProcesses.Contains(context.ForegroundProcess)) return context;
+
+        var foregroundElements = elements
+            .Where(x =>
+                (context.ForegroundProcessId > 0 && x.ProcessId == context.ForegroundProcessId) ||
+                x.ProcessName.Equals(context.ForegroundProcess, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        var address = foregroundElements
+            .Where(x => x.Interactable && x.ControlType is "Edit" or "ComboBox")
+            .Where(IsBrowserAddressCandidate)
+            .OrderByDescending(x => x.Focused)
+            .ThenByDescending(x => !string.IsNullOrWhiteSpace(x.Value))
+            .FirstOrDefault();
+
+        var normalizedUrl = NormalizeObservedUrl(address?.Value);
+        string? domain = null;
+        bool? https = null;
+        if (normalizedUrl is not null &&
+            Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var uri) &&
+            (uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+             uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
         {
-            cached = _browserCache;
-            cachedHwnd = _browserCacheHwnd;
-            cachedProcess = _browserCacheProcess;
-            cachedTitle = _browserCacheTitle;
-            capturedUtc = _browserCacheUtc;
+            domain = uri.Host.ToLowerInvariant();
+            https = uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
         }
 
-        var sameWindow = cached is not null && cachedHwnd == hwnd &&
-                         cachedProcess.Equals(processName, StringComparison.OrdinalIgnoreCase) &&
-                         cachedTitle.Equals(title, StringComparison.Ordinal);
-        if (!sameWindow || DateTime.UtcNow - capturedUtc >= BrowserCacheTtl)
-            QueueBrowserRefresh(hwnd, processName, title);
+        var browser = new BrowserContextSnapshot(
+            context.ForegroundProcess,
+            context.ForegroundTitle,
+            normalizedUrl,
+            domain,
+            https,
+            address?.Focused == true);
 
-        return sameWindow
-            ? cached!
-            : new BrowserContextSnapshot(processName, title, null, null, null, false);
+        return context with { Browser = browser };
     }
 
-    private void QueueBrowserRefresh(nint hwnd, string processName, string title)
+    private static bool IsBrowserAddressCandidate(UiElementCandidate element)
     {
-        if (hwnd == nint.Zero || Interlocked.CompareExchange(ref _browserRefreshInFlight, 1, 0) != 0) return;
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var fresh = TryCaptureBrowser(hwnd, processName, title);
-                lock (_cacheGate)
-                {
-                    _browserCache = fresh;
-                    _browserCacheHwnd = hwnd;
-                    _browserCacheProcess = processName;
-                    _browserCacheTitle = title;
-                    _browserCacheUtc = DateTime.UtcNow;
-                }
-            }
-            catch { }
-            finally
-            {
-                Interlocked.Exchange(ref _browserRefreshInFlight, 0);
-            }
-        });
+        var role = element.AutomationId ?? string.Empty;
+        if (role.Contains("role:browser_address", StringComparison.OrdinalIgnoreCase)) return true;
+
+        var hint = $"{element.Name} {element.AutomationId} {element.ClassName}";
+        return hint.Contains("address", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("location", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("url bar", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("web address", StringComparison.OrdinalIgnoreCase) ||
+               hint.Contains("アドレス", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeObservedUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (text.Length > 900) text = text[..900];
+
+        if (text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("chrome://", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("edge://", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+            return text;
+
+        if (text.Contains(' ') || !text.Contains('.')) return null;
+        return $"https://{text}";
     }
 
     private nint ResolveEffectiveForegroundWindow()
@@ -331,6 +366,7 @@ public sealed class SystemContextService
         uint eventThread,
         uint eventTime)
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
         if (eventType == EventSystemForeground) ObserveForegroundWindow(hwnd, eventTime);
     }
 
@@ -424,114 +460,6 @@ public sealed class SystemContextService
         return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).Take(48).ToArray();
     }
 
-    private static BrowserContextSnapshot TryCaptureBrowser(nint hwnd, string processName, string title)
-    {
-        if (hwnd == nint.Zero) return new BrowserContextSnapshot(processName, title, null, null, null, false);
-
-        string? bestValue = null;
-        var bestScore = int.MinValue;
-        var addressFieldFocused = false;
-
-        try
-        {
-            var root = AutomationElement.FromHandle(hwnd);
-            if (root is null) return new BrowserContextSnapshot(processName, title, null, null, null, false);
-
-            var walker = TreeWalker.ControlViewWalker;
-            var queue = new Queue<(AutomationElement Element, int Depth)>();
-            EnqueueChildren(walker, root, 0, queue);
-            var visited = 0;
-            var stopwatch = Stopwatch.StartNew();
-
-            while (queue.Count > 0 && visited < 1200 && stopwatch.Elapsed < TimeSpan.FromMilliseconds(700))
-            {
-                var (element, depth) = queue.Dequeue();
-                visited++;
-                try
-                {
-                    var current = element.Current;
-                    if (!current.IsOffscreen && current.ControlType == ControlType.Edit)
-                    {
-                        var name = current.Name ?? string.Empty;
-                        var automationId = current.AutomationId ?? string.Empty;
-                        var className = current.ClassName ?? string.Empty;
-                        var hint = $"{name} {automationId} {className}";
-
-                        if (!ContainsAddressHint(hint))
-                        {
-                            if (depth < 8) EnqueueChildren(walker, element, depth + 1, queue);
-                            continue;
-                        }
-
-                        if (current.HasKeyboardFocus) addressFieldFocused = true;
-
-                        string? value = null;
-                        if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
-                            value = valuePattern.Current.Value;
-
-                        if (LooksLikeLocationValue(value))
-                        {
-                            var score = 150 + (current.HasKeyboardFocus ? 12 : 0);
-                            if (score > bestScore)
-                            {
-                                bestScore = score;
-                                bestValue = value!.Trim();
-                            }
-                        }
-                    }
-                }
-                catch (ElementNotAvailableException) { }
-                catch (InvalidOperationException) { }
-
-                if (depth < 8) EnqueueChildren(walker, element, depth + 1, queue);
-            }
-        }
-        catch { }
-
-        var normalizedUrl = NormalizeUrl(bestValue);
-        string? domain = null;
-        bool? https = null;
-        if (normalizedUrl is not null && Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var uri) &&
-            (uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)))
-        {
-            domain = uri.Host.ToLowerInvariant();
-            https = uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return new BrowserContextSnapshot(processName, title, normalizedUrl, domain, https, addressFieldFocused);
-    }
-
-    private static bool ContainsAddressHint(string value) =>
-        value.Contains("address", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("location", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("omnibox", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("urlbar", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("url bar", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("web address", StringComparison.OrdinalIgnoreCase) ||
-        value.Contains("アドレス", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeLocationValue(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        var text = value.Trim();
-        if (text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return true;
-        if (text.StartsWith("chrome://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("edge://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("about:", StringComparison.OrdinalIgnoreCase)) return true;
-        if (text.Contains(' ') || text.Length < 4) return false;
-        return text.Contains('.') && !text.Contains('\n') && !text.Contains('\r');
-    }
-
-    private static string? NormalizeUrl(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var text = value.Trim();
-        if (text.Length > 900) text = text[..900];
-        if (text.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-            text.StartsWith("chrome://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("edge://", StringComparison.OrdinalIgnoreCase) ||
-            text.StartsWith("about:", StringComparison.OrdinalIgnoreCase)) return text;
-        if (text.Contains(' ') || !text.Contains('.')) return null;
-        return $"https://{text}";
-    }
-
     private static bool IsTaskbarActuallyVisible()
     {
         return TaskbarWindowIsVisible(FindWindow("Shell_TrayWnd", null)) ||
@@ -553,20 +481,6 @@ public sealed class SystemContextService
         var builder = new StringBuilder(Math.Min(length + 1, 600));
         GetWindowText(hwnd, builder, builder.Capacity);
         return builder.ToString();
-    }
-
-    private static void EnqueueChildren(TreeWalker walker, AutomationElement parent, int depth, Queue<(AutomationElement Element, int Depth)> queue)
-    {
-        try
-        {
-            var child = walker.GetFirstChild(parent);
-            while (child is not null)
-            {
-                queue.Enqueue((child, depth));
-                child = walker.GetNextSibling(child);
-            }
-        }
-        catch (ElementNotAvailableException) { }
     }
 
     private delegate void WinEventDelegate(

@@ -13,12 +13,17 @@ public sealed class CloudGuideService : IDisposable
         "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost", "ApplicationFrameHost"
     };
 
-    private SystemContextService _contextVerifier = new();
+    private SystemContextService? _contextVerifier;
     private Func<long>? _privacyEpochProvider;
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly PrivacyGate _privacyGate;
     private readonly CloudAiAdapter _adapter;
     private readonly bool _ownsAdapter;
+    private readonly object _circuitGate = new();
+    private int _consecutiveTransientFailures;
+    private DateTime _circuitOpenUntilUtc = DateTime.MinValue;
+    private const int CircuitFailureThreshold = 3;
+    private static readonly TimeSpan CircuitOpenDuration = TimeSpan.FromSeconds(8);
 
     public CloudGuideService(PrivacyGate? privacyGate = null, CloudAiAdapter? adapter = null)
     {
@@ -73,17 +78,7 @@ public sealed class CloudGuideService : IDisposable
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
-        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, false, null, cancellationToken);
-
-    public Task<QualityGuideDecision> PlanRecoveryAsync(
-        string request,
-        string routeIssue,
-        ScreenCaptureFrame frame,
-        IReadOnlyList<UiElementCandidate> elements,
-        IReadOnlyList<GuideHistoryItem> history,
-        SystemContextSnapshot systemContext,
-        CancellationToken cancellationToken = default)
-        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, true, routeIssue, cancellationToken);
+        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, cancellationToken);
 
     private async Task<QualityGuideDecision> PlanQualityCoreAsync(
         string request,
@@ -91,19 +86,65 @@ public sealed class CloudGuideService : IDisposable
         IReadOnlyList<UiElementCandidate> elements,
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
-        bool recoveryMode,
-        string? routeIssue,
         CancellationToken cancellationToken)
     {
         EnsureCloudConfigured();
         var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
-        var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
+        var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, false, null);
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
-        var decision = await SendAsync<QualityGuideDecision>("/v1/quality-guide", approval.Body!, cancellationToken);
+
+        QualityGuideDecision decision;
+        try
+        {
+            decision = await SendAsync<QualityGuideDecision>("/v2/plan", approval.Body!, cancellationToken);
+        }
+        catch (GuideServiceException ex) when (IsUnsupportedUnifiedRoute(ex))
+        {
+            // Temporary production compatibility: the currently deployed Stable 3.0 Worker
+            // exposes /v1/plan rather than /v2/plan. Re-run the same current observation through
+            // a privacy-approved compatibility payload; this is a route/schema adapter, not a
+            // second planning strategy.
+            var stableApproval = _privacyGate.ApproveStablePlanCompatibility(
+                request,
+                frame,
+                relevantElements,
+                systemContext);
+            EnsureApproved(stableApproval);
+            EnsurePlanningContextCurrent(systemContext);
+            EnsurePrivacyEpochCurrent(privacyEpoch);
+
+            var legacy = await SendAsync<StablePlanCompatibilityResponse>(
+                "/v1/plan",
+                stableApproval.Body!,
+                cancellationToken,
+                TimeSpan.FromSeconds(28));
+
+            var visualOnly =
+                string.IsNullOrWhiteSpace(legacy.TargetId) &&
+                legacy.Action is "left_click" or "double_click" &&
+                legacy.Width > 0 &&
+                legacy.Height > 0;
+
+            decision = new QualityGuideDecision(
+                legacy.Status,
+                visualOnly ? "vision-target" : legacy.TargetId,
+                legacy.Action,
+                legacy.Instruction,
+                legacy.Question,
+                legacy.Key,
+                legacy.Confidence,
+                legacy.X,
+                legacy.Y,
+                legacy.Width,
+                legacy.Height,
+                true,
+                "current screenshot + UI Automation (Stable 3.0 compatibility route)");
+        }
+
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
@@ -127,7 +168,7 @@ public sealed class CloudGuideService : IDisposable
 
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
-        var decision = await SendAsync<GuideDecision>("/v1/guide", approval.Body!, cancellationToken);
+        var decision = await SendAsync<GuideDecision>("/v2/plan", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
@@ -229,34 +270,38 @@ public sealed class CloudGuideService : IDisposable
 
         relevant = FilterWindowChromeForTask(relevant, request);
 
+        const int totalBudget = 96;
         var office = foregroundName.Equals("excel", StringComparison.OrdinalIgnoreCase) ||
                      foregroundName.Equals("winword", StringComparison.OrdinalIgnoreCase) ||
                      foregroundName.Equals("powerpnt", StringComparison.OrdinalIgnoreCase);
-        var contextBudget = systemContext.Browser is not null ? 110 : office ? 100 : 60;
-        var interactiveBudget = 280 - contextBudget;
+        var contextBudget = systemContext.Browser is not null ? 28 : office ? 32 : 20;
+        var interactiveBudget = totalBudget - contextBudget;
+        var goalTerms = GoalTerms(request);
 
-        var selected = new List<UiElementCandidate>(280);
+        var selected = new List<UiElementCandidate>(totalBudget);
         selected.AddRange(relevant
             .Where(x => x.Interactable)
-            .OrderByDescending(x => x.Focused)
+            .OrderByDescending(x => CandidateGoalPriority(x, goalTerms))
+            .ThenByDescending(x => x.Focused)
             .ThenByDescending(x => x.Enabled)
             .ThenByDescending(x => !string.IsNullOrWhiteSpace(x.Name))
             .Take(interactiveBudget));
 
         selected.AddRange(relevant
             .Where(x => !x.Interactable && !string.IsNullOrWhiteSpace(x.Name))
-            .OrderByDescending(ContextPriority)
+            .OrderByDescending(x => ContextPriority(x) + CandidateGoalPriority(x, goalTerms))
             .Take(contextBudget));
 
-        if (selected.Count < 280)
+        if (selected.Count < totalBudget)
         {
             var selectedIds = selected.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
             selected.AddRange(relevant
                 .Where(x => !selectedIds.Contains(x.Id))
-                .Take(280 - selected.Count));
+                .OrderByDescending(x => CandidateGoalPriority(x, goalTerms))
+                .Take(totalBudget - selected.Count));
         }
 
-        return selected.Take(280).ToArray();
+        return selected.Take(totalBudget).ToArray();
     }
 
     private static UiElementCandidate[] FilterWindowChromeForTask(
@@ -316,6 +361,41 @@ public sealed class CloudGuideService : IDisposable
         return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static string[] GoalTerms(string? request)
+    {
+        if (string.IsNullOrWhiteSpace(request)) return [];
+        return request
+            .ToLowerInvariant()
+            .Split([' ', '　', '\t', '\r', '\n', '、', '。', ',', '.', '/', '／'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(x => x.Length >= 2)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .ToArray();
+    }
+
+    private static int CandidateGoalPriority(UiElementCandidate item, IReadOnlyList<string> goalTerms)
+    {
+        var score = item.Focused ? 120 : 0;
+        if (item.Enabled) score += 15;
+        if (item.Interactable) score += 20;
+        if ((item.AutomationId ?? string.Empty).Contains("role:", StringComparison.OrdinalIgnoreCase)) score += 35;
+
+        var haystack = $"{item.Name} {item.AutomationId} {item.ClassName}".ToLowerInvariant();
+        foreach (var term in goalTerms)
+        {
+            if (haystack.Contains(term, StringComparison.OrdinalIgnoreCase)) score += 45;
+        }
+
+        score += item.ControlType switch
+        {
+            "Edit" or "ComboBox" => 28,
+            "Button" or "Hyperlink" or "MenuItem" => 24,
+            "TabItem" or "ListItem" or "TreeItem" => 18,
+            _ => 0
+        };
+        return score;
+    }
+
     private static int ContextPriority(UiElementCandidate item)
     {
         var score = item.ControlType switch
@@ -337,7 +417,10 @@ public sealed class CloudGuideService : IDisposable
 
     private void EnsurePlanningContextCurrent(SystemContextSnapshot expected)
     {
-        var current = _contextVerifier.Capture();
+        var verifier = _contextVerifier ?? throw new GuideServiceException(
+            GuideFailureKind.ContextChanged,
+            "現在画面の検証器が初期化されていないため、案内結果を使用しません。");
+        var current = verifier.Capture();
         var foregroundChanged = expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0 ||
                                 expected.ForegroundProcessId != current.ForegroundProcessId ||
                                 !expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
@@ -354,18 +437,28 @@ public sealed class CloudGuideService : IDisposable
             throw new GuideServiceException(GuideFailureKind.ContextChanged, "操作中の画面が切り替わったため、古い案内応答を破棄しました。");
     }
 
-    private async Task<T> SendAsync<T>(string path, object body, CancellationToken cancellationToken)
+    private async Task<T> SendAsync<T>(
+        string path,
+        object body,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout = null)
     {
+        EnsureCircuitAllowsRequest();
         GuideServiceException? lastTransientError = null;
 
-        for (var attempt = 0; attempt < 1; attempt++)
+        // One immediate transport retry is allowed. Higher layers must not start a second planner
+        // for the same observation merely because the network had a transient failure.
+        for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
+                var response = await PerformanceTrace.MeasureAsync(
+                    CloudPhase(path),
+                    () => _adapter.PostJsonAsync(path, body, timeout ?? AttemptTimeout, cancellationToken));
                 if (response.IsSuccessStatusCode)
                 {
+                    ResetCircuit();
                     try
                     {
                         return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions)
@@ -377,9 +470,15 @@ public sealed class CloudGuideService : IDisposable
                     }
                 }
 
-                var kind = IsTransientStatus(response.StatusCode) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
+                var transient = IsTransientStatus(response.StatusCode);
+                var kind = transient ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
                 var apiError = new GuideServiceException(kind, $"HelpSys API {response.StatusCode}: {Short(response.Body)}");
-                if (!IsTransientStatus(response.StatusCode) || attempt > 0) throw apiError;
+                if (!transient)
+                {
+                    ResetCircuit();
+                    throw apiError;
+                }
+
                 lastTransientError = apiError;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -388,21 +487,82 @@ public sealed class CloudGuideService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が6秒を超えました。");
-                if (attempt > 0) throw timeoutError;
-                lastTransientError = timeoutError;
+                lastTransientError = new GuideServiceException(
+                    GuideFailureKind.ServiceUnavailable,
+                    "案内モデルの応答が6秒を超えました。");
             }
             catch (HttpRequestException ex)
             {
-                var networkError = new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
-                if (attempt > 0) throw networkError;
-                lastTransientError = networkError;
+                lastTransientError = new GuideServiceException(
+                    GuideFailureKind.Network,
+                    "HelpSys APIへの通信に失敗しました。",
+                    ex);
             }
 
-            await Task.Delay(250, cancellationToken);
+            if (attempt == 0)
+                await Task.Delay(220, cancellationToken);
         }
 
+        RecordTransientFailure();
         throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
+    }
+
+    private void EnsureCircuitAllowsRequest()
+    {
+        lock (_circuitGate)
+        {
+            if (_circuitOpenUntilUtc <= DateTime.UtcNow) return;
+            throw new GuideServiceException(
+                GuideFailureKind.ServiceUnavailable,
+                "案内サービスの一時障害が続いているため、短時間の自動再試行を停止しています。");
+        }
+    }
+
+    private void RecordTransientFailure()
+    {
+        lock (_circuitGate)
+        {
+            _consecutiveTransientFailures++;
+            if (_consecutiveTransientFailures < CircuitFailureThreshold) return;
+            _circuitOpenUntilUtc = DateTime.UtcNow + CircuitOpenDuration;
+            _consecutiveTransientFailures = 0;
+        }
+    }
+
+    private void ResetCircuit()
+    {
+        lock (_circuitGate)
+        {
+            _consecutiveTransientFailures = 0;
+            _circuitOpenUntilUtc = DateTime.MinValue;
+        }
+    }
+
+    private static bool IsUnsupportedUnifiedRoute(GuideServiceException error)
+        => error.Kind == GuideFailureKind.Rejected &&
+           (error.Message.Contains("HelpSys API 404", StringComparison.OrdinalIgnoreCase) ||
+            error.Message.Contains("HelpSys API 405", StringComparison.OrdinalIgnoreCase));
+
+    private sealed record StablePlanCompatibilityResponse(
+        string Status,
+        string Action,
+        string Instruction,
+        string? Question,
+        string? TargetId,
+        string? Key,
+        double Confidence,
+        double X,
+        double Y,
+        double Width,
+        double Height);
+
+    private static string CloudPhase(string path)
+    {
+        if (path.Equals("/v2/plan", StringComparison.OrdinalIgnoreCase)) return "cloud.plan";
+        if (path.Contains("quality-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.quality-plan";
+        if (path.Contains("vision-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.vision-plan";
+        if (path.Contains("/guide", StringComparison.OrdinalIgnoreCase)) return "cloud.structured-plan";
+        return "cloud.request";
     }
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;

@@ -148,11 +148,8 @@ public partial class MainWindow
         var targetName = _localChoiceTargetActive
             ? "利用者が選んだアカウント"
             : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
-        string? retryMessage = null;
-        string? routeRecoveryIssue = null;
         bool replan = false;
         bool advance = false;
-        bool forceVision = false;
 
         try
         {
@@ -164,57 +161,14 @@ public partial class MainWindow
             {
                 _consecutiveFailures++;
                 _doubleClickCount = 0;
-
-                if (_consecutiveFailures == 1)
-                {
-                    var stillValid = await RevalidateCurrentTargetV3Async(_sessionCts.Token);
-                    if (!_sessionState.IsCurrent(generation)) return;
-                    if (!stillValid)
-                    {
-                        _history.Add(new GuideHistoryItem(_stepNumber, $"stale_{decision.Action}", targetName, "再試行前に対象が消えたため、同じ操作を繰り返さず現在画面から再計画する。"));
-                        if (_history.Count > 12) _history.RemoveAt(0);
-                        ClearCurrentGuidanceV3();
-                        replan = true;
-                    }
-                    else
-                    {
-                        _stepSystemBaseline = _systemContext.Capture();
-                        if (!HasUsableForeground(_stepSystemBaseline))
-                        {
-                            _history.Add(new GuideHistoryItem(_stepNumber, "foreground_lost", targetName, "操作後の前面アプリを一時的に特定できないため、現在画面を取り直して通常案内を再計画する。"));
-                            if (_history.Count > 12) _history.RemoveAt(0);
-                            ClearCurrentGuidanceV3();
-                            replan = true;
-                        }
-                        else
-                        {
-                            _stepBaseline = await _scanner.CaptureCandidatesForProcessAsync(_stepSystemBaseline.ForegroundProcessId, 420, _sessionCts.Token);
-                            if (!_sessionState.IsCurrent(generation)) return;
-
-                            if (decision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase))
-                                retryMessage = "まだ次の画面へ進んでいません。入力欄の文字が正しければ、文字は追加せず「Enter」と書かれたキーを1回押してください。";
-                            else if (decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase))
-                                retryMessage = "まだ画面が変わっていません。同じ青い枠の場所で、マウスの左ボタンを間をあけずに2回押してください。";
-                            else
-                                retryMessage = $"まだ画面が変わっていません。青い枠が同じ場所にあることを確認して、もう一度同じ操作をしてください。{decision.Instruction}";
-                        }
-                    }
-                }
-                else
-                {
-                    _history.Add(new GuideHistoryItem(_stepNumber, $"failed_{decision.Action}", targetName, decision.Instruction));
-                    if (_history.Count > 12) _history.RemoveAt(0);
-                    ClearCurrentGuidanceV3();
-                    if (_consecutiveFailures == 2)
-                    {
-                        _forceVisionNext = true;
-                        forceVision = true;
-                    }
-                    else
-                    {
-                        routeRecoveryIssue = "同じ操作を複数回行っても状態が変わらないため、別の安全な経路を選ぶ";
-                    }
-                }
+                _history.Add(new GuideHistoryItem(
+                    _stepNumber,
+                    $"no_effect_{decision.Action}",
+                    targetName,
+                    "案内した操作の期待結果を確認できなかったため、同じ操作を繰り返さず現在状態から再計画する。"));
+                if (_history.Count > 12) _history.RemoveAt(0);
+                ClearCurrentGuidanceV3();
+                replan = true;
             }
             else
             {
@@ -233,28 +187,9 @@ public partial class MainWindow
 
         if (!_sessionState.IsCurrent(generation) || _sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
 
-        if (retryMessage is not null)
-        {
-            if (!_sessionState.TryTransition(generation, GuidanceSessionState.AwaitingUserAction)) return;
-            SetState(retryMessage, speak: true);
-            return;
-        }
-
-        if (routeRecoveryIssue is not null)
-        {
-            await TryRouteRecoveryAsync(routeRecoveryIssue, generation, _sessionCts.Token);
-            return;
-        }
-
         if (replan)
         {
-            SetState("案内していた場所が変わったため、現在の画面から案内を作り直しています…", speak: false);
-            await AdvanceGuideAsync();
-            return;
-        }
-
-        if (forceVision)
-        {
+            SetState("同じ操作は繰り返さず、現在の画面から案内を作り直しています…", speak: false);
             await AdvanceGuideAsync();
             return;
         }
@@ -327,33 +262,119 @@ public partial class MainWindow
                              (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
                               _currentTarget?.ControlType is "Edit" or "ComboBox");
         var targetBefore = _currentTarget;
-        var rootProcessId = systemBefore?.ForegroundProcessId ?? 0;
+        var expectation = _currentDecision is not null
+            ? ActionExpectation.From(_currentDecision, targetBefore)
+            : new ActionExpectation(ActionEffectKind.NavigationOrContentChange, action, targetBefore);
 
-        await Task.Delay(action.Equals("double_click", StringComparison.OrdinalIgnoreCase) ? 900 : 450, cancellationToken);
-        var stopwatch = Stopwatch.StartNew();
-
-        while (stopwatch.Elapsed < TimeSpan.FromSeconds(7.5))
+        // The watcher is WinEvent-based. Do not poll UIA repeatedly while waiting for the action.
+        var changedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler handler = (_, _) => changedSignal.TrySetResult(true);
+        _liveWatcher.Changed += handler;
+        try
         {
+            var immediateSystem = _systemContext.Capture();
+            if (HasSystemTransitionV3(systemBefore, immediateSystem)) return true;
+
+            var initialDelay = action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+                ? TimeSpan.FromMilliseconds(420)
+                : TimeSpan.FromMilliseconds(220);
+            await Task.Delay(initialDelay, cancellationToken);
+
+            var timeout = Task.Delay(TimeSpan.FromMilliseconds(2600), cancellationToken);
+            await Task.WhenAny(changedSignal.Task, timeout);
             cancellationToken.ThrowIfCancellationRequested();
-            var first = rootProcessId > 0
-                ? await _scanner.CaptureCandidatesForProcessAsync(rootProcessId, 420, cancellationToken)
-                : [];
-            var firstSystem = _systemContext.Capture();
-            if (!HasStableTransitionV3(before, systemBefore, first, firstSystem, strong, allowFocusOnly, targetBefore, action))
+
+            if (changedSignal.Task.IsCompleted)
+                await Task.Delay(180, cancellationToken);
+
+            ObservationSnapshot afterSnapshot;
+            try
             {
-                await Task.Delay(350, cancellationToken);
-                continue;
+                afterSnapshot = await _observationBroker.CaptureAsync(240, cancellationToken);
+            }
+            catch (ObservationChangedException)
+            {
+                var current = _systemContext.Capture();
+                return HasSystemTransitionV3(systemBefore, current);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
             }
 
-            await Task.Delay(strong ? 650 : 400, cancellationToken);
-            var second = rootProcessId > 0
-                ? await _scanner.CaptureCandidatesForProcessAsync(rootProcessId, 420, cancellationToken)
-                : [];
-            var secondSystem = _systemContext.Capture();
-            if (HasStableTransitionV3(before, systemBefore, second, secondSystem, strong, allowFocusOnly, targetBefore, action)) return true;
+            return HasExpectedEffectV3(
+                expectation,
+                before,
+                systemBefore,
+                afterSnapshot.Elements,
+                afterSnapshot.System,
+                strong,
+                allowFocusOnly);
         }
+        finally
+        {
+            _liveWatcher.Changed -= handler;
+        }
+    }
 
-        return false;
+    private static bool HasExpectedEffectV3(
+        ActionExpectation expectation,
+        IReadOnlyList<UiElementCandidate> before,
+        SystemContextSnapshot? systemBefore,
+        IReadOnlyList<UiElementCandidate> after,
+        SystemContextSnapshot systemAfter,
+        bool strong,
+        bool allowFocusOnly)
+    {
+        // A foreground/window/browser transition is strong causal evidence for every action type.
+        if (HasSystemTransitionV3(systemBefore, systemAfter)) return true;
+
+        var targetBefore = expectation.Target;
+        var current = targetBefore is null ? null : FindMatchingTargetV3(targetBefore, after);
+
+        switch (expectation.Kind)
+        {
+            case ActionEffectKind.FocusTarget:
+                return targetBefore is not null &&
+                       current is not null &&
+                       !targetBefore.Focused &&
+                       current.Focused;
+
+            case ActionEffectKind.ToggleOrSelection:
+                if (targetBefore is null || current is null) return false;
+                var toggled = !string.Equals(
+                    targetBefore.ToggleState,
+                    current.ToggleState,
+                    StringComparison.Ordinal) &&
+                    (targetBefore.ToggleState is not null || current.ToggleState is not null);
+                var selected = targetBefore.Selected != current.Selected &&
+                               (targetBefore.Selected.HasValue || current.Selected.HasValue);
+                return toggled || selected;
+
+            case ActionEffectKind.SelectionOrExpansion:
+                if (targetBefore is null || current is null) return false;
+                var selectionChanged = targetBefore.Selected != current.Selected &&
+                                       (targetBefore.Selected.HasValue || current.Selected.HasValue);
+                var expansionChanged = !string.Equals(
+                    targetBefore.ExpandCollapseState,
+                    current.ExpandCollapseState,
+                    StringComparison.Ordinal) &&
+                    (targetBefore.ExpandCollapseState is not null || current.ExpandCollapseState is not null);
+                return selectionChanged || expansionChanged;
+
+            case ActionEffectKind.TextSubmission:
+            case ActionEffectKind.NavigationOrContentChange:
+            default:
+                return HasStableTransitionV3(
+                    before,
+                    systemBefore,
+                    after,
+                    systemAfter,
+                    strong,
+                    allowFocusOnly,
+                    targetBefore,
+                    expectation.Action);
+        }
     }
 
     private static bool HasStableTransitionV3(

@@ -21,9 +21,11 @@ internal sealed class UiAutomationObserverClient : IDisposable
         int maxCandidates,
         CancellationToken cancellationToken)
     {
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(NewId(), "capture", MaxCandidates: maxCandidates),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.capture",
+            () => SendAsync(
+                new UiAutomationObserverRequest(NewId(), "capture", MaxCandidates: maxCandidates),
+                cancellationToken));
         return response.Candidates ?? [];
     }
 
@@ -33,13 +35,15 @@ internal sealed class UiAutomationObserverClient : IDisposable
         CancellationToken cancellationToken)
     {
         if (processId <= 0) return [];
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(
-                NewId(),
-                "capture-process",
-                ProcessId: processId,
-                MaxCandidates: maxCandidates),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.capture-process",
+            () => SendAsync(
+                new UiAutomationObserverRequest(
+                    NewId(),
+                    "capture-process",
+                    ProcessId: processId,
+                    MaxCandidates: maxCandidates),
+                cancellationToken));
         return response.Candidates ?? [];
     }
 
@@ -48,13 +52,15 @@ internal sealed class UiAutomationObserverClient : IDisposable
         int? rootProcessId,
         CancellationToken cancellationToken)
     {
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(
-                NewId(),
-                "revalidate",
-                Candidate: candidate,
-                RootProcessId: rootProcessId ?? 0),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.revalidate",
+            () => SendAsync(
+                new UiAutomationObserverRequest(
+                    NewId(),
+                    "revalidate",
+                    Candidate: candidate,
+                    RootProcessId: rootProcessId ?? 0),
+                cancellationToken));
         return response.Candidate;
     }
 
@@ -62,15 +68,17 @@ internal sealed class UiAutomationObserverClient : IDisposable
         Rect approximateBounds,
         CancellationToken cancellationToken)
     {
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(
-                NewId(),
-                "snap",
-                X: approximateBounds.X,
-                Y: approximateBounds.Y,
-                Width: approximateBounds.Width,
-                Height: approximateBounds.Height),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.snap",
+            () => SendAsync(
+                new UiAutomationObserverRequest(
+                    NewId(),
+                    "snap",
+                    X: approximateBounds.X,
+                    Y: approximateBounds.Y,
+                    Width: approximateBounds.Width,
+                    Height: approximateBounds.Height),
+                cancellationToken));
         return response.Bounds is { } bounds
             ? new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height)
             : null;
@@ -80,15 +88,17 @@ internal sealed class UiAutomationObserverClient : IDisposable
         Rect approximateBounds,
         CancellationToken cancellationToken)
     {
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(
-                NewId(),
-                "snap-candidate",
-                X: approximateBounds.X,
-                Y: approximateBounds.Y,
-                Width: approximateBounds.Width,
-                Height: approximateBounds.Height),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.snap-candidate",
+            () => SendAsync(
+                new UiAutomationObserverRequest(
+                    NewId(),
+                    "snap-candidate",
+                    X: approximateBounds.X,
+                    Y: approximateBounds.Y,
+                    Width: approximateBounds.Width,
+                    Height: approximateBounds.Height),
+                cancellationToken));
         return response.Candidate;
     }
 
@@ -97,13 +107,15 @@ internal sealed class UiAutomationObserverClient : IDisposable
         int expectedProcessId,
         CancellationToken cancellationToken)
     {
-        var response = await SendAsync(
-            new UiAutomationObserverRequest(
-                NewId(),
-                "diagnostics",
-                WindowHandle: (long)windowHandle,
-                ExpectedProcessId: expectedProcessId),
-            cancellationToken);
+        var response = await PerformanceTrace.MeasureAsync(
+            "uia.diagnostics",
+            () => SendAsync(
+                new UiAutomationObserverRequest(
+                    NewId(),
+                    "diagnostics",
+                    WindowHandle: (long)windowHandle,
+                    ExpectedProcessId: expectedProcessId),
+                cancellationToken));
         return response.Diagnostics ?? "observer=missing-diagnostics";
     }
 
