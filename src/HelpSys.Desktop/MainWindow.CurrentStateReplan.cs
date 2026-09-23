@@ -26,7 +26,7 @@ public partial class MainWindow
             "current_state_replan",
             "現在の画面",
             $"一時的または技術的な画面不確実性を検出したため、復帰経路ではなく現在状態を再取得する ({attempt}/{MaximumAutomaticCurrentStateReplans}): {reason}"));
-        if (_history.Count > 12) _history.RemoveAt(0);
+        if (_history.Count > 64) _history.RemoveAt(0);
 
         _speechOutput.Stop();
         ClearCurrentGuidanceV3();
