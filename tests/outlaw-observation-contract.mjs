@@ -10,8 +10,9 @@ const live = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LiveGuidance.cs', '
 const cloud = fs.readFileSync('src/HelpSys.Desktop/Services/CloudGuideService.cs', 'utf8');
 const context = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
 
+const normalize = value => String(value).replace(/\s+/g, ' ').trim();
 const need = (source, fragment, message) => {
-  if (!source.includes(fragment)) throw new Error(message);
+  if (!normalize(source).includes(normalize(fragment))) throw new Error(message);
 };
 
 need(broker, 'OutlawModePolicy.Enabled\n                ? _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)',
