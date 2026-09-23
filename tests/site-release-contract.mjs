@@ -54,8 +54,8 @@ assert(index.includes('/download は常に最新版'), 'Public site must disclos
 assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must use local stable routes, not a direct versioned ZIP URL.');
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing.');
 
-assert(release.includes('branches: [main]'), 'Unified release must publish from main.');
-assert(!release.includes('paths:'), 'Unified latest release must not silently skip main updates because of a path filter.');
+assert(release.includes('branches: [main, refactor/why5-root-cause-v10]'), 'Unified release must publish from main and the active v10 release-candidate branch.');
+assert(!release.includes('paths:'), 'Unified latest release must not silently skip release-branch updates because of a path filter.');
 assert(release.includes(STABLE_ALIAS), 'Release workflow must publish the stable HelpSys alias.');
 assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Release workflow must also publish a traceable commit-specific asset.');
 assert(release.includes('--clobber'), 'Stable latest asset must be replaced in-place on every release run.');
