@@ -19,6 +19,11 @@ public sealed class CloudGuideService : IDisposable
     private readonly PrivacyGate _privacyGate;
     private readonly CloudAiAdapter _adapter;
     private readonly bool _ownsAdapter;
+    private readonly object _circuitGate = new();
+    private int _consecutiveTransientFailures;
+    private DateTime _circuitOpenUntilUtc = DateTime.MinValue;
+    private const int CircuitFailureThreshold = 3;
+    private static readonly TimeSpan CircuitOpenDuration = TimeSpan.FromSeconds(8);
 
     public CloudGuideService(PrivacyGate? privacyGate = null, CloudAiAdapter? adapter = null)
     {
@@ -356,9 +361,12 @@ public sealed class CloudGuideService : IDisposable
 
     private async Task<T> SendAsync<T>(string path, object body, CancellationToken cancellationToken)
     {
+        EnsureCircuitAllowsRequest();
         GuideServiceException? lastTransientError = null;
 
-        for (var attempt = 0; attempt < 1; attempt++)
+        // One immediate transport retry is allowed. Higher layers must not start a second planner
+        // for the same observation merely because the network had a transient failure.
+        for (var attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -366,6 +374,7 @@ public sealed class CloudGuideService : IDisposable
                 var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
+                    ResetCircuit();
                     try
                     {
                         return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions)
@@ -377,9 +386,15 @@ public sealed class CloudGuideService : IDisposable
                     }
                 }
 
-                var kind = IsTransientStatus(response.StatusCode) ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
+                var transient = IsTransientStatus(response.StatusCode);
+                var kind = transient ? GuideFailureKind.ServiceUnavailable : GuideFailureKind.Rejected;
                 var apiError = new GuideServiceException(kind, $"HelpSys API {response.StatusCode}: {Short(response.Body)}");
-                if (!IsTransientStatus(response.StatusCode) || attempt > 0) throw apiError;
+                if (!transient)
+                {
+                    ResetCircuit();
+                    throw apiError;
+                }
+
                 lastTransientError = apiError;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -388,21 +403,55 @@ public sealed class CloudGuideService : IDisposable
             }
             catch (OperationCanceledException)
             {
-                var timeoutError = new GuideServiceException(GuideFailureKind.ServiceUnavailable, "案内モデルの応答が6秒を超えました。");
-                if (attempt > 0) throw timeoutError;
-                lastTransientError = timeoutError;
+                lastTransientError = new GuideServiceException(
+                    GuideFailureKind.ServiceUnavailable,
+                    "案内モデルの応答が6秒を超えました。");
             }
             catch (HttpRequestException ex)
             {
-                var networkError = new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。", ex);
-                if (attempt > 0) throw networkError;
-                lastTransientError = networkError;
+                lastTransientError = new GuideServiceException(
+                    GuideFailureKind.Network,
+                    "HelpSys APIへの通信に失敗しました。",
+                    ex);
             }
 
-            await Task.Delay(250, cancellationToken);
+            if (attempt == 0)
+                await Task.Delay(220, cancellationToken);
         }
 
+        RecordTransientFailure();
         throw lastTransientError ?? new GuideServiceException(GuideFailureKind.Network, "HelpSys APIへの通信に失敗しました。");
+    }
+
+    private void EnsureCircuitAllowsRequest()
+    {
+        lock (_circuitGate)
+        {
+            if (_circuitOpenUntilUtc <= DateTime.UtcNow) return;
+            throw new GuideServiceException(
+                GuideFailureKind.ServiceUnavailable,
+                "案内サービスの一時障害が続いているため、短時間の自動再試行を停止しています。");
+        }
+    }
+
+    private void RecordTransientFailure()
+    {
+        lock (_circuitGate)
+        {
+            _consecutiveTransientFailures++;
+            if (_consecutiveTransientFailures < CircuitFailureThreshold) return;
+            _circuitOpenUntilUtc = DateTime.UtcNow + CircuitOpenDuration;
+            _consecutiveTransientFailures = 0;
+        }
+    }
+
+    private void ResetCircuit()
+    {
+        lock (_circuitGate)
+        {
+            _consecutiveTransientFailures = 0;
+            _circuitOpenUntilUtc = DateTime.MinValue;
+        }
     }
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
