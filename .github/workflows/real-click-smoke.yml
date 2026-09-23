@@ -87,6 +87,8 @@ jobs:
       - name: Record real YouTube HelpSys session
         shell: pwsh
         continue-on-error: true
+        env:
+          HELPSYS_API_BASE: https://refactor-why5-root-cause-v10-helpsys.syouziroupc.workers.dev
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
