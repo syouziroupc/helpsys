@@ -86,7 +86,6 @@ jobs:
 
       - name: Record real YouTube HelpSys session
         shell: pwsh
-        continue-on-error: true
         env:
           HELPSYS_API_BASE: https://refactor-why5-root-cause-v10-helpsys.syouziroupc.workers.dev
         run: |
@@ -134,5 +133,6 @@ jobs:
             artifacts/helpsys-real-usage.mp4
             artifacts/helpsys-youtube-real-usage.mp4
             artifacts/helpsys-youtube-e2e.json
+            artifacts/helpsys-youtube-api-preflight.json
             artifacts/mock-last-request.json
           if-no-files-found: warn
