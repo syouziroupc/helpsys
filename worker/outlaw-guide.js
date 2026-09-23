@@ -1,8 +1,8 @@
 const MODEL = '@cf/zai-org/glm-5.3-flash';
 const VERSION = 'outlaw-2026.09.23-r1';
-const MAX_BODY_BYTES = 30_000_000;
-const MAX_UI_ELEMENTS = 1600;
-const MAX_HISTORY = 32;
+const MAX_BODY_BYTES = 50_000_000;
+const MAX_UI_ELEMENTS = 2400;
+const MAX_HISTORY = 64;
 
 const tool = {
   name: 'return_outlaw_guidance',
@@ -104,7 +104,7 @@ export default {
         ],
         temperature: 0,
         reasoning_effort: 'high',
-        max_completion_tokens: 1600,
+        max_completion_tokens: 2400,
         tools: [tool],
         tool_choice: 'required',
         parallel_tool_calls: false
