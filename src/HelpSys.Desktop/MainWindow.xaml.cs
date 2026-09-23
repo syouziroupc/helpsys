@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private readonly List<GuideHistoryItem> _history = [];
     private readonly GuidanceSessionController _sessionState = new();
     private readonly DiagnosticModePolicy _diagnosticMode = new();
+    private readonly ObservationBroker _observationBroker;
 
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _voiceCts;
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _observationBroker = new ObservationBroker(_systemContext, _scanner);
         InitializeComponent();
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
