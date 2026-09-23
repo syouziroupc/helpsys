@@ -164,6 +164,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        // The Guide click itself brings HelpSys to the foreground. Freeze the most recently
+        // sampled external foreground window here so the snapshot broker observes the user's
+        // actual work surface rather than HelpSys.
+        _systemContext.CommitStableForegroundForAssistantInteraction();
+
         if (_awaitingClarification && _activeRequest is not null && _sessionCts is not null)
         {
             var localChoice = await TryHandleLocalAccountChoiceAnswerAsync(text);
