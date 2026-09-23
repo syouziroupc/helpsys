@@ -32,10 +32,12 @@ public sealed class ObservationBroker
 
         var elements = await PerformanceTrace.MeasureAsync(
             "observation.scan",
-            () => _scanner.CaptureCandidatesForProcessAsync(
-                before.ForegroundProcessId,
-                maxCandidates,
-                cancellationToken)).ConfigureAwait(false);
+            () => OutlawModePolicy.Enabled
+                ? _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)
+                : _scanner.CaptureCandidatesForProcessAsync(
+                    before.ForegroundProcessId,
+                    maxCandidates,
+                    cancellationToken)).ConfigureAwait(false);
 
         var after = _systemContext.Capture();
         if (!HasSameIdentity(before, after))
