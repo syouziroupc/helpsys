@@ -10,8 +10,16 @@ public static class HelpSysYoutubeUser32 {
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 '@
+
+$runnerWindow = [HelpSysYoutubeUser32]::GetForegroundWindow()
+if ($runnerWindow -ne [IntPtr]::Zero) {
+  [void][HelpSysYoutubeUser32]::ShowWindow($runnerWindow, 6)
+  Start-Sleep -Milliseconds 500
+}
 
 New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 $exe = Resolve-Path 'smoke-bin/normal/HelpSys.exe'
@@ -128,13 +136,14 @@ function Browser-ReachedYoutube {
   if ($null -eq $edge -or $edge.HasExited) { return $false }
   try {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
-    $pc = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $edge.Id)
-    $edits = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-      (New-Object System.Windows.Automation.AndCondition(
-        $pc,
-        (New-Object System.Windows.Automation.PropertyCondition(
-          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-          [System.Windows.Automation.ControlType]::Edit))))
+    $pc = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+      $edge.Id)
+    $typeCondition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Edit)
+    $condition = New-Object System.Windows.Automation.AndCondition($pc, $typeCondition)
+    $edits = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
     foreach ($e in $edits) {
       try {
         $pattern = $null
@@ -165,6 +174,8 @@ try {
   Start-Sleep -Seconds 5
   $edge = Get-Process msedge | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
   if ($null -eq $edge) { throw 'Edge did not expose a top-level window.' }
+  [void][HelpSysYoutubeUser32]::SetForegroundWindow([IntPtr]$edge.MainWindowHandle)
+  Start-Sleep -Seconds 1
 
   $helpSys = Start-Process $exe -PassThru
   Start-Sleep -Seconds 5
