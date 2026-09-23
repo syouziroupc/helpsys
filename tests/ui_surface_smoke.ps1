@@ -265,6 +265,13 @@ try {
   $valuePattern.SetValue('open the test target')
   $invokePattern = $controls['GuideButton'].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
 
+  # The planner now requires a verified external work surface. Establish one before measuring
+  # Guide-to-planner latency; focus-retention under a physical click remains covered separately.
+  $targetWindow = Find-MainWindow $target
+  if ($null -eq $targetWindow) { throw 'Smoke target window was unavailable before planner latency measurement.' }
+  try { $targetWindow.SetFocus() } catch { }
+  Start-Sleep -Milliseconds 420
+
   $guideTimer = [System.Diagnostics.Stopwatch]::StartNew()
   $invokePattern.Invoke()
   while ($guideTimer.Elapsed.TotalMilliseconds -lt $guideMaximumMs -and -not (Test-Path 'artifacts/mock-last-request.json')) {
@@ -286,8 +293,8 @@ try {
     throw 'UI performance quality route lost its screenshot.'
   }
   # Target-focus retention is exercised separately by real_click_guidance_smoke.ps1, which
-  # physically foregrounds the target and clicks HelpSys. This smoke measures surface and
-  # planner latency only and intentionally does not manufacture a foreground-target precondition.
+  # physically foregrounds the target and clicks HelpSys. This smoke only establishes the valid
+  # external work-surface precondition, then measures surface and planner latency.
 
   $metrics = [ordered]@{
     visibleSurfaceMilliseconds = $surfaceVisibleAtMs
