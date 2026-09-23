@@ -24,7 +24,7 @@ jobs:
         run: |
           node <<'NODE'
           const base='https://helpsys.syouziroupc.workers.dev';
-          const expected='outlaw-2026.09.23-r3';
+          const expected='outlaw-2026.09.23-r3.1';
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           let health=null;
           let last='';
@@ -114,5 +114,7 @@ jobs:
             throw new Error('Outlaw planner returned invalid status');
           if(parsed.status==='target' && !['u1','vision-target'].includes(parsed?.targetId))
             throw new Error('Outlaw planner returned unknown targetId: '+String(parsed?.targetId));
+          if(parsed?.screenConfirmed===true)
+            throw new Error('Blank 1x1 image must not become screenConfirmed=true after text-only review');
           console.log('OUTLAW_LIVE_INFERENCE_OK');
           NODE
