@@ -1,6 +1,6 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
-const VERSION = 'outlaw-2026.09.23-r3.1';
+const VERSION = 'outlaw-2026.09.23-r3.2';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 2400;
 const MAX_HISTORY = 64;
@@ -73,7 +73,7 @@ RULES:
 - If you keep vision-target, preserve the preliminary target's geometry conceptually; the server will enforce its coordinates.
 - Do not invent controls, labels, states, URLs, or completed actions.
 - Do not ask the user to describe the screen because recognition is difficult.
-- clarify only for a genuine user decision with materially different outcomes.
+- clarify only for a genuine user decision with materially different outcomes. A generic request to save does NOT authorize overwrite/replace of an existing file; clarify unless overwrite/replace was explicitly requested.
 - not_found is a last resort when neither the structured evidence nor the preliminary visual evidence grounds a next step.
 - Current evidence beats stale history or an imagined canonical route.
 - Keep the Japanese instruction concrete and short.
@@ -134,7 +134,7 @@ export default {
         const structuredRaw = await runGuidance(env, REASONING_MODEL, visionPrompt, payload, null);
         const structuredChecked = validate(structuredRaw, elements);
         if (!structuredChecked.ok) return json({ error: structuredChecked.error }, 502);
-        return json(structuredChecked.value);
+        return json(guardUserChoice(structuredChecked.value, goal, elements));
       }
 
       const visionRaw = await runGuidance(env, VISION_MODEL, visionPrompt, payload, image);
@@ -152,18 +152,18 @@ export default {
         const reviewChecked = validate(reviewRaw, elements);
         if (!reviewChecked.ok) {
           console.warn('outlaw_reasoning_review_invalid', reviewChecked.error);
-          return json(preliminary);
+          return json(guardUserChoice(preliminary, goal, elements));
         }
 
         const finalDecision = enforceVisionGeometry(reviewChecked.value, preliminary);
         if (!finalDecision) {
           console.warn('outlaw_reasoning_review_visual_mismatch');
-          return json(preliminary);
+          return json(guardUserChoice(preliminary, goal, elements));
         }
-        return json(finalDecision);
+        return json(guardUserChoice(finalDecision, goal, elements));
       } catch (reviewError) {
         console.error('outlaw_reasoning_review_failed', reviewError);
-        return json(preliminary);
+        return json(guardUserChoice(preliminary, goal, elements));
       }
     } catch (error) {
       console.error('outlaw_inference_failed', error);
@@ -190,6 +190,43 @@ async function runGuidance(env, model, system, payload, image) {
   const raw = extractToolArguments(result, 'return_outlaw_guidance');
   if (!raw) throw new Error('invalid_model_output');
   return raw;
+}
+
+
+function guardUserChoice(decision, goal, elements) {
+  if (!decision || decision.status !== 'target' || !decision.targetId) return decision;
+
+  const chosen = elements.find(e => e.id === decision.targetId);
+  if (!chosen) return decision;
+
+  const chosenText = `${chosen.name || ''} ${chosen.automationId || ''}`.toLowerCase();
+  const screenText = elements.map(e => String(e?.name || '')).join(' ').toLowerCase();
+  const goalText = String(goal || '').toLowerCase();
+
+  const replaceTarget =
+    /(置き換|上書|replace|overwrite)/i.test(chosenText);
+  const replacementChoiceScreen =
+    /(置き換|上書|replace|overwrite)/i.test(screenText) &&
+    /(スキップ|skip|キャンセル|cancel|両方|both|比較|compare)/i.test(screenText);
+  const explicitlyRequestedReplace =
+    /(置き換|上書|replace|overwrite)/i.test(goalText);
+
+  if (replaceTarget && replacementChoiceScreen && !explicitlyRequestedReplace) {
+    return {
+      status: 'clarify',
+      targetId: null,
+      action: 'none',
+      instruction: '既存のファイルを置き換えるかどうかの確認が必要です。',
+      question: '同じ名前のファイルが既にあります。既存ファイルを上書きして置き換えますか、それとも残しますか？',
+      key: null,
+      confidence: 1,
+      x: 0, y: 0, width: 0, height: 0,
+      screenConfirmed: decision.screenConfirmed === true,
+      visualEvidence: decision.visualEvidence || '置き換えと別の選択肢が同じ画面にあります。'
+    };
+  }
+
+  return decision;
 }
 
 function enforceVisionGeometry(finalDecision, preliminary) {
