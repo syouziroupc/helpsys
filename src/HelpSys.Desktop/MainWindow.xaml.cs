@@ -708,6 +708,7 @@ public partial class MainWindow : Window
         _consecutiveFailures = 0;
         _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
+        ResetOutlawLoopGuard();
         _forceVisionNext = false;
         _clarificationQuestion = null;
         _localChoiceTargetActive = false;
