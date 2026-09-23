@@ -265,6 +265,9 @@ public partial class MainWindow
                              (action.Equals("left_click", StringComparison.OrdinalIgnoreCase) &&
                               _currentTarget?.ControlType is "Edit" or "ComboBox");
         var targetBefore = _currentTarget;
+        var expectation = _currentDecision is not null
+            ? ActionExpectation.From(_currentDecision, targetBefore)
+            : new ActionExpectation(ActionEffectKind.NavigationOrContentChange, action, targetBefore);
 
         // The watcher is WinEvent-based. Do not poll UIA repeatedly while waiting for the action.
         var changedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -302,19 +305,78 @@ public partial class MainWindow
                 return false;
             }
 
-            return HasStableTransitionV3(
+            return HasExpectedEffectV3(
+                expectation,
                 before,
                 systemBefore,
                 afterSnapshot.Elements,
                 afterSnapshot.System,
                 strong,
-                allowFocusOnly,
-                targetBefore,
-                action);
+                allowFocusOnly);
         }
         finally
         {
             _liveWatcher.Changed -= handler;
+        }
+    }
+
+    private static bool HasExpectedEffectV3(
+        ActionExpectation expectation,
+        IReadOnlyList<UiElementCandidate> before,
+        SystemContextSnapshot? systemBefore,
+        IReadOnlyList<UiElementCandidate> after,
+        SystemContextSnapshot systemAfter,
+        bool strong,
+        bool allowFocusOnly)
+    {
+        // A foreground/window/browser transition is strong causal evidence for every action type.
+        if (HasSystemTransitionV3(systemBefore, systemAfter)) return true;
+
+        var targetBefore = expectation.Target;
+        var current = targetBefore is null ? null : FindMatchingTargetV3(targetBefore, after);
+
+        switch (expectation.Kind)
+        {
+            case ActionEffectKind.FocusTarget:
+                return targetBefore is not null &&
+                       current is not null &&
+                       !targetBefore.Focused &&
+                       current.Focused;
+
+            case ActionEffectKind.ToggleOrSelection:
+                if (targetBefore is null || current is null) return false;
+                var toggled = !string.Equals(
+                    targetBefore.ToggleState,
+                    current.ToggleState,
+                    StringComparison.Ordinal) &&
+                    (targetBefore.ToggleState is not null || current.ToggleState is not null);
+                var selected = targetBefore.Selected != current.Selected &&
+                               (targetBefore.Selected.HasValue || current.Selected.HasValue);
+                return toggled || selected;
+
+            case ActionEffectKind.SelectionOrExpansion:
+                if (targetBefore is null || current is null) return false;
+                var selectionChanged = targetBefore.Selected != current.Selected &&
+                                       (targetBefore.Selected.HasValue || current.Selected.HasValue);
+                var expansionChanged = !string.Equals(
+                    targetBefore.ExpandCollapseState,
+                    current.ExpandCollapseState,
+                    StringComparison.Ordinal) &&
+                    (targetBefore.ExpandCollapseState is not null || current.ExpandCollapseState is not null);
+                return selectionChanged || expansionChanged;
+
+            case ActionEffectKind.TextSubmission:
+            case ActionEffectKind.NavigationOrContentChange:
+            default:
+                return HasStableTransitionV3(
+                    before,
+                    systemBefore,
+                    after,
+                    systemAfter,
+                    strong,
+                    allowFocusOnly,
+                    targetBefore,
+                    expectation.Action);
         }
     }
 
