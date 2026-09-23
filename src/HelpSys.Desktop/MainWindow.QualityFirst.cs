@@ -349,65 +349,6 @@ public partial class MainWindow
         return false;
     }
 
-    private async Task<bool> TryStructuredFallbackAsync(
-        IReadOnlyList<UiElementCandidate> previousCandidates,
-        SystemContextSnapshot expectedContext,
-        long generation,
-        CancellationToken cancellationToken)
-    {
-        if (_activeRequest is null || previousCandidates.Count == 0 || !_sessionState.IsCurrent(generation)) return false;
-        var currentBeforeScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforeScan)) return false;
-
-        SetState("画像だけでは確定できないため、Windowsの構造情報から次の操作を再確認しています…", speak: false);
-
-        IReadOnlyList<UiElementCandidate> candidates;
-        try
-        {
-            candidates = await _scanner.CaptureCandidatesForProcessAsync(expectedContext.ForegroundProcessId, 420, cancellationToken);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
-
-        if (!_sessionState.IsCurrent(generation) || candidates.Count == 0) return false;
-        var currentAfterScan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterScan)) return false;
-
-        GuideDecision fallback;
-        try
-        {
-            fallback = await _cloudGuide.PlanAsync(_activeRequest, candidates, _history, expectedContext, cancellationToken);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch { return false; }
-
-        if (!_sessionState.IsCurrent(generation)) return false;
-        var currentAfterPlan = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentAfterPlan)) return false;
-
-        if (fallback.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(fallback.Question))
-        {
-            WaitForClarification(fallback.Question, generation);
-            return true;
-        }
-
-        if (!fallback.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
-            fallback.Confidence < MinimumStructuredFallbackConfidence ||
-            string.IsNullOrWhiteSpace(fallback.TargetId))
-            return false;
-
-        var target = candidates.FirstOrDefault(x => string.Equals(x.Id, fallback.TargetId, StringComparison.Ordinal));
-        if (target is null || !target.Interactable || !target.Enabled || target.Bounds.IsEmpty) return false;
-
-        var freshTarget = await _scanner.RevalidateCandidateAsync(target, expectedContext.ForegroundProcessId, cancellationToken);
-        if (!_sessionState.IsCurrent(generation) || freshTarget is null) return false;
-        var currentBeforePresent = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, currentBeforePresent)) return false;
-
-        ShowStructuredTarget(fallback, freshTarget, candidates, expectedContext, generation);
-        return true;
-    }
-
     private async Task<ScreenCaptureFrame> CaptureQualityFrameAsync(
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot expectedContext,
