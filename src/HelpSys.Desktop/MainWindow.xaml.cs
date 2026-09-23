@@ -567,38 +567,16 @@ public partial class MainWindow : Window
         if (!IsGenuineDecisionClarification(question))
         {
             var effectiveGeneration = generation ?? _sessionState.Generation;
+            if (generation.HasValue && !_sessionState.IsCurrent(generation.Value)) return;
+
             LocalLogService.Write("technical_uncertainty", question);
             HandleTechnicalPlanningUncertainty(question, effectiveGeneration);
             return;
         }
 
         _technicalClarificationRetries = 0;
-                QueueResilientRecovery("技術的な画面不確実性が継続しているため自動復旧へ移行", generation);
-                return;
-            }
-
-            _overlay.Hide();
-            _keyHint.Hide();
-            _currentDecision = null;
-            _currentTarget = null;
-            _guidedBounds = null;
-            _clarificationQuestion = null;
-            HideClarificationUiIfNeeded(force: true);
-            _sessionState.Invalidate(GuidanceSessionState.Idle);
-            _liveReplanPending = true;
-            SetState("現在の画面情報を取り直して案内を続けています…", speak: false);
-
-            Dispatcher.BeginInvoke(new Action(async () =>
-            {
-                if (_activeRequest is null || _sessionCts is null || _sessionCts.IsCancellationRequested) return;
-                try { await TryRunPendingLiveReplanAsync(); }
-                catch (OperationCanceledException) { }
-            }));
-            return;
-        }
-
-        _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
+
         if (generation.HasValue)
         {
             if (!_sessionState.TryTransition(generation.Value, GuidanceSessionState.Clarifying)) return;
@@ -619,6 +597,7 @@ public partial class MainWindow : Window
         RequestBox.Clear();
         RequestBox.Focus();
         _lastInstruction = question;
+        LocalLogService.Write("clarification", question);
         SetState($"確認：{question}", speak: false);
         _speechOutput.Speak(question);
     }
