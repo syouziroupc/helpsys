@@ -134,6 +134,14 @@ function buildAppTask(app, goal, elements, systemContext, knowledge) {
     }, false, allowed, app);
   }
 
+  if (/searchhost|startmenuexperiencehost/i.test(foreground)) {
+    return task('launch-app', `${knowledge}\n\nスタート/検索画面はすでに開いている。Windowsキーをもう一度押すと閉じる可能性があるため再入力しない。`, {
+      status: 'not_found', targetId: null, action: 'none',
+      instruction: 'スタート画面はすでに開いています。Windowsキーはもう押さず、現在の項目から目的のアプリを探します。',
+      question: null, key: null, confidence: 0.99
+    }, false, new Set(), app);
+  }
+
   return task('launch-app', `${knowledge}\n\n${app.display}は現在画面に無い。画面下の見えないボタンを探させず、Windowsキーで検索画面を開く。`, {
     status: 'target', targetId: null, action: 'press_key',
     instruction: 'キーボードの左下にある、窓の形の「Windows」キーを1回押してください。',
@@ -205,7 +213,8 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
         null,
         true,
         site),
-      forbiddenTargetIds
+      forbiddenTargetIds,
+      forbiddenKeys: new Set(['windows'])
     };
   }
 
@@ -222,6 +231,21 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
         question: null, key: null, confidence: 0.96
       }, false, new Set([candidate.id]), null, true, site);
     }
+  }
+
+  const visibleChrome = findAppTarget(APP_DEFINITIONS.find(x => x.id === 'chrome'), elements, systemContext, true);
+  const visibleEdge = findAppTarget(APP_DEFINITIONS.find(x => x.id === 'edge'), elements, systemContext, true);
+  const visibleBrowser = visibleChrome || visibleEdge;
+  if (visibleBrowser) {
+    const twoPresses = visibleBrowser.controlType === 'ListItem' && /explorer/i.test(visibleBrowser.processName || '');
+    const label = String(visibleBrowser.name || 'インターネットを見るアプリ');
+    return task('site', knowledge, {
+      status: 'target', targetId: visibleBrowser.id, action: twoPresses ? 'double_click' : 'left_click',
+      instruction: twoPresses
+        ? `青い枠の「${label}」で、マウスの左ボタンを間をあけずに2回押してください。`
+        : `青い枠の「${label}」で、マウスの左ボタンを1回押してください。`,
+      question: null, key: null, confidence: 0.99
+    }, false, new Set([visibleBrowser.id]), null, true, site);
   }
 
   const searchField = findWindowsSearchField(elements);
@@ -251,6 +275,14 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
     }, false, new Set([searchField.id]), null, true, site);
   }
 
+  if (/searchhost|startmenuexperiencehost/i.test(foreground)) {
+    return task('site', knowledge, {
+      status: 'not_found', targetId: null, action: 'none',
+      instruction: 'スタート画面はすでに開いています。Windowsキーはもう押さず、現在の項目からブラウザーを探します。',
+      question: null, key: null, confidence: 0.99
+    }, false, new Set(), null, true, site);
+  }
+
   return task('site', knowledge, {
     status: 'target', targetId: null, action: 'press_key',
     instruction: 'キーボードの左下にある、窓の形の「Windows」キーを1回押してください。',
@@ -262,7 +294,11 @@ export function guardDecisionForTask(taskInfo, decision) {
   if (!taskInfo || !decision) return decision;
   if (decision.status === 'clarify' && taskInfo.kind !== 'choice') return notFound(decision.confidence);
   if (decision.status !== 'target') return decision;
-  if (decision.action === 'press_key' && !decision.targetId) return decision;
+  if (decision.action === 'press_key' && !decision.targetId) {
+    const key = String(decision.key || '').toLowerCase();
+    if (taskInfo.forbiddenKeys instanceof Set && taskInfo.forbiddenKeys.has(key)) return notFound(decision.confidence);
+    return decision;
+  }
   if (taskInfo.forbiddenTargetIds instanceof Set && taskInfo.forbiddenTargetIds.has(decision.targetId)) return notFound(decision.confidence);
   if (taskInfo.allowedTargetIds && taskInfo.allowedTargetIds.size > 0 && !taskInfo.allowedTargetIds.has(decision.targetId)) return notFound(decision.confidence);
   if (taskInfo.kind === 'site' && /https?:\/\/|www\.|\.com|\.jp/i.test(decision.instruction || '')) return notFound(decision.confidence);
