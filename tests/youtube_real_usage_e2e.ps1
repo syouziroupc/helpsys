@@ -165,7 +165,9 @@ try {
     @{ name='msedge'; path="$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
     @{ name='msedge'; path="$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
     @{ name='chrome'; path="$env:ProgramFiles\Google\Chrome\Application\chrome.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-default-apps') },
-    @{ name='chrome'; path="$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-default-apps') }
+    @{ name='chrome'; path="$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-default-apps') },
+    @{ name='firefox'; path="$env:ProgramFiles\Mozilla Firefox\firefox.exe"; args=@('-new-window','about:blank') },
+    @{ name='firefox'; path="$env:ProgramFiles(x86)\Mozilla Firefox\firefox.exe"; args=@('-new-window','about:blank') }
   )
   $browser = $browserCandidates | Where-Object { Test-Path $_.path } | Select-Object -First 1
   if (-not $browser) {
@@ -173,15 +175,54 @@ try {
     $chromeCommand = Get-Command chrome.exe -ErrorAction SilentlyContinue
     if ($edgeCommand) { $browser = @{ name='msedge'; path=$edgeCommand.Source; args=@('--new-window','about:blank','--no-first-run') } }
     elseif ($chromeCommand) { $browser = @{ name='chrome'; path=$chromeCommand.Source; args=@('--new-window','about:blank','--no-first-run') } }
+    else {
+      $firefoxCommand = Get-Command firefox.exe -ErrorAction SilentlyContinue
+      if ($firefoxCommand) { $browser = @{ name='firefox'; path=$firefoxCommand.Source; args=@('-new-window','about:blank') } }
+    }
   }
-  if (-not $browser) { throw 'No supported browser (Edge/Chrome) was found on the Windows runner.' }
+  if (-not $browser) { throw 'No supported browser (Edge/Chrome/Firefox) was found on the Windows runner.' }
 
   Get-Process $browser.name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 1
-  $edge = Start-Process $browser.path -ArgumentList $browser.args -PassThru
-  Start-Sleep -Seconds 5
-  $edge = Get-Process $browser.name | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-  if ($null -eq $edge) { throw "$($browser.name) did not expose a top-level window." }
+  [void](Start-Process $browser.path -ArgumentList $browser.args -PassThru)
+
+  $browserDeadline = [DateTime]::UtcNow.AddSeconds(15)
+  do {
+    Start-Sleep -Milliseconds 300
+    $edge = Get-Process $browser.name -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne 0 } |
+      Sort-Object StartTime -Descending |
+      Select-Object -First 1
+    if ($null -ne $edge) { break }
+  } while ([DateTime]::UtcNow -lt $browserDeadline)
+
+  if ($null -eq $edge) {
+    $shortcutNames = switch ($browser.name) {
+      'chrome' { @('Google Chrome*.lnk','Chrome*.lnk') }
+      'msedge' { @('Microsoft Edge*.lnk','Edge*.lnk') }
+      'firefox' { @('Firefox*.lnk','Mozilla Firefox*.lnk') }
+      default { @() }
+    }
+    $shortcut = $null
+    foreach ($pattern in $shortcutNames) {
+      $shortcut = Get-ChildItem "$env:PUBLIC\Desktop","$env:USERPROFILE\Desktop" -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($shortcut) { break }
+    }
+    if ($shortcut) {
+      Start-Process $shortcut.FullName
+      $browserDeadline = [DateTime]::UtcNow.AddSeconds(15)
+      do {
+        Start-Sleep -Milliseconds 300
+        $edge = Get-Process $browser.name -ErrorAction SilentlyContinue |
+          Where-Object { $_.MainWindowHandle -ne 0 } |
+          Sort-Object StartTime -Descending |
+          Select-Object -First 1
+        if ($null -ne $edge) { break }
+      } while ([DateTime]::UtcNow -lt $browserDeadline)
+    }
+  }
+
+  if ($null -eq $edge) { throw "$($browser.name) did not expose a top-level window after direct and shortcut launch attempts." }
   [void][HelpSysYoutubeUser32]::SetForegroundWindow([IntPtr]$edge.MainWindowHandle)
   Start-Sleep -Seconds 1
 
@@ -263,5 +304,5 @@ try {
 }
 finally {
   if ($null -ne $helpSys -and -not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force -ErrorAction SilentlyContinue }
-  Get-Process msedge,chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process msedge,chrome,firefox -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
