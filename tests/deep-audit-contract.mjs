@@ -37,12 +37,12 @@ assert(stable.includes('if (!_verifyingAction) InvalidatePlannerForLiveContextCh
 assert(!stable.includes('if (!_sessionState.PlannerInFlight) return;\n        _sessionState.Invalidate'), 'Stale-guidance invalidation must not depend solely on PlannerInFlight.');
 assert(!stable.includes('_currentDecision.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase)'), 'Text-entry guidance must not suppress focus/state deviation detection.');
 
-assert(watcher.includes('AddAutomationPropertyChangedEventHandler'), 'Semantic UI state changes must trigger live observation without waiting only for heartbeat scans.');
-assert(watcher.includes('TogglePattern.ToggleStateProperty'), 'Toggle changes must trigger the live watcher.');
-assert(watcher.includes('SelectionItemPattern.IsSelectedProperty'), 'Selection changes must trigger the live watcher.');
-assert(watcher.includes('ExpandCollapsePattern.ExpandCollapseStateProperty'), 'Expand/collapse changes must trigger the live watcher.');
-assert(watcher.includes('AutomationElement.HasKeyboardFocusProperty'), 'Focus changes must trigger the live watcher.');
-assert(watcher.includes('RemoveAutomationPropertyChangedEventHandler'), 'Semantic UIA subscriptions must be removed during scope changes/shutdown.');
+assert(watcher.includes('SetWinEventHook('), 'Semantic UI changes must signal live observation through WinEvent without in-process UIA subscriptions.');
+assert(watcher.includes('EventObjectValueChange'), 'Value/state changes must be covered by the WinEvent range.');
+assert(watcher.includes('WineventSkipownprocess'), 'The live watcher must ignore HelpSys own-process UI changes.');
+assert(watcher.includes('GetWindowThreadProcessId'), 'WinEvent callbacks must be scoped to the selected foreground process.');
+assert(!watcher.includes('System.Windows.Automation'), 'The desktop live watcher must not own UI Automation.');
+assert(watcher.includes('UnhookWinEvent'), 'WinEvent subscriptions must be removed during shutdown.');
 
 assert(qualityWindow.includes('proposedVisualAction = decision.Action.Equals("double_click"'), 'Visual planning must carry the proposed physical action into local validation.');
 assert(qualityWindow.includes('NormalizeStructuredDecisionForTarget') && qualityWindow.includes('var visualAction = normalizedVisual.Action'), 'Visual targets must normalize click count against the real Windows control type.');
