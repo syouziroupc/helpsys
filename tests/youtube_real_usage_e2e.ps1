@@ -137,6 +137,7 @@ function Browser-ReachedYoutube {
           [System.Windows.Automation.ControlType]::Edit))))
     foreach ($e in $edits) {
       try {
+        $pattern = $null
         if ($e.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
           $value = ([System.Windows.Automation.ValuePattern]$pattern).Current.Value
           if ($value -match 'youtube\.com') { return $true }
