@@ -7,6 +7,7 @@ public static class LocalLogService
 {
     private static readonly object Gate = new();
     private static TextWriterTraceListener? _listener;
+    private static StreamWriter? _writer;
     private static string? _path;
 
     public static string? CurrentPath
@@ -34,26 +35,31 @@ public static class LocalLogService
             {
                 AutoFlush = true
             };
+            _writer = writer;
             _listener = new TextWriterTraceListener(writer, "HelpSysLocalFile");
             Trace.Listeners.Add(_listener);
             Trace.AutoFlush = true;
-            Trace.WriteLine($"{DateTimeOffset.Now:O}\tstartup\tlog={_path}");
+            _writer.WriteLine($"{DateTimeOffset.Now:O}\tstartup\tlog={_path}");
+            _writer.Flush();
         }
     }
 
     public static void Write(string category, string? message)
     {
-        try
+        lock (Gate)
         {
-            var normalized = (message ?? string.Empty)
-                .Replace('\r', ' ')
-                .Replace('\n', ' ');
-            Trace.WriteLine($"{DateTimeOffset.Now:O}\t{category}\t{normalized}");
-            Trace.Flush();
-        }
-        catch
-        {
-            // Logging must never block guidance.
+            try
+            {
+                var normalized = (message ?? string.Empty)
+                    .Replace('\r', ' ')
+                    .Replace('\n', ' ');
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\t{category}\t{normalized}");
+                _writer?.Flush();
+            }
+            catch
+            {
+                // Logging must never block guidance.
+            }
         }
     }
 
@@ -65,8 +71,8 @@ public static class LocalLogService
             {
                 if (_listener is not null)
                 {
-                    Trace.WriteLine($"{DateTimeOffset.Now:O}\tshutdown");
-                    Trace.Flush();
+                    _writer?.WriteLine($"{DateTimeOffset.Now:O}\tshutdown");
+                    _writer?.Flush();
                     Trace.Listeners.Remove(_listener);
                     _listener.Flush();
                     _listener.Close();
@@ -76,6 +82,7 @@ public static class LocalLogService
             finally
             {
                 _listener = null;
+                _writer = null;
             }
         }
     }
