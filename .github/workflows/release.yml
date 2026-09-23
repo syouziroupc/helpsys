@@ -2,7 +2,7 @@ name: Publish Windows preview
 
 on:
   push:
-    branches: [main]
+    branches: [main, refactor/why5-root-cause-v10]
   workflow_dispatch:
 
 permissions:
@@ -72,7 +72,7 @@ jobs:
           $allowedAssets = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET)
 
           $notes = @"
-          HelpSys Windows Preview — Unified secure build
+          HelpSys Windows Preview v10 — Why5 root-cause rebuild
 
           - Windows 10 / 11 (64-bit), self-contained
           - Stable download alias: $($env:HELPSYS_STABLE_ASSET)
@@ -83,7 +83,7 @@ jobs:
           - Cloud transport rejects redirects/cookies/proxy inheritance and pins external AI traffic to the reviewed HelpSys origin
           - Voice/Commander is available only after an explicit user action or local wake phrase
           - HelpSys remains guidance-only and does not click, type, pay, or enter credentials
-          - This release is rebuilt automatically on every main-branch update
+          - This release is rebuilt automatically on main and the active v10 release-candidate branch
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
@@ -97,10 +97,10 @@ jobs:
             }
             gh release upload $tag $versioned $stable --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload unified preview assets.' }
-            gh release edit $tag --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --target $env:GITHUB_SHA --title "HelpSys Windows Preview v10" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           }
           else {
-            gh release create $tag $versioned $stable --target main --title "HelpSys Windows Preview" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $versioned $stable --target $env:GITHUB_SHA --title "HelpSys Windows Preview v10" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create unified preview release.' }
           }
 
