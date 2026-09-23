@@ -38,7 +38,7 @@ public partial class MainWindow
             ObservationSnapshot snapshot;
             try
             {
-                snapshot = await _observationBroker.CaptureAsync(420, cancellationToken);
+                snapshot = await _observationBroker.CaptureAsync(240, cancellationToken);
             }
             catch (ObservationChangedException)
             {
