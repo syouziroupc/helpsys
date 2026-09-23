@@ -410,7 +410,9 @@ public sealed class CloudGuideService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var response = await _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken);
+                var response = await PerformanceTrace.MeasureAsync(
+                    CloudPhase(path),
+                    () => _adapter.PostJsonAsync(path, body, AttemptTimeout, cancellationToken));
                 if (response.IsSuccessStatusCode)
                 {
                     ResetCircuit();
@@ -491,6 +493,14 @@ public sealed class CloudGuideService : IDisposable
             _consecutiveTransientFailures = 0;
             _circuitOpenUntilUtc = DateTime.MinValue;
         }
+    }
+
+    private static string CloudPhase(string path)
+    {
+        if (path.Contains("quality-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.quality-plan";
+        if (path.Contains("vision-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.vision-plan";
+        if (path.Contains("/guide", StringComparison.OrdinalIgnoreCase)) return "cloud.structured-plan";
+        return "cloud.request";
     }
 
     private static bool IsTransientStatus(int statusCode) => statusCode is 408 or 429 or 500 or 502 or 503 or 504;
