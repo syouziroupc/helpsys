@@ -33,6 +33,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           node --check worker/stable-gemini.js
           node --check worker/education-gemini.js
+          node --check worker/outlaw-guide.js
           node --check worker/stable-router.js
           node tests/stable-worker-selftest.mjs
           node tests/stable-education-selftest.mjs
