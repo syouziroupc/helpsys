@@ -38,22 +38,24 @@ jobs:
           node --check worker/outlaw-guide.js
           node --check worker/stable-router.js
 
-      - name: Verify Cloudflare deployment credentials
+      - name: Detect explicit Cloudflare deployment credentials
+        id: cf
         shell: bash
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::Repository secret CLOUDFLARE_API_TOKEN is missing."
-            exit 2
-          fi
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::Repository secret CLOUDFLARE_ACCOUNT_ID is missing."
-            exit 2
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Explicit Wrangler deployment credentials are available."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Explicit Wrangler credentials are not configured; Cloudflare Git integration will deploy main."
           fi
 
       - name: Install Wrangler
+        if: steps.cf.outputs.available == 'true'
         run: npm install --no-package-lock --ignore-scripts
 
       - name: Deploy production Worker
+        if: steps.cf.outputs.available == 'true'
         run: npx wrangler deploy --config wrangler.jsonc
 
       - name: Verify Outlaw production route
