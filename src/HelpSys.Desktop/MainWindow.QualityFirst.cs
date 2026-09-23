@@ -29,7 +29,7 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(90));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(120));
         var cancellationToken = planningCts.Token;
 
         try
@@ -38,7 +38,7 @@ public partial class MainWindow
             ObservationSnapshot snapshot;
             try
             {
-                snapshot = await _observationBroker.CaptureAsync(1400, cancellationToken);
+                snapshot = await _observationBroker.CaptureAsync(2200, cancellationToken);
             }
             catch (ObservationChangedException)
             {
