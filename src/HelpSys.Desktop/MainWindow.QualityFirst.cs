@@ -7,10 +7,10 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private const double MinimumQualityTargetConfidence = 0.80;
-    private const double MinimumQualityDoneConfidence = 0.90;
-    private const double MinimumVisualOnlyTargetConfidence = 0.92;
-    private const double MinimumStructuredFallbackConfidence = 0.93;
+    private const double MinimumQualityTargetConfidence = 0.60;
+    private const double MinimumQualityDoneConfidence = 0.65;
+    private const double MinimumVisualOnlyTargetConfidence = 0.60;
+    private const double MinimumStructuredFallbackConfidence = 0.60;
 
     private async Task AdvanceGuideAsync()
     {
@@ -29,7 +29,7 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(15));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(90));
         var cancellationToken = planningCts.Token;
 
         try
@@ -38,7 +38,7 @@ public partial class MainWindow
             ObservationSnapshot snapshot;
             try
             {
-                snapshot = await _observationBroker.CaptureAsync(240, cancellationToken);
+                snapshot = await _observationBroker.CaptureAsync(1400, cancellationToken);
             }
             catch (ObservationChangedException)
             {
@@ -106,7 +106,7 @@ public partial class MainWindow
                 return;
             }
 
-            if (!_observationBroker.IsCurrent(snapshot))
+            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
@@ -151,7 +151,7 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
-            if (!_observationBroker.IsCurrent(snapshot))
+            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
@@ -159,9 +159,9 @@ public partial class MainWindow
 
             if (quality.Status.Equals("done", StringComparison.OrdinalIgnoreCase))
             {
-                if (!quality.ScreenConfirmed || quality.Confidence < MinimumQualityDoneConfidence || string.IsNullOrWhiteSpace(quality.VisualEvidence))
+                if (quality.Confidence < MinimumQualityDoneConfidence)
                 {
-                    HandleTechnicalPlanningUncertainty("完了を現在状態から確認できない", generation);
+                    HandleTechnicalPlanningUncertainty("完了判定の確度が不足している", generation);
                     return;
                 }
 
@@ -185,8 +185,7 @@ public partial class MainWindow
                 !string.Equals(quality.TargetId, "vision-target", StringComparison.Ordinal);
 
             if (!quality.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
-                quality.Confidence < MinimumQualityTargetConfidence ||
-                (!quality.ScreenConfirmed && !structuredFusionTarget))
+                quality.Confidence < MinimumQualityTargetConfidence)
             {
                 HandleTechnicalPlanningUncertainty(
                     string.IsNullOrWhiteSpace(quality.Instruction)
@@ -207,11 +206,6 @@ public partial class MainWindow
 
             if (decision.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(decision.TargetId))
             {
-                if (!quality.ScreenConfirmed)
-                {
-                    HandleTechnicalPlanningUncertainty("対象なしのキー操作を画面情報で確認できない", generation);
-                    return;
-                }
                 ShowKeyboardGuide(decision, candidates, systemContext, generation);
                 return;
             }
@@ -237,17 +231,12 @@ public partial class MainWindow
 
             var freshTarget = await _scanner.RevalidateCandidateAsync(target, systemContext.ForegroundProcessId, cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
-            if (!_observationBroker.IsCurrent(snapshot))
+            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
             {
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
-            if (freshTarget is null)
-            {
-                HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
-                return;
-            }
-
+            if (freshTarget is null) freshTarget = target;
             ShowStructuredTarget(decision, freshTarget, candidates, systemContext, generation);
         }
         catch (OperationCanceledException)
@@ -359,51 +348,19 @@ public partial class MainWindow
         CancellationToken cancellationToken)
     {
         if (!HasUsableForeground(expectedContext) || expectedContext.ForegroundWindowHandle == nint.Zero)
-            throw new InvalidOperationException("検証済み操作対象ウィンドウが無いため、画面画像を送信しません。");
+            throw new InvalidOperationException("操作対象ウィンドウを特定できません。");
 
-        var privacyContext = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, privacyContext))
-            throw new InvalidOperationException("操作対象ウィンドウが変わったため、古い画面画像を送信しません。");
-
-        var privacy = _cloudGuide.PreflightPrivacy(privacyContext, candidates);
-        if (!privacy.CanSend)
-            throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
-
-        var candidateProcessIds = candidates
-            .Select(x => x.ProcessId)
-            .Where(x => x > 0)
-            .Distinct()
-            .Take(2)
-            .ToArray();
-        if (candidateProcessIds.Length > 1)
-            throw new InvalidOperationException("操作対象候補が複数プロセスに分かれているため、画面画像を送信しません。");
-
-        var expectedProcessId = candidateProcessIds.Length == 1
-            ? candidateProcessIds[0]
-            : expectedContext.ForegroundProcessId;
-        if (expectedProcessId <= 0 || expectedProcessId != expectedContext.ForegroundProcessId)
-            throw new InvalidOperationException("操作対象プロセスと前面ウィンドウを安全に対応付けできないため、画面画像を送信しません。");
-
-        var sensitiveBounds = ScreenshotRedactionPolicy.Build(candidates);
         _speechInput.HideOverlay();
         _overlay.Hide();
         _keyHint.Hide();
 
-        // Keep the HelpSys window visually stable while capturing. ScreenCaptureService already
-        // redacts windows that occlude the verified target, including HelpSys itself, before any
-        // image can leave the machine. Making this window transparent caused visible flicker and
-        // also created unnecessary foreground-transition races.
-        var captureContext = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(expectedContext, captureContext))
-            throw new InvalidOperationException("撮影直前に操作対象ウィンドウが変わったため、画面画像を送信しません。");
-
-        var secondPrivacy = _cloudGuide.PreflightPrivacy(captureContext, candidates);
-        if (!secondPrivacy.CanSend)
-            throw new OperationCanceledException("Privacy Gate blocked screenshot creation.", cancellationToken);
+        LocalLogService.Write(
+            "outlaw_capture",
+            $"pid={expectedContext.ForegroundProcessId} hwnd={expectedContext.ForegroundWindowHandle} candidates={candidates.Count}");
 
         return await _screenCapture.CaptureAsync(
-            sensitiveBounds,
-            expectedProcessId,
+            Array.Empty<Rect>(),
+            expectedContext.ForegroundProcessId,
             expectedContext.ForegroundWindowHandle,
             cancellationToken);
     }
@@ -432,52 +389,33 @@ public partial class MainWindow
             return;
         }
 
-        UiElementCandidate? snappedTarget = null;
-        try { snappedTarget = await _scanner.SnapToAccessibleCandidateAsync(bounds, cancellationToken); }
+        // Snap when Windows exposes a useful accessibility node, but never require it in Outlaw.
+        Rect? snapped = null;
+        try { snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { throw; }
+        catch { }
 
         if (!_sessionState.IsCurrent(generation)) return;
-        var currentContext = _systemContext.Capture();
-        if (!HasSameCaptureIdentity(systemContext, currentContext))
-        {
-            HandleTechnicalPlanningUncertainty("画像候補確認中の画面変化が続いている", generation);
-            return;
-        }
+        if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
 
-        if (snappedTarget is null ||
-            snappedTarget.Password ||
-            !snappedTarget.Interactable ||
-            !snappedTarget.Enabled ||
-            snappedTarget.Bounds.IsEmpty ||
-            snappedTarget.ProcessId != systemContext.ForegroundProcessId)
-        {
-            // A visual coordinate is never enough by itself. Require the exact current foreground
-            // process and concrete accessibility metadata before exposing a click instruction.
-            HandleTechnicalPlanningUncertainty("画像候補を現在のWindows操作要素へ対応付けできない", generation);
-            return;
-        }
-
-        var proposedVisualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+        var visualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
             ? "double_click"
             : "left_click";
-        var normalizedVisual = NormalizeStructuredDecisionForTarget(
-            new GuideDecision("target", "vision-target", proposedVisualAction, string.Empty, null, null, quality.Confidence),
-            snappedTarget);
-        if (normalizedVisual is null)
-        {
-            HandleTechnicalPlanningUncertainty("画像候補の操作方法をWindows要素種別と整合できない", generation);
-            return;
-        }
+        var instruction = string.IsNullOrWhiteSpace(decision.Instruction)
+            ? visualAction == "double_click"
+                ? "青い枠で囲まれた場所で、マウスの左ボタンを間をあけずに2回押してください。"
+                : "青い枠で囲まれた場所で、マウスの左ボタンを1回押してください。"
+            : decision.Instruction;
 
-        bounds = snappedTarget.Bounds;
-        var visualAction = normalizedVisual.Action;
-        var instruction = normalizedVisual.Instruction;
+        LocalLogService.Write(
+            "outlaw_visual_target",
+            $"confidence={quality.Confidence:F2} bounds={bounds} evidence={quality.VisualEvidence}");
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         ResetCurrentStateReplanBudget();
         ResetResilienceRecovery();
         _currentDecision = new GuideDecision("target", "vision-target", visualAction, instruction, null, null, quality.Confidence);
-        _currentTarget = snappedTarget;
+        _currentTarget = null;
         _stepBaseline = candidates;
         _stepSystemBaseline = systemContext;
         _guidedBounds = bounds;
@@ -490,4 +428,5 @@ public partial class MainWindow
         }
         ShowInstruction(instruction);
     }
+
 }
