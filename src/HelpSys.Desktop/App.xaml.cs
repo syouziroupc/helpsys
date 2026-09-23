@@ -33,6 +33,7 @@ public partial class App : Application
             return;
         }
 
+        LocalLogService.Initialize();
         base.OnStartup(e);
         MainWindow = new MainWindow();
         MainWindow.Show();
@@ -53,6 +54,7 @@ public partial class App : Application
         try { _singleInstanceMutex?.ReleaseMutex(); } catch (ApplicationException) { }
         _singleInstanceMutex?.Dispose();
         try { HelpSys.Services.UiAutomationScanner.ShutdownSharedObserver(); } catch { }
+        LocalLogService.Shutdown();
         base.OnExit(e);
     }
 }
