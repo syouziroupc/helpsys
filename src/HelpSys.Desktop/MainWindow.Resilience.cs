@@ -132,6 +132,12 @@ public partial class MainWindow
 
     private static bool IsLocalSmokeEndpoint()
     {
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("HELPSYS_TEST_DIAGNOSTICS"),
+                "1",
+                StringComparison.Ordinal))
+            return true;
+
         var value = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
         return value is not null &&
                (value.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
