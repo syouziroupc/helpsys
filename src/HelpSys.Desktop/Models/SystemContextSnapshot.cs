@@ -17,6 +17,9 @@ public sealed record BrowserContextSnapshot(
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var text = value.Trim();
+        if (HelpSys.Services.OutlawModePolicy.Enabled)
+            return text.Length <= 4000 ? text : text[..4000];
+
         if (text.Length > 900) text = text[..900];
 
         if (Uri.TryCreate(text, UriKind.Absolute, out var uri))
