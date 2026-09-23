@@ -10,6 +10,7 @@ const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
 const speech = read('src/HelpSys.Desktop/Services/SpeechInputService.cs');
 const education = read('src/HelpSys.Education/EducationGuideService.cs');
 const capture = read('src/HelpSys.Desktop/ScreenCaptureService.cs');
+const redactionPolicy = read('src/HelpSys.Desktop/Services/ScreenshotRedactionPolicy.cs');
 const updater = read('src/HelpSys.Desktop/Services/UpdateService.cs');
 const watcher = read('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs');
 const evidence = read('src/HelpSys.Desktop/Services/GuidanceEvidenceService.cs');
@@ -116,26 +117,23 @@ assert(privacySentinel.includes('await Task.Delay(140)') && privacySentinel.incl
 
 assert(qualityUi.includes('_cloudGuide.PreflightPrivacy'), 'Quality guidance must preflight privacy before screenshot creation.');
 assert(qualityUi.indexOf('_cloudGuide.PreflightPrivacy') < qualityUi.indexOf('_screenCapture.CaptureAsync'), 'Quality preflight must precede screenshot capture.');
-assert(qualityUi.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(38))'), 'Interactive guidance must not retain the old 70-second stall window.');
+assert(qualityUi.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(15))'), 'A single-snapshot/single-planner decision must have a short whole-operation deadline.');
 assert(!qualityUi.includes('Opacity = 0'), 'Screen capture must not visibly hide the HelpSys window and flicker the UI.');
-assert(recoveryUi.includes('_cloudGuide.PreflightPrivacy'), 'Recovery guidance must preflight privacy.');
-assert(recoveryUi.indexOf('_cloudGuide.PreflightPrivacy') < recoveryUi.indexOf('CaptureQualityFrameAsync'), 'Recovery preflight must precede capture.');
+assert(!recoveryUi.includes('PlanRecoveryAsync') && !recoveryUi.includes('CaptureQualityFrameAsync'), 'Recovery must not own a second cloud planner or screenshot path.');
+assert(recoveryUi.includes('await AdvanceGuideAsync()'), 'Recovery must re-enter the single normal planner, whose privacy boundary remains centralized.');
 
-assert(watcher.includes('AutomationFocusChangedEventHandler'), 'Meaningful focus changes must remain observable locally.');
-assert(watcher.includes('StructureChangedEventHandler'), 'Meaningful structure changes must remain observable locally.');
-assert(!watcher.includes('ValuePattern.ValueProperty'), 'Per-character input values must not trigger the watcher.');
+assert(watcher.includes('SetWinEventHook('), 'Meaningful UI changes must remain observable locally through WinEvent.');
+assert(watcher.includes('EventObjectValueChange'), 'Semantic value/state changes must be inside the observed WinEvent range.');
+assert(watcher.includes('WineventSkipownprocess'), 'HelpSys own UI events must not invalidate external guidance.');
+assert(!watcher.includes('System.Windows.Automation'), 'The desktop watcher must not access UI Automation directly.');
 
-assert(capture.includes('CaptureSensitiveBounds'), 'Screenshot privacy scan must remain independent of ranked candidates.');
-assert(capture.includes('current.ProcessId == captureArea.TargetProcessId'), 'Sensitive UIA scanning must be scoped to the verified work surface.');
-assert(capture.includes('captureArea.ShellSurface && IsRelatedShellProcess(current.ProcessId)'), 'Windows shell capture must still include related shell UI trees.');
+assert(!capture.includes('System.Windows.Automation') && !capture.includes('AutomationElement'), 'Screenshot capture must not perform an additional UIA scan.');
 assert(capture.includes('CaptureOccluderBounds'), 'Unrelated windows above the target must remain whole-window redacted.');
-assert(capture.includes('if (current.IsPassword) return true;'), 'Password controls must remain redacted.');
-assert(capture.includes('ContainsSensitiveInputHint'), 'Authentication/secret input semantics must remain redacted.');
-assert(capture.includes('ValuePattern.Pattern'), 'Input contents must be inspected locally for PII/secrets before deciding whether to redact.');
-assert(!capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'),
-  'Ordinary Edit/ComboBox controls must not be blacked out merely because they are inputs.');
-for (const requiredPattern of ['VisibleEmailRegex','VisibleJapanesePhoneRegex','VisiblePostalCodeRegex','VisibleBearerRegex','VisibleJwtRegex','VisibleApiKeyRegex','VisibleCardNumberRegex','VisibleSensitiveUrlRegex'])
-  assert(capture.includes(requiredPattern), `Screenshot redaction is missing ${requiredPattern}.`);
+assert(capture.includes('var occludersBefore') && capture.includes('var occludersAfter'), 'Z-order privacy must be checked on both sides of BitBlt.');
+assert(redactionPolicy.includes('if (element.Password) return true;'), 'Password controls from the immutable snapshot must remain redacted.');
+assert(redactionPolicy.includes('SensitiveInputTerms'), 'Authentication/secret input semantics must remain redacted.');
+for (const requiredPattern of ['EmailRegex','JapanesePhoneRegex','PostalCodeRegex','BearerRegex','JwtRegex','ApiKeyRegex','CardNumberRegex','SensitiveUrlRegex'])
+  assert(redactionPolicy.includes(requiredPattern), `Snapshot screenshot redaction is missing ${requiredPattern}.`);
 
 assert(updater.includes('https://api.github.com/repos/syouziroupc/helpsys/releases/latest'), 'Updater must use the fixed HelpSys GitHub release endpoint.');
 assert(updater.includes('RequiredTag = "preview-latest"'), 'Updater must stay on the reviewed preview-latest channel.');
