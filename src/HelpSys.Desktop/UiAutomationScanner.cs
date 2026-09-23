@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using HelpSys.Models;
+using HelpSys.Services;
 
 namespace HelpSys;
 
