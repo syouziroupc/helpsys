@@ -108,7 +108,7 @@ public sealed class CloudGuideService : IDisposable
 
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
-        var decision = await SendAsync<QualityGuideDecision>("/v1/quality-guide", approval.Body!, cancellationToken);
+        var decision = await SendAsync<QualityGuideDecision>("/v2/plan", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
@@ -132,7 +132,7 @@ public sealed class CloudGuideService : IDisposable
 
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
-        var decision = await SendAsync<GuideDecision>("/v1/guide", approval.Body!, cancellationToken);
+        var decision = await SendAsync<GuideDecision>("/v2/plan", approval.Body!, cancellationToken);
         EnsurePlanningContextCurrent(systemContext);
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
@@ -497,6 +497,7 @@ public sealed class CloudGuideService : IDisposable
 
     private static string CloudPhase(string path)
     {
+        if (path.Equals("/v2/plan", StringComparison.OrdinalIgnoreCase)) return "cloud.plan";
         if (path.Contains("quality-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.quality-plan";
         if (path.Contains("vision-guide", StringComparison.OrdinalIgnoreCase)) return "cloud.vision-plan";
         if (path.Contains("/guide", StringComparison.OrdinalIgnoreCase)) return "cloud.structured-plan";
