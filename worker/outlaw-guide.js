@@ -1,10 +1,10 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
-const VERSION = 'outlaw-2026.09.23-r3.2';
+const VERSION = 'outlaw-2026.09.23-r3.3';
 const MAX_BODY_BYTES = 50_000_000;
-const MAX_UI_ELEMENTS = 2400;
+const MAX_UI_ELEMENTS = 4000;
 const MAX_HISTORY = 64;
-const MAX_COMPLETION_TOKENS = 2400;
+const MAX_COMPLETION_TOKENS = 6000;
 
 const tool = {
   name: 'return_outlaw_guidance',
