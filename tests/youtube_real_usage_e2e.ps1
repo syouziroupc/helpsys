@@ -264,7 +264,35 @@ try {
 
   while ([DateTime]::UtcNow -lt $deadline) {
     Start-Sleep -Milliseconds 500
-    if ($helpSys.HasExited) { throw 'HelpSys exited during YouTube scenario.' }
+    if ($helpSys.HasExited) {
+      $exitCode = $null
+      try { $exitCode = $helpSys.ExitCode } catch { }
+      $stateValue = if ($null -ne $state) { try { $state.Current.Name } catch { '<unavailable>' } } else { '<missing>' }
+      $instruction = try { Get-Instruction $helpSys } catch { '' }
+      $events = @()
+      try {
+        $since = (Get-Date).AddMinutes(-3)
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName='Application'; StartTime=$since } -ErrorAction SilentlyContinue |
+          Where-Object {
+            $_.ProviderName -in @('.NET Runtime','Application Error','Windows Error Reporting') -and
+            ($_.Message -match 'HelpSys' -or $_.Message -match 'HelpSys\.exe')
+          } |
+          Select-Object -First 12 TimeCreated,ProviderName,Id,LevelDisplayName,Message)
+      } catch { }
+
+      [ordered]@{
+        reachedYoutube = $false
+        failure = 'helpsys_exited'
+        exitCode = $exitCode
+        finalEdgeTitle = $(try { $edge.MainWindowTitle } catch { '' })
+        finalHelpSysState = $stateValue
+        finalInstruction = $instruction
+        steps = $steps
+        applicationEvents = $events
+      } | ConvertTo-Json -Depth 8 | Set-Content artifacts/helpsys-youtube-e2e.json -Encoding UTF8
+
+      throw "HelpSys exited during YouTube scenario. ExitCode=$exitCode"
+    }
     if (Browser-ReachedYoutube) {
       $steps += [ordered]@{ time=[DateTime]::UtcNow.ToString('o'); action='reached'; detail='youtube.com' }
       break
