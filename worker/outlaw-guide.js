@@ -36,7 +36,8 @@ The human performs all actions. Your only job is to determine the CURRENT screen
 
 ACCURACY FIRST:
 - Spend the needed reasoning effort before answering.
-- Use the screenshot, full UI Automation set, foreground/window context, browser context, running-app context, values/states, and operation history together.
+- Use the screenshot when present, plus the full UI Automation set, foreground/window context, browser context, running-app context, values/states, and operation history together.
+- On a structured-only fallback the screenshot may be absent; in that case rely on current UIA/state evidence and never pretend visual confirmation exists.
 - Reconstruct where the user is now before deciding what comes next.
 - Do not assume an earlier route is still active. Current evidence wins over history.
 - UI Automation may be incomplete; the screenshot may contain controls not represented in UIA. If a target is clearly visible but has no useful UIA node, use targetId="vision-target" and return a tight normalized rectangle.
@@ -75,7 +76,7 @@ export default {
 
     const goal = text(body?.request, 4000);
     const image = typeof body?.image === 'string' ? body.image : '';
-    if (!goal || !/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_BODY_BYTES)
+    if (!goal || (image && (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_BODY_BYTES)))
       return json({ error: 'invalid_request' }, 400);
 
     const elements = Array.isArray(body?.elements)
@@ -87,24 +88,26 @@ export default {
       systemContext: body?.systemContext ?? null,
       capture: body?.capture ?? null,
       evidence: body?.evidence ?? null,
+      screenshotPresent: Boolean(image),
       completedSteps: history,
       uiElements: elements
     };
 
     try {
-      const result = await env.AI.run(MODEL, {
+      const aiRequest = {
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: JSON.stringify(payload) }
         ],
-        image,
         temperature: 0,
         reasoning_effort: 'high',
         max_completion_tokens: 1600,
         tools: [tool],
         tool_choice: 'required',
         parallel_tool_calls: false
-      });
+      };
+      if (image) aiRequest.image = image;
+      const result = await env.AI.run(MODEL, aiRequest);
 
       const raw = extractToolArguments(result, 'return_outlaw_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
