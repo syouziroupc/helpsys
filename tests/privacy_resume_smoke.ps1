@@ -81,9 +81,10 @@ try {
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+  $unifiedRoute = $diagnostics.path -eq '/v2/plan'
   $qualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
   $structuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
-  if (-not ($qualityRoute -or $structuredRoute)) {
+  if (-not ($unifiedRoute -or $qualityRoute -or $structuredRoute)) {
     throw "Privacy Mode resumed through an unexpected planner route: $($diagnostics.path), screenshot=$($diagnostics.hasScreenshot)"
   }
   if ([int]$diagnostics.foregroundProcessId -ne $safeTarget.Id) {
