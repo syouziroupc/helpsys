@@ -77,7 +77,7 @@ public partial class MainWindow
         {
             _rejectedVisionTargets++;
             _history.Add(new GuideHistoryItem(_stepNumber, "vision_target_rejected", "空白または押せない場所", "画像AIの座標に実際の押せるWindows要素が無かったため、この案内は破棄した。"));
-            if (_history.Count > 12) _history.RemoveAt(0);
+            if (_history.Count > 64) _history.RemoveAt(0);
             _currentDecision = null;
             _currentTarget = null;
             _guidedBounds = null;
@@ -208,7 +208,7 @@ public partial class MainWindow
         if (localChoice == LocalChoiceAnswerResult.Handled) return;
 
         _history.Add(new GuideHistoryItem(_stepNumber, "clarification_answer", answer, _clarificationQuestion ?? "確認質問"));
-        if (_history.Count > 12) _history.RemoveAt(0);
+        if (_history.Count > 64) _history.RemoveAt(0);
         _clarificationQuestion = null;
         HideClarificationUiIfNeeded(force: true);
         try { _actionObserver.Start(); } catch { }
