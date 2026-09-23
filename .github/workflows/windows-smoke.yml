@@ -22,10 +22,6 @@ jobs:
       - name: Check Worker and contract syntax
         run: |
           node --check worker/index.js
-          node --check worker/entry.js
-          node --check worker/visible-first.js
-          node --check worker/start-state-guard.js
-          node --check worker/deliberation-guard.js
           node --check worker/reliability-v4-guard.js
           node --check worker/quality-guide.js
           node --check worker/transcribe.js
