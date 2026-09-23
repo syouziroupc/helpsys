@@ -14,12 +14,17 @@ const resilience = read('src/HelpSys.Desktop/MainWindow.Resilience.cs');
 const currentReplan = read('src/HelpSys.Desktop/MainWindow.CurrentStateReplan.cs');
 const routeRecovery = read('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs');
 const cloud = read('src/HelpSys.Desktop/Services/CloudGuideService.cs');
+const trace = read('src/HelpSys.Desktop/Services/PerformanceTrace.cs');
+const observerClient = read('src/HelpSys.Desktop/Services/UiAutomationObserverClient.cs');
 const knowledge = read('worker/windows-knowledge.js');
 
 // Freeze root cause: UIA has exactly one process-side owner and one MTA execution lane.
 assert(observerHost.includes('ApartmentState.MTA'), 'Observer must own a dedicated MTA automation thread.');
 assert(observerHost.includes('BlockingCollection<WorkItem>'), 'Observer automation requests must be serialized.');
 assert(lowerScanner.includes('TryRevalidateNearOriginalBounds'), 'Target validation must avoid a full UIA scan in the common case.');
+assert(lowerScanner.includes('CacheRequest') && lowerScanner.includes('CreateTraversalCacheRequest'), 'UIA traversal properties/patterns must be batched with CacheRequest.');
+assert(lowerScanner.includes('GetFirstChild(parent, cacheRequest)') && lowerScanner.includes('GetNextSibling(child, cacheRequest)'), 'Bounded UIA tree walking must request cached children.');
+
 assert(!watcher.includes('System.Windows.Automation'), 'Live watcher must not own UIA.');
 assert(!context.includes('System.Windows.Automation') && !context.includes('AutomationElement'), 'System context must not own UIA.');
 assert(!capture.includes('System.Windows.Automation') && !capture.includes('AutomationElement'), 'Screenshot capture must not own UIA.');
@@ -48,6 +53,11 @@ assert(cloud.includes('for (var attempt = 0; attempt < 2; attempt++)'), 'Transpo
 assert(cloud.includes('CircuitFailureThreshold = 3'), 'Repeated service failures must open a circuit.');
 assert(cloud.includes('CircuitOpenDuration = TimeSpan.FromSeconds(8)'), 'Circuit breaker duration must remain explicit and bounded.');
 assert(cloud.includes('const int totalBudget = 96'), 'Cloud evidence must remain goal-ranked and bounded.');
+assert(trace.includes('MaxEvents = 256'), 'Performance tracing must remain bounded in memory.');
+assert(trace.includes('HELPSYS_DIAGNOSTIC_MODE'), 'Performance trace mirroring must remain explicitly diagnostic.');
+assert(observerClient.includes('"uia.capture-process"'), 'UIA latency must be measured by operation.');
+assert(cloud.includes('"cloud.quality-plan"'), 'Planner latency must be measured independently.');
+assert(capture.includes('"screenshot.capture"'), 'Screenshot latency must be measured independently.');
 
 // Route knowledge constrains unsafe actions instead of forcing recipes.
 assert(knowledge.includes('forbiddenTargetIds'), 'Cross-site route constraints must be enforceable, not prompt-only.');
