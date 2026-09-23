@@ -165,6 +165,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        LocalLogService.Write(_awaitingClarification ? "clarification_input" : "request", text);
+
         // The Guide click itself brings HelpSys to the foreground. Freeze the most recently
         // sampled external foreground window here so the snapshot broker observes the user's
         // actual work surface rather than HelpSys.
@@ -564,19 +566,13 @@ public partial class MainWindow : Window
     {
         if (!IsGenuineDecisionClarification(question))
         {
-            if (generation.HasValue && !_sessionState.IsCurrent(generation.Value)) return;
+            var effectiveGeneration = generation ?? _sessionState.Generation;
+            LocalLogService.Write("technical_uncertainty", question);
+            HandleTechnicalPlanningUncertainty(question, effectiveGeneration);
+            return;
+        }
 
-            _history.Add(new GuideHistoryItem(
-                _stepNumber,
-                "technical_clarification_suppressed",
-                "現在の画面",
-                "画面認識不足を利用者への質問へ転嫁せず、端末側の情報を再取得して自動復帰する。"));
-            if (_history.Count > 12) _history.RemoveAt(0);
-
-            _technicalClarificationRetries++;
-            if (_technicalClarificationRetries > 2)
-            {
-                _technicalClarificationRetries = 0;
+        _technicalClarificationRetries = 0;
                 QueueResilientRecovery("技術的な画面不確実性が継続しているため自動復旧へ移行", generation);
                 return;
             }
@@ -654,6 +650,7 @@ public partial class MainWindow : Window
 
     private void SetState(string message, bool speak)
     {
+        LocalLogService.Write("state", message);
         StateText.Text = message;
         if (speak)
         {
