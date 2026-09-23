@@ -140,7 +140,10 @@ public partial class MainWindow
                 }
                 if (_sessionState.IsCurrent(generation) && error.Kind is GuideFailureKind.Network or GuideFailureKind.ServiceUnavailable or GuideFailureKind.InvalidResponse)
                 {
-                    HandleTechnicalPlanningUncertainty("案内サービスの一時的な応答失敗", generation);
+                    var reason = IsLocalSmokeEndpoint()
+                        ? $"案内サービスの一時的な応答失敗: {error.Message}"
+                        : "案内サービスの一時的な応答失敗";
+                    HandleTechnicalPlanningUncertainty(reason, generation);
                     return;
                 }
                 if (_sessionState.IsCurrent(generation)) StopWithGuideFailure(error);
