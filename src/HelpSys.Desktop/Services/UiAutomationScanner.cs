@@ -379,7 +379,7 @@ public sealed class UiAutomationScanner
         Rect rect)
     {
         var isPassword = current.IsPassword;
-        var actionState = ReadActionState(element, typeName, isPassword);
+        var actionState = ReadActionState(element, typeName, isPassword, cached: false);
         string processName;
         try { processName = Process.GetProcessById(current.ProcessId).ProcessName; }
         catch { processName = string.Empty; }
@@ -413,9 +413,10 @@ public sealed class UiAutomationScanner
     {
         var root = AutomationElement.RootElement;
         var walker = TreeWalker.ControlViewWalker;
-        var queue = new Queue<(AutomationElement Element, int Depth)>();
+        using var cacheRequest = CreateTraversalCacheRequest();
+        var queue = new Queue<(AutomationElement Element, int Depth, bool Cached)>();
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
-        else EnqueueChildren(walker, root, 0, queue);
+        else EnqueueChildrenCached(walker, root, 0, queue, cacheRequest);
 
         var interactivePoolLimit = Math.Max(360, maxCandidates * 2);
         var contextPoolLimit = Math.Max(90, maxCandidates / 3);
@@ -428,12 +429,12 @@ public sealed class UiAutomationScanner
         while (queue.Count > 0 && visited < 4500 && stopwatch.ElapsedMilliseconds < 1400)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var (element, depth) = queue.Dequeue();
+            var (element, depth, cached) = queue.Dequeue();
             visited++;
 
             try
             {
-                var current = element.Current;
+                var current = cached ? element.Cached : element.Current;
                 if (current.ProcessId != _selfProcessId && !current.IsOffscreen && current.IsEnabled)
                 {
                     var rect = current.BoundingRectangle;
@@ -441,21 +442,21 @@ public sealed class UiAutomationScanner
                     var isPassword = current.IsPassword;
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
                     var rawName = current.Name ?? string.Empty;
-                    var isInteractive = IsInteractiveType(typeName);
-                    var readableText = isPassword || isInput || isInteractive
-                        ? rawName
-                        : ReadBoundedVisibleText(element, typeName, rawName);
-                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : readableText;
+
+                    // Name/AutomationId/ClassName are already fetched in the traversal cache.
+                    // Avoid a second TextPattern roundtrip for every context node.
+                    var name = isPassword ? "[password field]" : isInput ? "[input field]" : NormalizeReadableText(rawName, 420);
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
                     var processName = GetProcessName(current.ProcessId, processNames);
                     if (isInput && !isPassword)
                         automationId = AnnotateInputSemanticRole(automationId, rawName, className, processName);
+                    var isInteractive = IsInteractiveType(typeName);
                     var isContext = !isInteractive && IsContextType(typeName, name, rect);
 
                     if (isInteractive && interactive.Count < interactivePoolLimit && ShouldKeep(name, automationId, className, rect))
                     {
-                        var actionState = ReadActionState(element, typeName, isPassword);
+                        var actionState = ReadActionState(element, typeName, isPassword, cached);
                         interactive.Add(new UiElementCandidate(
                             $"u{interactive.Count + 1}", Trim(name, 180), Trim(automationId, 120), Trim(className, 120),
                             Trim(typeName.Replace("ControlType.", string.Empty), 80), processName,
@@ -476,7 +477,7 @@ public sealed class UiAutomationScanner
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
 
-            if (depth < 10) EnqueueChildren(walker, element, depth + 1, queue);
+            if (depth < 10) EnqueueChildrenCached(walker, element, depth + 1, queue, cacheRequest);
         }
 
         var contextBudget = Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
@@ -493,32 +494,25 @@ public sealed class UiAutomationScanner
         return rankedInteractive.Concat(rankedContext).ToArray();
     }
 
-    private static string ReadBoundedVisibleText(AutomationElement element, string typeName, string fallback)
+    private static CacheRequest CreateTraversalCacheRequest()
     {
-        var normalizedFallback = NormalizeReadableText(fallback, 420);
-        var textBearing = typeName.EndsWith("Document", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Text", StringComparison.Ordinal) ||
-                          typeName.EndsWith("DataItem", StringComparison.Ordinal);
-        if (!textBearing) return normalizedFallback;
-
-        try
-        {
-            if (element.TryGetCurrentPattern(TextPattern.Pattern, out var pattern) && pattern is TextPattern textPattern)
-            {
-                var extracted = NormalizeReadableText(textPattern.DocumentRange.GetText(520), 420);
-                if (!string.IsNullOrWhiteSpace(extracted))
-                {
-                    if (string.IsNullOrWhiteSpace(normalizedFallback)) return extracted;
-                    if (extracted.Equals(normalizedFallback, StringComparison.OrdinalIgnoreCase)) return normalizedFallback;
-                    return NormalizeReadableText($"{normalizedFallback} | {extracted}", 420);
-                }
-            }
-        }
-        catch (ElementNotAvailableException) { }
-        catch (InvalidOperationException) { }
-        catch (NotSupportedException) { }
-
-        return normalizedFallback;
+        var request = new CacheRequest { TreeScope = TreeScope.Element };
+        request.Add(AutomationElement.ProcessIdProperty);
+        request.Add(AutomationElement.NameProperty);
+        request.Add(AutomationElement.AutomationIdProperty);
+        request.Add(AutomationElement.ClassNameProperty);
+        request.Add(AutomationElement.ControlTypeProperty);
+        request.Add(AutomationElement.BoundingRectangleProperty);
+        request.Add(AutomationElement.IsEnabledProperty);
+        request.Add(AutomationElement.IsOffscreenProperty);
+        request.Add(AutomationElement.IsKeyboardFocusableProperty);
+        request.Add(AutomationElement.HasKeyboardFocusProperty);
+        request.Add(AutomationElement.IsPasswordProperty);
+        request.Add(ValuePattern.Pattern);
+        request.Add(TogglePattern.Pattern);
+        request.Add(SelectionItemPattern.Pattern);
+        request.Add(ExpandCollapsePattern.Pattern);
+        return request;
     }
 
     private static string NormalizeReadableText(string? value, int max)
@@ -528,7 +522,11 @@ public sealed class UiAutomationScanner
         return normalized.Length <= max ? normalized : normalized[..max];
     }
 
-    private static ActionState ReadActionState(AutomationElement element, string typeName, bool isPassword)
+    private static ActionState ReadActionState(
+        AutomationElement element,
+        string typeName,
+        bool isPassword,
+        bool cached)
     {
         string? value = null;
         string? toggleState = null;
@@ -537,44 +535,58 @@ public sealed class UiAutomationScanner
 
         try
         {
-            if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)) &&
-                element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern) && valuePattern is ValuePattern valueValue)
+            if (!isPassword && (typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal)))
             {
-                // UIA runs in the isolated observer process. Keep a bounded local value for ordinary
-                // non-password inputs so PrivacyGate can classify/sanitize it before any cloud egress.
-                // Password controls are excluded above and never expose their ValuePattern content.
-                var rawValue = valueValue.Current.Value?.Trim();
+                ValuePattern? pattern = cached
+                    ? element.GetCachedPattern(ValuePattern.Pattern) as ValuePattern
+                    : element.TryGetCurrentPattern(ValuePattern.Pattern, out var currentPattern) ? currentPattern as ValuePattern : null;
+                var rawValue = cached ? pattern?.Cached.Value?.Trim() : pattern?.Current.Value?.Trim();
                 if (!string.IsNullOrWhiteSpace(rawValue))
                     value = rawValue.Length <= 320 ? rawValue : rawValue[..320];
             }
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
 
         try
         {
-            if ((typeName.EndsWith("CheckBox", StringComparison.Ordinal) || typeName.EndsWith("RadioButton", StringComparison.Ordinal)) &&
-                element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern) && togglePattern is TogglePattern toggleValue)
-                toggleState = toggleValue.Current.ToggleState.ToString();
+            if (typeName.EndsWith("CheckBox", StringComparison.Ordinal) || typeName.EndsWith("RadioButton", StringComparison.Ordinal))
+            {
+                TogglePattern? pattern = cached
+                    ? element.GetCachedPattern(TogglePattern.Pattern) as TogglePattern
+                    : element.TryGetCurrentPattern(TogglePattern.Pattern, out var currentPattern) ? currentPattern as TogglePattern : null;
+                if (pattern is not null)
+                    toggleState = (cached ? pattern.Cached.ToggleState : pattern.Current.ToggleState).ToString();
+            }
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
 
         try
         {
-            if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selectionPattern) && selectionPattern is SelectionItemPattern selectionValue)
-                selected = selectionValue.Current.IsSelected;
+            SelectionItemPattern? pattern = cached
+                ? element.GetCachedPattern(SelectionItemPattern.Pattern) as SelectionItemPattern
+                : element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var currentPattern) ? currentPattern as SelectionItemPattern : null;
+            if (pattern is not null)
+                selected = cached ? pattern.Cached.IsSelected : pattern.Current.IsSelected;
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
 
         try
         {
-            if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expandPattern) && expandPattern is ExpandCollapsePattern expandValue)
-                expandCollapseState = expandValue.Current.ExpandCollapseState.ToString();
+            ExpandCollapsePattern? pattern = cached
+                ? element.GetCachedPattern(ExpandCollapsePattern.Pattern) as ExpandCollapsePattern
+                : element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var currentPattern) ? currentPattern as ExpandCollapsePattern : null;
+            if (pattern is not null)
+                expandCollapseState = (cached ? pattern.Cached.ExpandCollapseState : pattern.Current.ExpandCollapseState).ToString();
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
+        catch (NotSupportedException) { }
 
         return new ActionState(value, toggleState, selected, expandCollapseState);
     }
@@ -681,7 +693,7 @@ public sealed class UiAutomationScanner
         return cached;
     }
 
-    private static void EnqueueProcessSurfaceRoots(int processId, Queue<(AutomationElement Element, int Depth)> queue)
+    private static void EnqueueProcessSurfaceRoots(int processId, Queue<(AutomationElement Element, int Depth, bool Cached)> queue)
     {
         EnqueueProcessRoots(processId, queue);
 
@@ -724,12 +736,21 @@ public sealed class UiAutomationScanner
         catch (InvalidOperationException) { }
     }
 
-    private static void EnqueueChildren(TreeWalker walker, AutomationElement parent, int depth, Queue<(AutomationElement Element, int Depth)> queue)
+    private static void EnqueueChildrenCached(
+        TreeWalker walker,
+        AutomationElement parent,
+        int depth,
+        Queue<(AutomationElement Element, int Depth, bool Cached)> queue,
+        CacheRequest cacheRequest)
     {
         try
         {
-            var child = walker.GetFirstChild(parent);
-            while (child is not null) { queue.Enqueue((child, depth)); child = walker.GetNextSibling(child); }
+            var child = walker.GetFirstChild(parent, cacheRequest);
+            while (child is not null)
+            {
+                queue.Enqueue((child, depth, true));
+                child = walker.GetNextSibling(child, cacheRequest);
+            }
         }
         catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
