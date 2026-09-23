@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using HelpSys.Models;
+using HelpSys.Services;
 
 namespace HelpSys;
 
@@ -34,7 +35,11 @@ public sealed class ScreenCaptureService
         int expectedProcessId,
         nint expectedWindowHandle,
         CancellationToken cancellationToken = default)
-        => Task.Run(() => Capture(redactions, expectedProcessId, expectedWindowHandle, cancellationToken), cancellationToken);
+        => PerformanceTrace.MeasureAsync(
+            "screenshot.capture",
+            () => Task.Run(
+                () => Capture(redactions, expectedProcessId, expectedWindowHandle, cancellationToken),
+                cancellationToken));
 
     public Task<ScreenCaptureFrame> CaptureAsync(
         IReadOnlyList<Rect> redactions,
