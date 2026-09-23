@@ -29,14 +29,14 @@ public sealed class UiAutomationScanner
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesAsync(int maxCandidates = 360, CancellationToken cancellationToken = default)
         => UseObserver
             ? SharedObserver.Value.CaptureCandidatesAsync(maxCandidates, cancellationToken)
-            : Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken), cancellationToken);
+            : Task.FromResult(CaptureCandidates(maxCandidates, cancellationToken));
 
     public Task<IReadOnlyList<UiElementCandidate>> CaptureCandidatesForProcessAsync(int processId, int maxCandidates = 360, CancellationToken cancellationToken = default)
     {
         if (processId <= 0) return Task.FromResult<IReadOnlyList<UiElementCandidate>>([]);
         return UseObserver
             ? SharedObserver.Value.CaptureCandidatesForProcessAsync(processId, maxCandidates, cancellationToken)
-            : Task.Run(() => CaptureCandidates(maxCandidates, cancellationToken, processId), cancellationToken);
+            : Task.FromResult(CaptureCandidates(maxCandidates, cancellationToken, processId));
     }
 
     public Task<string> CaptureWindowDiagnosticsAsync(
@@ -47,7 +47,7 @@ public sealed class UiAutomationScanner
         if (windowHandle == nint.Zero) return Task.FromResult("hwnd=missing");
         return UseObserver
             ? SharedObserver.Value.CaptureWindowDiagnosticsAsync(windowHandle, expectedProcessId, cancellationToken)
-            : Task.Run(() => CaptureWindowDiagnostics(windowHandle, expectedProcessId, cancellationToken), cancellationToken);
+            : Task.FromResult(CaptureWindowDiagnostics(windowHandle, expectedProcessId, cancellationToken));
     }
 
     private static string CaptureWindowDiagnostics(nint windowHandle, int expectedProcessId, CancellationToken cancellationToken)
@@ -111,22 +111,22 @@ public sealed class UiAutomationScanner
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, CancellationToken cancellationToken = default)
         => UseObserver
             ? SharedObserver.Value.RevalidateCandidateAsync(candidate, null, cancellationToken)
-            : Task.Run(() => RevalidateCandidate(candidate, null, cancellationToken), cancellationToken);
+            : Task.FromResult(RevalidateCandidate(candidate, null, cancellationToken));
 
     public Task<UiElementCandidate?> RevalidateCandidateAsync(UiElementCandidate candidate, int rootProcessId, CancellationToken cancellationToken = default)
         => UseObserver
             ? SharedObserver.Value.RevalidateCandidateAsync(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken)
-            : Task.Run(() => RevalidateCandidate(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken), cancellationToken);
+            : Task.FromResult(RevalidateCandidate(candidate, rootProcessId > 0 ? rootProcessId : null, cancellationToken));
 
     public Task<Rect?> SnapToAccessibleBoundsAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
         => UseObserver
             ? SharedObserver.Value.SnapToAccessibleBoundsAsync(approximateBounds, cancellationToken)
-            : Task.Run(() => SnapToAccessibleBounds(approximateBounds, cancellationToken), cancellationToken);
+            : Task.FromResult(SnapToAccessibleBounds(approximateBounds, cancellationToken));
 
     public Task<UiElementCandidate?> SnapToAccessibleCandidateAsync(Rect approximateBounds, CancellationToken cancellationToken = default)
         => UseObserver
             ? SharedObserver.Value.SnapToAccessibleCandidateAsync(approximateBounds, cancellationToken)
-            : Task.Run(() => SnapToAccessibleCandidate(approximateBounds, cancellationToken), cancellationToken);
+            : Task.FromResult(SnapToAccessibleCandidate(approximateBounds, cancellationToken));
 
     private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, int? rootProcessId, CancellationToken cancellationToken)
     {
