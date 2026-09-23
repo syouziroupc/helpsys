@@ -85,7 +85,7 @@ jobs:
           - Full-desktop UI Automation observation: up to 4000 candidates / 40000 visited nodes / 24 levels / 15 seconds
           - UIA TextPattern semantic text extraction enabled
           - Visual-only targets are retained even when UIA exposes no matching control
-          - Cross-process UI changes are watched during guidance
+          - Cross-process foreground changes are watched globally; background object-event noise is filtered
           - Failed actions are blocked from being re-presented on the same observed state
           - Recovery/replan budgets reset only after verified progress
           - Up to 64 guidance-history entries are retained
