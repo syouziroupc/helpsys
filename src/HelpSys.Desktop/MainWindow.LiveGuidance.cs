@@ -62,6 +62,16 @@ public partial class MainWindow
         if (!string.Equals(_currentDecision.TargetId, "vision-target", StringComparison.Ordinal)) return;
         if (string.Equals(_validatedVisionInstruction, _currentDecision.Instruction, StringComparison.Ordinal)) return;
 
+        if (OutlawModePolicy.Enabled)
+        {
+            _validatedVisionInstruction = _currentDecision.Instruction;
+            _overlay.ShowTarget(_guidedBounds.Value, _currentDecision.Instruction);
+            LocalLogService.Write(
+                "outlaw_vision_target_kept",
+                $"bounds={_guidedBounds.Value};instruction={_currentDecision.Instruction}");
+            return;
+        }
+
         var generation = _sessionState.Generation;
         var bounds = _guidedBounds.Value;
         _overlay.Hide();
