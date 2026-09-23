@@ -8,7 +8,9 @@ namespace HelpSys.Services;
 
 internal sealed class UiAutomationObserverClient : IDisposable
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromMilliseconds(3800);
+    private static readonly TimeSpan RequestTimeout = OutlawModePolicy.Enabled
+        ? TimeSpan.FromSeconds(9)
+        : TimeSpan.FromMilliseconds(3800);
     private readonly SemaphoreSlim _requestGate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
 
