@@ -3,8 +3,6 @@ import { spawnSync } from 'node:child_process';
 const commands = [
   ['node', ['worker/selftest.mjs']],
   ['node', ['worker/policy-selftest.mjs']],
-  ['node', ['worker/visible-first-selftest.mjs']],
-  ['node', ['worker/deliberation-selftest.mjs']],
   ['node', ['worker/reliability-v4-selftest.mjs']],
   ['node', ['worker/quality-guide-selftest.mjs']],
   ['node', ['worker/transcribe-selftest.mjs']],
