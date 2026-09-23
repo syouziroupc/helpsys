@@ -8,7 +8,9 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private string _outlawFailedGuidanceKey = string.Empty;
+    private const int MaximumOutlawFailedGuidanceKeys = 64;
+    private readonly HashSet<string> _outlawFailedGuidanceKeys = new(StringComparer.Ordinal);
+    private readonly Queue<string> _outlawFailedGuidanceOrder = new();
     private string _outlawLastPresentedGuidanceKey = string.Empty;
 
     private bool TryAcceptOutlawGuidance(
@@ -22,8 +24,7 @@ public partial class MainWindow
         if (!OutlawModePolicy.Enabled) return true;
 
         var key = BuildOutlawGuidanceKey(decision, target, candidates, systemContext, bounds);
-        if (!string.IsNullOrWhiteSpace(_outlawFailedGuidanceKey) &&
-            string.Equals(key, _outlawFailedGuidanceKey, StringComparison.Ordinal))
+        if (_outlawFailedGuidanceKeys.Contains(key))
         {
             var label = target is null
                 ? (decision.TargetId ?? decision.Key ?? "画面上の場所")
@@ -33,7 +34,7 @@ public partial class MainWindow
                 _stepNumber,
                 "outlaw_repeat_blocked",
                 label,
-                "同じ観測状態で直前に効果が無かった同一操作をPlannerが再提示したため、ローカル反復ガードで破棄した。別の操作経路を選ぶ必要がある。"));
+                "同じ観測状態で既に効果が無かった操作をPlannerが再提示したため、ローカル反復ガードで破棄した。別の操作経路を選ぶ必要がある。"));
             if (_history.Count > 64) _history.RemoveAt(0);
 
             LocalLogService.Write(
@@ -73,17 +74,37 @@ public partial class MainWindow
 
         if (changed)
         {
-            _outlawFailedGuidanceKey = string.Empty;
-            _outlawLastPresentedGuidanceKey = string.Empty;
+            ResetOutlawLoopGuard();
             ResetCurrentStateReplanBudget();
             ResetResilienceRecovery();
             LocalLogService.Write("outlaw_progress_verified", $"action={decision.Action};key={key}");
             return;
         }
 
-        _outlawFailedGuidanceKey = key;
+        RememberOutlawFailedGuidanceKey(key);
         _outlawLastPresentedGuidanceKey = key;
-        LocalLogService.Write("outlaw_no_effect_recorded", $"action={decision.Action};key={key}");
+        LocalLogService.Write(
+            "outlaw_no_effect_recorded",
+            $"action={decision.Action};key={key};failedKeys={_outlawFailedGuidanceKeys.Count}");
+    }
+
+    private void RememberOutlawFailedGuidanceKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || !_outlawFailedGuidanceKeys.Add(key)) return;
+
+        _outlawFailedGuidanceOrder.Enqueue(key);
+        while (_outlawFailedGuidanceOrder.Count > MaximumOutlawFailedGuidanceKeys)
+        {
+            var oldest = _outlawFailedGuidanceOrder.Dequeue();
+            _outlawFailedGuidanceKeys.Remove(oldest);
+        }
+    }
+
+    private void ResetOutlawLoopGuard()
+    {
+        _outlawFailedGuidanceKeys.Clear();
+        _outlawFailedGuidanceOrder.Clear();
+        _outlawLastPresentedGuidanceKey = string.Empty;
     }
 
     private string BuildOutlawGuidanceKey(
