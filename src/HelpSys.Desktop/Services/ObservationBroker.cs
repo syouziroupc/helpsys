@@ -30,10 +30,12 @@ public sealed class ObservationBroker
         if (!HasUsableForeground(before))
             throw new InvalidOperationException("前面ウィンドウを安全に特定できません。");
 
-        var elements = await _scanner.CaptureCandidatesForProcessAsync(
-            before.ForegroundProcessId,
-            maxCandidates,
-            cancellationToken).ConfigureAwait(false);
+        var elements = await PerformanceTrace.MeasureAsync(
+            "observation.scan",
+            () => _scanner.CaptureCandidatesForProcessAsync(
+                before.ForegroundProcessId,
+                maxCandidates,
+                cancellationToken)).ConfigureAwait(false);
 
         var after = _systemContext.Capture();
         if (!HasSameIdentity(before, after))
