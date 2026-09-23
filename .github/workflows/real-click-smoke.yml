@@ -70,6 +70,20 @@ jobs:
           }
           if (-not (Test-Path $video)) { throw 'HelpSys real-usage video was not produced.' }
           if ((Get-Item $video).Length -lt 100000) { throw 'HelpSys real-usage video is unexpectedly small.' }
+      - name: Validate YouTube E2E script syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tests/youtube_real_usage_e2e.ps1'),
+            [ref]$null,
+            [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw 'YouTube E2E PowerShell parser errors detected.'
+          }
+
       - name: Record real YouTube HelpSys session
         shell: pwsh
         continue-on-error: true
