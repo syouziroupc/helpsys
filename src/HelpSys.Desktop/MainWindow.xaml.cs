@@ -367,10 +367,14 @@ public partial class MainWindow : Window
         }
         decision = safeDecision;
 
+        if (!TryAcceptOutlawGuidance(decision, target, candidates, systemContext, target.Bounds, generation)) return;
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
-        ResetCurrentStateReplanBudget();
-        ResetResilienceRecovery();
+        if (!OutlawModePolicy.Enabled)
+        {
+            ResetCurrentStateReplanBudget();
+            ResetResilienceRecovery();
+        }
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
@@ -424,10 +428,14 @@ public partial class MainWindow : Window
 
     private void ShowKeyboardGuide(GuideDecision decision, IReadOnlyList<UiElementCandidate> candidates, SystemContextSnapshot systemContext, long generation)
     {
+        if (!TryAcceptOutlawGuidance(decision, null, candidates, systemContext, null, generation)) return;
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
         _technicalClarificationRetries = 0;
-        ResetCurrentStateReplanBudget();
-        ResetResilienceRecovery();
+        if (!OutlawModePolicy.Enabled)
+        {
+            ResetCurrentStateReplanBudget();
+            ResetResilienceRecovery();
+        }
         _currentDecision = decision;
         _currentTarget = null;
         _stepBaseline = candidates;
