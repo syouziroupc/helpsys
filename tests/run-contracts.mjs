@@ -13,7 +13,8 @@ const commands = [
   ['node', ['tests/privacy-resume-contract.mjs']],
   ['node', ['tests/safe-edition-contract.mjs']],
   ['node', ['tests/worker-data-handling-contract.mjs']],
-  ['node', ['tests/site-release-contract.mjs']]
+  ['node', ['tests/site-release-contract.mjs']],
+  ['node', ['tests/why5-root-contract.mjs']]
 ];
 
 for (const [command, args] of commands) {
