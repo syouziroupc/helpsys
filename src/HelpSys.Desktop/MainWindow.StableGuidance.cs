@@ -134,21 +134,13 @@ public partial class MainWindow
         try
         {
             var token = _sessionCts.IsCancellationRequested ? CancellationToken.None : _sessionCts.Token;
-            var nowSystem = _systemContext.Capture();
-            if (!HasUsableForeground(nowSystem))
+            ObservationSnapshot snapshot;
+            try
             {
-                ClearStableLiveChangeCandidate();
-                await _liveWatcher.SetForegroundProcessAsync(0, token);
-                return;
+                snapshot = await _observationBroker.CaptureAsync(180, token);
             }
-
-            await _liveWatcher.SetForegroundProcessAsync(nowSystem.ForegroundProcessId, token);
-            IReadOnlyList<UiElementCandidate> nowElements;
-            try { nowElements = await _scanner.CaptureCandidatesForProcessAsync(nowSystem.ForegroundProcessId, 320, token); }
             catch (OperationCanceledException) { return; }
-
-            var afterScanSystem = _systemContext.Capture();
-            if (HasHardStableLiveChange(nowSystem, afterScanSystem))
+            catch (ObservationChangedException)
             {
                 ClearStableLiveChangeCandidate();
                 _liveElements = [];
@@ -156,7 +148,16 @@ public partial class MainWindow
                 if (!_verifyingAction) InvalidatePlannerForLiveContextChange();
                 return;
             }
-            nowSystem = afterScanSystem;
+            catch (InvalidOperationException)
+            {
+                ClearStableLiveChangeCandidate();
+                await _liveWatcher.SetForegroundProcessAsync(0, token);
+                return;
+            }
+
+            var nowSystem = snapshot.System;
+            var nowElements = snapshot.Elements;
+            await _liveWatcher.SetForegroundProcessAsync(nowSystem.ForegroundProcessId, token);
 
             if (_liveSystem is null || _liveElements.Count == 0)
             {
