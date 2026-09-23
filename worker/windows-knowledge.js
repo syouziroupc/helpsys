@@ -191,6 +191,31 @@ function buildSiteTask(site, goal, elements, history, systemContext, knowledge) 
 
   const browserForeground = BROWSER_PROCESSES.includes(foreground);
   if (browserForeground) {
+    const addressField = findBrowserAddressField(elements, systemContext);
+    if (addressField?.focused) {
+      return task('site', knowledge, {
+        status: 'target',
+        targetId: addressField.id,
+        action: 'type_text',
+        instruction: `キーボードで「${site.search}」と入力し、最後に「Enter」と書かれたキーを1回押してください。`,
+        question: null,
+        key: 'Enter',
+        confidence: 0.995
+      }, false, new Set([addressField.id]), null, true, site);
+    }
+
+    if (addressField) {
+      return task('site', knowledge, {
+        status: 'target',
+        targetId: addressField.id,
+        action: 'left_click',
+        instruction: '画面上部の検索欄で、マウスの左ボタンを1回押してください。',
+        question: null,
+        key: null,
+        confidence: 0.995
+      }, false, new Set([addressField.id]), null, true, site);
+    }
+
     const currentSite = currentDomain || '不明';
     const foreignSite = currentDomain && !isNeutralBrowserPage(currentDomain, currentUrl);
     const forbiddenTargetIds = foreignSite
