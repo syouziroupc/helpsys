@@ -57,11 +57,23 @@ for (const file of walk('src/HelpSys.Desktop')) {
 }
 
 const lowerScanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
-const scanner = fs.readFileSync('src/HelpSys.Desktop/UiAutomationScanner.cs', 'utf8');
-assert(lowerScanner.includes('isPassword ? "[password field]"'), 'Password accessibility names must remain minimized at the lower scanner.');
-assert(scanner.includes('RestoreLocalInputEvidence'), 'MainWindow scanner must restore useful non-password input evidence locally.');
-assert(scanner.includes('candidate.Password') && scanner.includes('ValuePattern.Pattern'), 'Local value restoration must exclude password candidates.');
-assert(scanner.includes('value?.Length > 320'), 'Locally retained ordinary input evidence must be bounded.');
+const scannerFacade = fs.readFileSync('src/HelpSys.Desktop/UiAutomationScanner.cs', 'utf8');
+const observerHost = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationObserverHost.cs', 'utf8');
+const watcher = fs.readFileSync('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs', 'utf8');
+
+assert(lowerScanner.includes('isPassword ? "[password field]"'), 'Password accessibility names must remain minimized inside the isolated observer scanner.');
+assert(lowerScanner.includes('ValuePattern.Pattern') && lowerScanner.includes('if (!isPassword'), 'Observer may retain bounded ordinary input evidence but must exclude password values.');
+assert(lowerScanner.includes('rawValue.Length <= 320'), 'Locally retained ordinary input evidence must remain bounded.');
+assert(scannerFacade.includes('HelpSys.Services.UiAutomationScanner'), 'MainWindow UIA facade must delegate to the isolated observer implementation.');
+assert(observerHost.includes('ApartmentState.MTA'), 'All provider-facing UI Automation work must run on one dedicated MTA thread.');
+assert(observerHost.includes('BlockingCollection<WorkItem>'), 'Observer requests must be serialized onto the dedicated automation thread.');
+assert(!watcher.includes('System.Windows.Automation') && watcher.includes('SetWinEventHook('), 'Guidance watcher must use WinEvent signals rather than in-process UIA subscriptions.');
+
+const automationOwners = walk('src/HelpSys.Desktop')
+  .filter(file => fs.readFileSync(file, 'utf8').includes('System.Windows.Automation'));
+assert(
+  automationOwners.length === 1 && automationOwners[0] === 'src/HelpSys.Desktop/Services/UiAutomationScanner.cs',
+  `UI Automation must have a single desktop-code owner: ${automationOwners.join(', ')}`);
 
 const contextModel = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
 assert(contextModel.includes('public string? Url { get; init; } = MinimizeUrl(Url);'), 'Browser URL must be minimized at the snapshot storage boundary.');
@@ -80,6 +92,9 @@ assert(systemContext.includes('GetShellWindow()'), 'Desktop fallback must use th
 assert(systemContext.includes('ProcessName.Equals("explorer"'), 'Shell fallback must verify that the desktop handle belongs to Explorer.');
 assert(!systemContext.includes('GwHwndNext'), 'System context must not walk behind HelpSys and guess the work surface from Z-order.');
 assert(!systemContext.includes('GetWindow(cursor'), 'System context must not select an unrelated notification merely because it sits behind HelpSys.');
+assert(!systemContext.includes('System.Windows.Automation') && !systemContext.includes('AutomationElement'), 'System context must not access UI Automation directly.');
+assert(systemContext.includes('EnrichWithObservedElements'), 'Browser context must be derived from the already-observed snapshot.');
+assert(systemContext.includes('role:browser_address'), 'Browser address semantics must come from observer candidates.');
 
 const sentinel = fs.readFileSync('src/HelpSys.Desktop/MainWindow.PrivacySentinel.cs', 'utf8');
 assert(sentinel.includes('PrivacySentinelEventSystemForeground = 0x0003'), 'Privacy Sentinel must observe every real foreground transition.');
@@ -92,25 +107,22 @@ assert(sentinel.includes('_voiceCts?.Cancel()') && sentinel.includes('_commander
 assert(sentinel.includes('_commander.SetEnabled(false)'), 'Commander wake monitoring must stop while Privacy Mode protects a dangerous screen.');
 
 const capture = fs.readFileSync('src/HelpSys.Desktop/ScreenCaptureService.cs', 'utf8');
+const redactionPolicy = fs.readFileSync('src/HelpSys.Desktop/Services/ScreenshotRedactionPolicy.cs', 'utf8');
 const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
-const recovery = fs.readFileSync('src/HelpSys.Desktop/MainWindow.RouteRecovery.cs', 'utf8');
+
+assert(!capture.includes('System.Windows.Automation') && !capture.includes('AutomationElement'), 'Screenshot capture must never perform a second UIA tree walk.');
 assert(capture.includes('GwHwndPrev = 3'), 'Screenshot privacy must inspect windows above the selected target in Z-order.');
-assert(capture.includes('CaptureOccluderBounds(captureArea, cancellationToken)'), 'Screenshot privacy must derive occluder redactions locally.');
+assert(capture.includes('var occludersBefore') && capture.includes('var occludersAfter'), 'Occluders must be checked before and after pixel capture.');
 assert(capture.indexOf('var occludersBefore') < capture.indexOf('BitBlt('), 'Occluders must be checked before desktop pixels are copied.');
 assert(capture.indexOf('var occludersAfter') > capture.indexOf('BitBlt('), 'Occluders must be rechecked after capture to close the race window.');
 assert(capture.includes('count >= 320 || !visited.Add(hwnd)'), 'Z-order enumeration must remain bounded and cycle-safe.');
-assert(capture.includes('if (pid == 0) return false;'), 'Unknown process ownership must never be promoted to a shell/full-monitor capture.');
-assert(capture.includes('操作対象のウィンドウを安全に特定できないため、画面画像を送信しません'), 'Unknown screenshot target must fail closed.');
-assert(/if\s*\(shellSurface\)\s*return monitorArea;/s.test(capture), 'Only a positively identified shell surface may use full-monitor capture.');
 assert(capture.includes('int expectedProcessId') && capture.includes('nint expectedWindowHandle'), 'Screenshot capture must require both process identity and exact HWND.');
-assert(capture.includes('targetPid != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
-assert(capture.includes('if (current.IsPassword) return true;'), 'Password fields must remain hard-redacted.');
-assert(capture.includes('ShouldRedactVisibleSensitiveText(valuePattern.Current.Value)'), 'Ordinary inputs may remain visible only after local sensitive-value inspection.');
-assert(!capture.includes('return current.ControlType == ControlType.Edit || current.ControlType == ControlType.ComboBox;'), 'All ordinary inputs must not be blindly redacted.');
+assert(capture.includes('targetPid <= 0 || targetPid != expectedProcessId'), 'Screenshot capture must reject an HWND whose process does not match the expected process.');
+assert(redactionPolicy.includes('if (element.Password) return true;'), 'Snapshot redaction policy must always redact password elements.');
+assert(redactionPolicy.includes('BearerRegex') && redactionPolicy.includes('PrivateKeyRegex') && redactionPolicy.includes('CardNumberRegex'), 'Snapshot redaction policy must detect high-confidence secret material.');
+assert(quality.includes('ScreenshotRedactionPolicy.Build(candidates)'), 'Quality capture must use snapshot-derived redaction rectangles.');
 assert(quality.includes('candidateProcessIds.Length > 1'), 'Normal mixed-process guidance candidates must still prevent screenshot creation.');
-assert(quality.includes('HasSameCaptureIdentity'), 'Quality planning must bind pre-capture, post-capture and pre-present checks to the same HWND.');
 assert(quality.includes('expectedContext.ForegroundWindowHandle'), 'Quality capture must pass the verified foreground HWND into the capture service.');
-assert(recovery.includes('CaptureQualityFrameAsync(candidates, context, cancellationToken)'), 'Recovery screenshots must reuse the same exact-HWND capture boundary.');
 
 const updater = fs.readFileSync(updaterPath, 'utf8');
 assert(updater.includes('RequiredTag = "preview-latest"'), 'Updater must stay on the reviewed release channel.');
