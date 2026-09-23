@@ -8,7 +8,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>HelpSys</AssemblyName>
     <RootNamespace>HelpSys</RootNamespace>
-    <DefineConstants>$(DefineConstants);HELPSYS_SAFE_BUILD</DefineConstants>
+    <DefineConstants>$(DefineConstants);HELPSYS_OUTLAW_BUILD</DefineConstants>
     <HelpSysBuildId Condition="'$(HelpSysBuildId)' == ''">dev</HelpSysBuildId>
     <InformationalVersion>0.1.0+$(HelpSysBuildId)</InformationalVersion>
     <TieredCompilation>true</TieredCompilation>
