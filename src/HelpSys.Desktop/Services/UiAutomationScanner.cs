@@ -426,8 +426,8 @@ public sealed class UiAutomationScanner
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        var visitedLimit = OutlawModePolicy.Enabled ? 16000 : 4500;
-        var elapsedLimitMs = OutlawModePolicy.Enabled ? 6000 : 1400;
+        var visitedLimit = OutlawModePolicy.Enabled ? 24000 : 4500;
+        var elapsedLimitMs = OutlawModePolicy.Enabled ? 9000 : 1400;
 
         while (queue.Count > 0 && visited < visitedLimit && stopwatch.ElapsedMilliseconds < elapsedLimitMs)
         {
