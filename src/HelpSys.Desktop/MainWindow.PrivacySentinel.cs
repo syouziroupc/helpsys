@@ -46,6 +46,7 @@ public partial class MainWindow
 
     private static void PrivacySentinel_Loaded(object sender, RoutedEventArgs e)
     {
+        if (OutlawModePolicy.Enabled) return;
         if (sender is not MainWindow window || window._privacySentinelHook != nint.Zero) return;
 
         window._privacySentinelCallback = window.PrivacySentinel_ForegroundChanged;
@@ -76,6 +77,7 @@ public partial class MainWindow
 
     private static void PrivacySentinel_ButtonClick(object sender, RoutedEventArgs e)
     {
+        if (OutlawModePolicy.Enabled) return;
         if (sender is not Button button || Window.GetWindow(button) is not MainWindow window) return;
 
         // Starting guidance is local work: establish the request, inspect UIA locally, then let the
@@ -166,6 +168,7 @@ public partial class MainWindow
 
     private bool PrivacySentinel_AllowCloudAction()
     {
+        if (OutlawModePolicy.Enabled) return true;
         if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return false;
 
         var context = _systemContext.Capture();
@@ -185,6 +188,7 @@ public partial class MainWindow
         uint eventThread,
         uint eventTime)
     {
+        if (OutlawModePolicy.Enabled) return;
         if (hwnd == nint.Zero || eventType != PrivacySentinelEventSystemForeground) return;
         if (_activeRequest is null && string.IsNullOrWhiteSpace(_privacySentinelPendingInput) &&
             !_privacyPaused && _voiceCts is null && _commanderInteractionCts is null) return;
@@ -282,6 +286,7 @@ public partial class MainWindow
 
     private void PrivacySentinel_SuspendCloudAudio()
     {
+        if (OutlawModePolicy.Enabled) return;
         try { _voiceCts?.Cancel(); } catch { }
         try { _commanderInteractionCts?.Cancel(); } catch { }
 
