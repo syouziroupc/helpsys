@@ -72,10 +72,14 @@ public sealed class GuidanceStateWatcher : IDisposable
     {
         if (_disposed || hwnd == nint.Zero) return;
         var scope = Volatile.Read(ref _scopeProcessId);
-        if (scope <= 0) return;
 
         _ = GetWindowThreadProcessId(hwnd, out var pid);
-        if (unchecked((int)pid) != scope) return;
+        if (!OutlawModePolicy.Enabled)
+        {
+            if (scope <= 0) return;
+            if (unchecked((int)pid) != scope) return;
+        }
+
         Signal();
     }
 
