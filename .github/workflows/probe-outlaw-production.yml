@@ -19,13 +19,14 @@ jobs:
         with:
           node-version: 24
 
-      - name: Probe production Outlaw health
+      - name: Probe production Outlaw health and inference
         shell: bash
         run: |
           node <<'NODE'
           const base='https://helpsys.syouziroupc.workers.dev';
           const expected='outlaw-2026.09.23-r2';
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          let health=null;
           let last='';
           for(let i=0;i<20;i++){
             try{
@@ -34,9 +35,17 @@ jobs:
               console.log('attempt',i+1,'status',r.status,'body',last.slice(0,500));
               if(r.ok){
                 const j=JSON.parse(last);
-                if(j?.ok===true && j?.service==='helpsys-outlaw' && j?.version===expected && j?.aiConfigured===true && j?.maxUiElements===2400 && j?.reasoningEffort==='high'){
+                if(j?.ok===true &&
+                   j?.service==='helpsys-outlaw' &&
+                   j?.version===expected &&
+                   j?.aiConfigured===true &&
+                   j?.maxUiElements===2400 &&
+                   j?.maxHistory===64 &&
+                   j?.reasoningEffort==='high' &&
+                   j?.maxCompletionTokens===2400){
+                  health=j;
                   console.log('OUTLAW_PRODUCTION_READY');
-                  process.exit(0);
+                  break;
                 }
               }
             }catch(e){
@@ -45,5 +54,60 @@ jobs:
             }
             await sleep(6000);
           }
-          throw new Error('Outlaw production did not converge. Last result: '+last.slice(0,500));
+          if(!health) throw new Error('Outlaw production did not converge. Last result: '+last.slice(0,500));
+
+          const body={
+            request:'スタートボタンから設定を開く次の操作を案内して',
+            history:[],
+            systemContext:{
+              foregroundProcess:'explorer',
+              foregroundTitle:'デスクトップ',
+              foregroundProcessId:1234,
+              taskbarVisible:true,
+              runningApps:['explorer'],
+              browser:null
+            },
+            evidence:{screenshotPresent:false},
+            elements:[
+              {
+                id:'u1',
+                name:'スタート',
+                automationId:'Start',
+                className:'StartButton',
+                controlType:'Button',
+                processName:'explorer',
+                interactable:true,
+                enabled:true,
+                keyboardFocusable:true,
+                focused:false,
+                password:false,
+                processId:1234,
+                value:null,
+                toggleState:null,
+                selected:null,
+                expandCollapseState:null,
+                x:10,y:10,width:80,height:40
+              }
+            ]
+          };
+
+          const started=Date.now();
+          const response=await fetch(base+'/v1/outlaw-plan',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:JSON.stringify(body)
+          });
+          const raw=await response.text();
+          const elapsed=Date.now()-started;
+          console.log('outlaw_plan_status',response.status,'elapsedMs',elapsed,'body',raw.slice(0,1200));
+          if(!response.ok)
+            throw new Error('Outlaw planner live inference failed: '+response.status+' '+raw.slice(0,500));
+
+          let parsed;
+          try{parsed=JSON.parse(raw)}catch{throw new Error('Outlaw planner returned non-JSON');}
+          if(!['target','clarify','done','not_found'].includes(parsed?.status))
+            throw new Error('Outlaw planner returned invalid status');
+          if(parsed.status==='target' && !['u1','vision-target'].includes(parsed?.targetId))
+            throw new Error('Outlaw planner returned unknown targetId: '+String(parsed?.targetId));
+          console.log('OUTLAW_LIVE_INFERENCE_OK');
           NODE
