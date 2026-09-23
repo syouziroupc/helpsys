@@ -99,6 +99,15 @@ function Find-MainWindow([System.Diagnostics.Process]$process) {
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
 }
 
+function Find-TopLevelProcessElement([System.Diagnostics.Process]$process) {
+  if ($null -eq $process -or $process.HasExited) { return $null }
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $process.Id)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $processCondition)
+}
+
 function Save-Screenshot([string]$name) {
   $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
   $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
@@ -267,8 +276,8 @@ try {
 
   # The planner now requires a verified external work surface. Establish one before measuring
   # Guide-to-planner latency; focus-retention under a physical click remains covered separately.
-  $targetWindow = Find-MainWindow $target
-  if ($null -eq $targetWindow) { throw 'Smoke target window was unavailable before planner latency measurement.' }
+  $targetWindow = Find-TopLevelProcessElement $target
+  if ($null -eq $targetWindow) { throw 'Smoke target top-level UI element was unavailable before planner latency measurement.' }
   try { $targetWindow.SetFocus() } catch { }
   Start-Sleep -Milliseconds 420
 
