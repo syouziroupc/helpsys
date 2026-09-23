@@ -70,6 +70,40 @@ jobs:
           }
           if (-not (Test-Path $video)) { throw 'HelpSys real-usage video was not produced.' }
           if ((Get-Item $video).Length -lt 100000) { throw 'HelpSys real-usage video is unexpectedly small.' }
+      - name: Record real YouTube HelpSys session
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $video = Join-Path $PWD 'artifacts\\helpsys-youtube-real-usage.mp4'
+          $recordArgs = @(
+            '-y',
+            '-f','gdigrab',
+            '-framerate','15',
+            '-draw_mouse','1',
+            '-i','desktop',
+            '-t','110',
+            '-c:v','libx264',
+            '-preset','ultrafast',
+            '-crf','25',
+            '-pix_fmt','yuv420p',
+            $video
+          )
+          $recorder = Start-Process ffmpeg -ArgumentList $recordArgs -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 2
+            ./tests/youtube_real_usage_e2e.ps1
+          }
+          finally {
+            if (-not $recorder.HasExited) {
+              try { Wait-Process -Id $recorder.Id -Timeout 112 -ErrorAction Stop } catch {
+                Stop-Process -Id $recorder.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          if (-not (Test-Path $video)) { throw 'YouTube real-usage video was not produced.' }
+
       - name: Reject non-client candidate noise
         shell: pwsh
         run: ./tests/real_click_candidate_noise_check.ps1
@@ -82,5 +116,7 @@ jobs:
             artifacts/helpsys-real-click-*.png
             artifacts/helpsys-real-click-*.json
             artifacts/helpsys-real-usage.mp4
+            artifacts/helpsys-youtube-real-usage.mp4
+            artifacts/helpsys-youtube-e2e.json
             artifacts/mock-last-request.json
           if-no-files-found: warn
