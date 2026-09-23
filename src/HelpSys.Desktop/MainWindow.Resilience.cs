@@ -36,8 +36,11 @@ public partial class MainWindow
         {
             CancelResilienceRecovery();
             _liveReplanPending = false;
+            var diagnosticSuffix = IsLocalSmokeEndpoint()
+                ? $" [reason={_resilienceLastReason}]"
+                : string.Empty;
             SetState(
-                "同じ画面状態で同じ復旧を繰り返さないため、自動再試行を停止しました。画面が変わるか次の操作が行われると再判定します。",
+                "同じ画面状態で同じ復旧を繰り返さないため、自動再試行を停止しました。画面が変わるか次の操作が行われると再判定します。" + diagnosticSuffix,
                 speak: false);
             return true;
         }
@@ -122,6 +125,14 @@ public partial class MainWindow
         {
             ReleaseRecoverySlot(recoveryCts);
         }
+    }
+
+    private static bool IsLocalSmokeEndpoint()
+    {
+        var value = Environment.GetEnvironmentVariable("HELPSYS_API_BASE");
+        return value is not null &&
+               (value.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string ClassifyRecoveryReason(string reason)
