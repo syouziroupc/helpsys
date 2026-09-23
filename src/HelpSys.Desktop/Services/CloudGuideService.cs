@@ -200,7 +200,7 @@ public sealed class CloudGuideService : IDisposable
                 () => _adapter.PostJsonAsync(
                     "/v1/outlaw-plan",
                     body,
-                    TimeSpan.FromSeconds(55),
+                    TimeSpan.FromSeconds(80),
                     cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -211,7 +211,7 @@ public sealed class CloudGuideService : IDisposable
         {
             throw new GuideServiceException(
                 GuideFailureKind.ServiceUnavailable,
-                "無法者版GLMの判断が55秒以内に完了しませんでした。",
+                "無法者版GLMの判断が80秒以内に完了しませんでした。",
                 ex);
         }
         catch (HttpRequestException ex)
@@ -308,7 +308,7 @@ public sealed class CloudGuideService : IDisposable
                 () => _adapter.PostJsonAsync(
                     "/v1/outlaw-plan",
                     body,
-                    TimeSpan.FromSeconds(45),
+                    TimeSpan.FromSeconds(60),
                     cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -319,7 +319,7 @@ public sealed class CloudGuideService : IDisposable
         {
             throw new GuideServiceException(
                 GuideFailureKind.ServiceUnavailable,
-                "無法者版GLMの構造判断が45秒以内に完了しませんでした。",
+                "無法者版GLMの構造判断が60秒以内に完了しませんでした。",
                 ex);
         }
         catch (HttpRequestException ex)
