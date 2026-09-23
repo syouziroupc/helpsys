@@ -20,7 +20,7 @@ public partial class MainWindow
             "automatic_replan_exhausted",
             "現在の画面",
             $"同一画面での自動再計画は1回で打ち切る: {reason}"));
-        if (_history.Count > 12) _history.RemoveAt(0);
+        if (_history.Count > 64) _history.RemoveAt(0);
 
         _liveReplanPending = false;
         LocalLogService.Write("replan_stop", reason);
