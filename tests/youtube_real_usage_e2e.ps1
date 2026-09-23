@@ -161,19 +161,27 @@ function Browser-ReachedYoutube {
 try {
   Remove-Item Env:HELPSYS_API_BASE -ErrorAction SilentlyContinue
 
-  $edgePaths = @(
-    "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
-    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+  $browserCandidates = @(
+    @{ name='msedge'; path="$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
+    @{ name='msedge'; path="$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience') },
+    @{ name='chrome'; path="$env:ProgramFiles\Google\Chrome\Application\chrome.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-default-apps') },
+    @{ name='chrome'; path="$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe"; args=@('--new-window','about:blank','--no-first-run','--disable-default-apps') }
   )
-  $edgeExe = $edgePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $edgeExe) { throw 'Microsoft Edge was not found on the Windows runner.' }
+  $browser = $browserCandidates | Where-Object { Test-Path $_.path } | Select-Object -First 1
+  if (-not $browser) {
+    $edgeCommand = Get-Command msedge.exe -ErrorAction SilentlyContinue
+    $chromeCommand = Get-Command chrome.exe -ErrorAction SilentlyContinue
+    if ($edgeCommand) { $browser = @{ name='msedge'; path=$edgeCommand.Source; args=@('--new-window','about:blank','--no-first-run') } }
+    elseif ($chromeCommand) { $browser = @{ name='chrome'; path=$chromeCommand.Source; args=@('--new-window','about:blank','--no-first-run') } }
+  }
+  if (-not $browser) { throw 'No supported browser (Edge/Chrome) was found on the Windows runner.' }
 
-  Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process $browser.name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 1
-  $edge = Start-Process $edgeExe -ArgumentList '--new-window','about:blank','--no-first-run','--disable-features=msEdgeFirstRunExperience' -PassThru
+  $edge = Start-Process $browser.path -ArgumentList $browser.args -PassThru
   Start-Sleep -Seconds 5
-  $edge = Get-Process msedge | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-  if ($null -eq $edge) { throw 'Edge did not expose a top-level window.' }
+  $edge = Get-Process $browser.name | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+  if ($null -eq $edge) { throw "$($browser.name) did not expose a top-level window." }
   [void][HelpSysYoutubeUser32]::SetForegroundWindow([IntPtr]$edge.MainWindowHandle)
   Start-Sleep -Seconds 1
 
@@ -255,5 +263,5 @@ try {
 }
 finally {
   if ($null -ne $helpSys -and -not $helpSys.HasExited) { Stop-Process -Id $helpSys.Id -Force -ErrorAction SilentlyContinue }
-  Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process msedge,chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
