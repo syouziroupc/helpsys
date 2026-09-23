@@ -426,8 +426,10 @@ public sealed class UiAutomationScanner
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        var visitedLimit = OutlawModePolicy.Enabled ? 24000 : 4500;
-        var elapsedLimitMs = OutlawModePolicy.Enabled ? 9000 : 1400;
+        var visitedLimit = OutlawModePolicy.Enabled ? 40000 : 4500;
+        var elapsedLimitMs = OutlawModePolicy.Enabled ? 15000 : 1400;
+
+        var depthLimit = OutlawModePolicy.Enabled ? 24 : 10;
 
         while (queue.Count > 0 && visited < visitedLimit && stopwatch.ElapsedMilliseconds < elapsedLimitMs)
         {
@@ -483,7 +485,7 @@ public sealed class UiAutomationScanner
             catch (ElementNotAvailableException) { }
             catch (InvalidOperationException) { }
 
-            if (depth < 10) EnqueueChildrenCached(walker, element, depth + 1, queue, cacheRequest);
+            if (depth < depthLimit) EnqueueChildrenCached(walker, element, depth + 1, queue, cacheRequest);
         }
 
         var contextBudget = OutlawModePolicy.Enabled
