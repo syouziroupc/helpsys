@@ -78,17 +78,7 @@ public sealed class CloudGuideService : IDisposable
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
         CancellationToken cancellationToken = default)
-        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, false, null, cancellationToken);
-
-    public Task<QualityGuideDecision> PlanRecoveryAsync(
-        string request,
-        string routeIssue,
-        ScreenCaptureFrame frame,
-        IReadOnlyList<UiElementCandidate> elements,
-        IReadOnlyList<GuideHistoryItem> history,
-        SystemContextSnapshot systemContext,
-        CancellationToken cancellationToken = default)
-        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, true, routeIssue, cancellationToken);
+        => PlanQualityCoreAsync(request, frame, elements, history, systemContext, cancellationToken);
 
     private async Task<QualityGuideDecision> PlanQualityCoreAsync(
         string request,
@@ -96,14 +86,12 @@ public sealed class CloudGuideService : IDisposable
         IReadOnlyList<UiElementCandidate> elements,
         IReadOnlyList<GuideHistoryItem> history,
         SystemContextSnapshot systemContext,
-        bool recoveryMode,
-        string? routeIssue,
         CancellationToken cancellationToken)
     {
         EnsureCloudConfigured();
         var privacyEpoch = CapturePrivacyEpoch();
         var relevantElements = SelectRelevantElements(elements, systemContext, request);
-        var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, recoveryMode, routeIssue);
+        var approval = _privacyGate.ApproveQuality(request, frame, relevantElements, history, systemContext, false, null);
         EnsureApproved(approval);
 
         EnsurePlanningContextCurrent(systemContext);
