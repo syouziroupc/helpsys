@@ -21,7 +21,10 @@ public partial class MainWindow
 
         var failureClass = ClassifyRecoveryReason(reason);
         var current = _systemContext.Capture();
-        var failureKey = $"{failureClass}|{current.ForegroundProcessId}|{current.ForegroundWindowHandle}|{current.ForegroundProcess}";
+        var observationKey = string.IsNullOrWhiteSpace(_lastObservationFingerprint)
+            ? $"{current.ForegroundProcessId}|{current.ForegroundWindowHandle}|{current.ForegroundProcess}"
+            : _lastObservationFingerprint;
+        var failureKey = $"{failureClass}|{observationKey}";
 
         if (!string.Equals(failureKey, _resilienceFailureKey, StringComparison.Ordinal))
         {
