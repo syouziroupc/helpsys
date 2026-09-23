@@ -18,8 +18,8 @@ need(broker, 'OutlawModePolicy.Enabled\n                ? _scanner.CaptureCandid
   'Outlaw must scan the full desktop UIA tree instead of only the foreground process');
 need(broker, 'if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))',
   'Outlaw must not discard a deep all-desktop observation solely because foreground changed during the scan');
-need(quality, '_observationBroker.CaptureAsync(2200, cancellationToken)',
-  'Outlaw quality planner must retain the expanded 2200-element observation budget');
+need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
+  'Outlaw quality planner must retain the expanded 4000-element observation budget');
 need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 24000 : 4500',
   'Outlaw UIA traversal must retain the 24k node budget');
 need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 9000 : 1400',
@@ -40,8 +40,8 @@ need(live, 'outlaw_vision_target_kept',
   'Outlaw must keep grounded vision-only targets even without a UIA snap target');
 need(cloud, '"/v1/outlaw-plan"',
   'Outlaw must use the dedicated planner endpoint');
-need(cloud, 'TimeSpan.FromSeconds(80)',
-  'Outlaw must retain the extended multimodal reasoning deadline');
+need(cloud, 'TimeSpan.FromSeconds(120)',
+  'Outlaw must retain the extended 120-second multimodal reasoning deadline');
 need(context, 'if (HelpSys.Services.OutlawModePolicy.Enabled)',
   'Outlaw must preserve full observed browser URL context');
 
