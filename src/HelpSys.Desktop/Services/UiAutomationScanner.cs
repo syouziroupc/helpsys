@@ -130,7 +130,12 @@ public sealed class UiAutomationScanner
 
     private UiElementCandidate? RevalidateCandidate(UiElementCandidate candidate, int? rootProcessId, CancellationToken cancellationToken)
     {
-        var current = CaptureCandidates(700, cancellationToken, rootProcessId).Where(x => x.Interactable).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        var direct = TryRevalidateNearOriginalBounds(candidate, rootProcessId, cancellationToken);
+        if (direct is not null) return direct;
+
+        // Rare fallback only. Do not rescan hundreds of candidates for every normal click.
+        var current = CaptureCandidates(240, cancellationToken, rootProcessId).Where(x => x.Interactable).ToArray();
         UiElementCandidate? best = null;
         var bestScore = double.NegativeInfinity;
         var oldCenterX = candidate.X + candidate.Width / 2d;
@@ -205,6 +210,85 @@ public sealed class UiAutomationScanner
         return bestScore >= 125 ? best : null;
     }
 
+    private UiElementCandidate? TryRevalidateNearOriginalBounds(
+        UiElementCandidate candidate,
+        int? rootProcessId,
+        CancellationToken cancellationToken)
+    {
+        if (candidate.Bounds.IsEmpty) return null;
+
+        var points = new[]
+        {
+            new Point(candidate.X + candidate.Width / 2d, candidate.Y + candidate.Height / 2d),
+            new Point(candidate.X + candidate.Width * 0.25, candidate.Y + candidate.Height * 0.5),
+            new Point(candidate.X + candidate.Width * 0.75, candidate.Y + candidate.Height * 0.5)
+        };
+
+        foreach (var point in points)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var element = AutomationElement.FromPoint(point);
+                var walker = TreeWalker.ControlViewWalker;
+                for (var depth = 0; element is not null && depth < 7; depth++)
+                {
+                    var current = element.Current;
+                    if (current.ProcessId == _selfProcessId)
+                    {
+                        element = walker.GetParent(element);
+                        continue;
+                    }
+
+                    var expectedPid = rootProcessId.GetValueOrDefault(candidate.ProcessId);
+                    if (expectedPid > 0 && current.ProcessId != expectedPid)
+                    {
+                        element = walker.GetParent(element);
+                        continue;
+                    }
+
+                    var typeName = (current.ControlType?.ProgrammaticName ?? string.Empty)
+                        .Replace("ControlType.", string.Empty, StringComparison.Ordinal);
+                    if (!typeName.Equals(candidate.ControlType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        element = walker.GetParent(element);
+                        continue;
+                    }
+
+                    var automationId = current.AutomationId ?? string.Empty;
+                    var name = current.Name ?? string.Empty;
+                    var className = current.ClassName ?? string.Empty;
+                    var identityMatch =
+                        (!string.IsNullOrWhiteSpace(candidate.AutomationId) &&
+                         automationId.Equals(candidate.AutomationId.Split("|role:", 2, StringSplitOptions.None)[0], StringComparison.Ordinal)) ||
+                        (!string.IsNullOrWhiteSpace(candidate.Name) &&
+                         name.Equals(candidate.Name, StringComparison.OrdinalIgnoreCase)) ||
+                        (!string.IsNullOrWhiteSpace(candidate.ClassName) &&
+                         className.Equals(candidate.ClassName, StringComparison.Ordinal));
+
+                    if (!identityMatch)
+                    {
+                        element = walker.GetParent(element);
+                        continue;
+                    }
+
+                    var rect = current.BoundingRectangle;
+                    if (rect.IsEmpty || !current.IsEnabled || current.IsOffscreen) return null;
+                    var rebuilt = BuildSnapCandidate(
+                        element,
+                        current,
+                        current.ControlType?.ProgrammaticName ?? string.Empty,
+                        rect);
+                    return rebuilt with { Id = candidate.Id };
+                }
+            }
+            catch (ElementNotAvailableException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        return null;
+    }
+
     private Rect? SnapToAccessibleBounds(Rect approximateBounds, CancellationToken cancellationToken)
         => SnapToAccessibleCandidate(approximateBounds, cancellationToken)?.Bounds;
 
@@ -256,7 +340,7 @@ public sealed class UiAutomationScanner
 
         if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
 
-        var candidates = CaptureCandidates(700, cancellationToken)
+        var candidates = CaptureCandidates(240, cancellationToken)
             .Where(x => x.Interactable && !x.Bounds.IsEmpty && x.ProcessId == visibleProcessId)
             .ToArray();
         UiElementCandidate? best = null;
@@ -333,15 +417,15 @@ public sealed class UiAutomationScanner
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildren(walker, root, 0, queue);
 
-        var interactivePoolLimit = Math.Max(900, maxCandidates * 3);
-        var contextPoolLimit = Math.Max(180, maxCandidates / 2);
+        var interactivePoolLimit = Math.Max(360, maxCandidates * 2);
+        var contextPoolLimit = Math.Max(90, maxCandidates / 3);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);
         var context = new List<UiElementCandidate>(contextPoolLimit);
         var processNames = new Dictionary<int, string>();
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        while (queue.Count > 0 && visited < 7000 && stopwatch.ElapsedMilliseconds < 2200)
+        while (queue.Count > 0 && visited < 4500 && stopwatch.ElapsedMilliseconds < 1400)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (element, depth) = queue.Dequeue();
@@ -357,7 +441,8 @@ public sealed class UiAutomationScanner
                     var isPassword = current.IsPassword;
                     var isInput = typeName.EndsWith("Edit", StringComparison.Ordinal) || typeName.EndsWith("ComboBox", StringComparison.Ordinal);
                     var rawName = current.Name ?? string.Empty;
-                    var readableText = isPassword || isInput
+                    var isInteractive = IsInteractiveType(typeName);
+                    var readableText = isPassword || isInput || isInteractive
                         ? rawName
                         : ReadBoundedVisibleText(element, typeName, rawName);
                     var name = isPassword ? "[password field]" : isInput ? "[input field]" : readableText;
@@ -366,7 +451,6 @@ public sealed class UiAutomationScanner
                     var processName = GetProcessName(current.ProcessId, processNames);
                     if (isInput && !isPassword)
                         automationId = AnnotateInputSemanticRole(automationId, rawName, className, processName);
-                    var isInteractive = IsInteractiveType(typeName);
                     var isContext = !isInteractive && IsContextType(typeName, name, rect);
 
                     if (isInteractive && interactive.Count < interactivePoolLimit && ShouldKeep(name, automationId, className, rect))
@@ -395,7 +479,7 @@ public sealed class UiAutomationScanner
             if (depth < 10) EnqueueChildren(walker, element, depth + 1, queue);
         }
 
-        var contextBudget = Math.Min(context.Count, Math.Max(45, maxCandidates / 6));
+        var contextBudget = Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
         var interactiveBudget = Math.Max(0, maxCandidates - contextBudget);
         var rankedInteractive = interactive
             .OrderByDescending(CandidatePriority)
@@ -414,11 +498,7 @@ public sealed class UiAutomationScanner
         var normalizedFallback = NormalizeReadableText(fallback, 420);
         var textBearing = typeName.EndsWith("Document", StringComparison.Ordinal) ||
                           typeName.EndsWith("Text", StringComparison.Ordinal) ||
-                          typeName.EndsWith("DataItem", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Table", StringComparison.Ordinal) ||
-                          typeName.EndsWith("List", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Pane", StringComparison.Ordinal) ||
-                          typeName.EndsWith("Group", StringComparison.Ordinal);
+                          typeName.EndsWith("DataItem", StringComparison.Ordinal);
         if (!textBearing) return normalizedFallback;
 
         try
