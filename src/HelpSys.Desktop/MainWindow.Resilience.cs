@@ -4,8 +4,8 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private static readonly int[] ResilienceRecoveryDelaysMs = [180, 650, 1500];
-    private const int MaximumAutomaticRecoveriesPerState = 3;
+    private static readonly int[] ResilienceRecoveryDelaysMs = [350];
+    private const int MaximumAutomaticRecoveriesPerState = 1;
 
     private int _resilienceRecoveryStreak;
     private int _resilienceRecoveryQueued;
@@ -34,6 +34,7 @@ public partial class MainWindow
 
         _resilienceLastReason = reason;
         _resilienceRecoveryStreak++;
+        LocalLogService.Write("recovery", $"{_resilienceRecoveryStreak}/{MaximumAutomaticRecoveriesPerState} {reason}");
 
         if (_resilienceRecoveryStreak > MaximumAutomaticRecoveriesPerState)
         {
