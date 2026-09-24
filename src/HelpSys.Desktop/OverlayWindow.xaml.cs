@@ -27,7 +27,8 @@ public partial class OverlayWindow : Window
         if (!IsVisible) Show();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        const int padding = 7;
+        var dpiScale = Math.Max(1d, GetDpiForWindow(hwnd) / 96d);
+        var padding = Math.Max(7, (int)Math.Round(7 * dpiScale));
         var x = (int)Math.Floor(physicalBounds.Left) - padding;
         var y = (int)Math.Floor(physicalBounds.Top) - padding;
         var width = Math.Max(18, (int)Math.Ceiling(physicalBounds.Width) + padding * 2);
@@ -55,6 +56,9 @@ public partial class OverlayWindow : Window
         style |= WsExTransparent | WsExNoActivate | WsExToolWindow;
         SetWindowLongPtr(hwnd, GwlExStyle, new nint(style));
     }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr64(nint hWnd, int nIndex);

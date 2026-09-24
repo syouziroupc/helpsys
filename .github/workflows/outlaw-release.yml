@@ -38,6 +38,9 @@ jobs:
       - name: Verify tri-state action effects
         run: node tests/action-verification-contract.mjs
 
+      - name: Verify per-monitor overlay DPI
+        run: node tests/overlay-dpi-contract.mjs
+
       - name: Verify swappable brain and direct-choice UI
         run: |
           node --check worker/quality-guide.js

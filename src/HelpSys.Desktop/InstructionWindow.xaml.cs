@@ -22,9 +22,11 @@ public partial class InstructionWindow : Window
         InstructionText.Text = instruction;
         if (!IsVisible) Show();
 
-        const int width = 380;
-        const int height = 76;
-        const int gap = 14;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var dpiScale = Math.Max(1d, GetDpiForWindow(hwnd) / 96d);
+        var width = Math.Max(1, (int)Math.Round(380 * dpiScale));
+        var height = Math.Max(1, (int)Math.Round(76 * dpiScale));
+        var gap = Math.Max(1, (int)Math.Round(14 * dpiScale));
         var work = MonitorPlacementService.GetWorkAreaForBounds(physicalBounds);
         var centerX = physicalBounds.Left + physicalBounds.Width / 2d;
         var x = (int)Math.Round(centerX - width / 2d);
@@ -35,8 +37,11 @@ public partial class InstructionWindow : Window
         var y = above >= work.Top ? above : below;
         y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
 
-        SetWindowPos(new WindowInteropHelper(this).Handle, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
     }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
