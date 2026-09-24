@@ -1,7 +1,7 @@
 <Window x:Class="HelpSys.Stable.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="HelpSys Stable 3.0.1 — Gemini Edition"
+        Title="HelpSys A3.0001 — Standard"
         Width="600"
         Height="390"
         MinWidth="520"
@@ -17,12 +17,12 @@
     </Grid.RowDefinitions>
 
     <StackPanel Grid.Row="0">
-      <TextBlock Text="HelpSys Stable 3.0.1"
+      <TextBlock Text="HelpSys A3.0001"
                  FontSize="25"
                  FontWeight="Bold" />
       <TextBlock Margin="0,5,0,0"
                  Foreground="#FF4B5563"
-                 Text="Gemini Edition / Gemini 3.8 Flash専用 / 1画面・1判定・1操作案内" />
+                 Text="通常版 / Gemini 3.8 Flash / 1画面・1判定・1操作案内" />
     </StackPanel>
 
     <StackPanel Grid.Row="1" Margin="0,20,0,0">
