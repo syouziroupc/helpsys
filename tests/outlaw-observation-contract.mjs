@@ -25,6 +25,12 @@ if (broker.includes('if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, a
   throw new Error('Outlaw must not retain a mixed observation merely because it is operation-first');
 need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
   'Outlaw quality planner must retain the expanded 4000-element observation budget');
+need(quality, 'phase=after_screenshot;discarding planner observation because foreground identity changed',
+  'Outlaw must discard an observation when foreground identity changes after screenshot capture');
+need(quality, 'phase=after_planner;discarding planner result because foreground identity changed',
+  'Outlaw must discard an LLM result when foreground identity changes while the planner is running');
+if (quality.includes('if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))'))
+  throw new Error('Outlaw freshness checks must not be bypassed around screenshot or planner latency');
 need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 40000 : 4500',
   'Outlaw UIA traversal must retain the 40k node budget');
 need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 15000 : 1400',

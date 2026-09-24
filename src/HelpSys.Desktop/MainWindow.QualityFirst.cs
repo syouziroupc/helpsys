@@ -106,8 +106,11 @@ public partial class MainWindow
                 return;
             }
 
-            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
+                LocalLogService.Write(
+                    OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
+                    "phase=after_screenshot;discarding planner observation because foreground identity changed");
                 HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
             }
@@ -151,8 +154,11 @@ public partial class MainWindow
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
-            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
+                LocalLogService.Write(
+                    OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
+                    "phase=after_planner;discarding planner result because foreground identity changed");
                 HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
             }
