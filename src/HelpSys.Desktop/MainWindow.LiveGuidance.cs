@@ -140,6 +140,7 @@ public partial class MainWindow
         ClarificationQuestionText.Text = _clarificationQuestion ?? "確認したいことがあります。";
         ClarificationPanel.Visibility = Visibility.Visible;
         RequestBox.IsReadOnly = true;
+        _ = TryShowLocalVisibleChoiceButtonsAsync();
         if (_originalRequest is not null && !RequestBox.Text.Equals(_originalRequest, StringComparison.Ordinal))
         {
             RequestBox.Text = _originalRequest;
@@ -163,6 +164,9 @@ public partial class MainWindow
         if (!force && _awaitingClarification) return;
         if (ClarificationPanel.Visibility == Visibility.Collapsed && !RequestBox.IsReadOnly) return;
         ClarificationPanel.Visibility = Visibility.Collapsed;
+        ChoiceButtonsPanel.Visibility = Visibility.Collapsed;
+        ChoiceButtonsPanel.Children.Clear();
+        AnswerEntryPanel.Visibility = Visibility.Visible;
         RequestBox.IsReadOnly = false;
         VoiceButton.IsEnabled = true;
         if (!_planning) GuideButton.IsEnabled = true;
