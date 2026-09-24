@@ -399,7 +399,18 @@ public partial class MainWindow : Window
         decision = safeDecision;
 
         if (!TryAcceptOutlawGuidance(decision, target, candidates, systemContext, target.Bounds, generation)) return;
-        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting)) return;
+        if (OutlawModePolicy.Enabled)
+        {
+            LocalLogService.Write(
+                "outlaw_structured_target_present",
+                $"generation={generation};action={decision.Action};targetId={target.Id};name={DisplayName(target.Name, target.ControlType)};pid={target.ProcessId};bounds={target.Bounds};confidence={decision.Confidence:F3}");
+        }
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Presenting))
+        {
+            if (OutlawModePolicy.Enabled)
+                LocalLogService.Write("outlaw_present_transition_rejected", $"generation={generation};targetId={target.Id};state={_sessionState.State}");
+            return;
+        }
         _technicalClarificationRetries = 0;
         if (!OutlawModePolicy.Enabled)
         {
