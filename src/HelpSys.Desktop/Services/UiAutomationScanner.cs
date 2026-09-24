@@ -10,14 +10,21 @@ public sealed class UiAutomationScanner
     private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
     private static readonly Lazy<UiAutomationObserverClient> SharedObserver = new(() => new UiAutomationObserverClient());
     private readonly int _selfProcessId = Environment.ProcessId;
+    private readonly int _excludedProcessId;
     private readonly bool _forceLocal;
 
-    public UiAutomationScanner() : this(forceLocal: false) { }
+    public UiAutomationScanner() : this(forceLocal: false, excludedProcessId: 0) { }
 
-    internal UiAutomationScanner(bool forceLocal)
+    internal UiAutomationScanner(bool forceLocal, int excludedProcessId = 0)
     {
         _forceLocal = forceLocal;
+        _excludedProcessId = excludedProcessId > 0 && excludedProcessId != _selfProcessId
+            ? excludedProcessId
+            : 0;
     }
+
+    private bool IsExcludedProcess(int processId)
+        => processId == _selfProcessId || (_excludedProcessId > 0 && processId == _excludedProcessId);
 
     private bool UseObserver => !_forceLocal && !UiAutomationObserverHost.IsObserverProcess;
 
@@ -234,7 +241,7 @@ public sealed class UiAutomationScanner
                 for (var depth = 0; element is not null && depth < 7; depth++)
                 {
                     var current = element.Current;
-                    if (current.ProcessId == _selfProcessId)
+                    if (IsExcludedProcess(current.ProcessId))
                     {
                         element = walker.GetParent(element);
                         continue;
@@ -320,10 +327,10 @@ public sealed class UiAutomationScanner
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var current = element.Current;
-                    if (visibleProcessId == 0 && current.ProcessId != _selfProcessId) visibleProcessId = current.ProcessId;
+                    if (visibleProcessId == 0 && !IsExcludedProcess(current.ProcessId)) visibleProcessId = current.ProcessId;
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;
                     var rect = current.BoundingRectangle;
-                    if (current.ProcessId != _selfProcessId && current.IsEnabled && !current.IsOffscreen && IsInteractiveType(typeName) &&
+                    if (!IsExcludedProcess(current.ProcessId) && current.IsEnabled && !current.IsOffscreen && IsInteractiveType(typeName) &&
                         !rect.IsEmpty && rect.Width >= 8 && rect.Height >= 8)
                     {
                         var inflated = approximateBounds;
@@ -338,7 +345,7 @@ public sealed class UiAutomationScanner
             catch (InvalidOperationException) { }
         }
 
-        if (visibleProcessId <= 0 || visibleProcessId == _selfProcessId) return null;
+        if (visibleProcessId <= 0 || IsExcludedProcess(visibleProcessId)) return null;
 
         var candidates = CaptureCandidates(240, cancellationToken)
             .Where(x => x.Interactable && !x.Bounds.IsEmpty && x.ProcessId == visibleProcessId)
@@ -440,7 +447,7 @@ public sealed class UiAutomationScanner
             try
             {
                 var current = cached ? element.Cached : element.Current;
-                if (current.ProcessId != _selfProcessId && !current.IsOffscreen && current.IsEnabled)
+                if (!IsExcludedProcess(current.ProcessId) && !current.IsOffscreen && current.IsEnabled)
                 {
                     var rect = current.BoundingRectangle;
                     var typeName = current.ControlType?.ProgrammaticName ?? string.Empty;

@@ -20,7 +20,7 @@ internal static class UiAutomationObserverHost
         var parentProcessId = ReadParentProcessId();
         if (parentProcessId > 0) _ = Task.Run(() => MonitorParentAsync(parentProcessId));
 
-        using var executor = new MtaAutomationExecutor();
+        using var executor = new MtaAutomationExecutor(parentProcessId);
         string? line;
         while ((line = await Console.In.ReadLineAsync()) is not null)
         {
@@ -110,8 +110,11 @@ internal static class UiAutomationObserverHost
         private readonly Thread _thread;
         private bool _disposed;
 
-        public MtaAutomationExecutor()
+        private readonly int _excludedProcessId;
+
+        public MtaAutomationExecutor(int excludedProcessId)
         {
+            _excludedProcessId = excludedProcessId;
             _thread = new Thread(Run)
             {
                 IsBackground = true,
@@ -132,7 +135,7 @@ internal static class UiAutomationObserverHost
 
         private void Run()
         {
-            var scanner = new UiAutomationScanner(forceLocal: true);
+            var scanner = new UiAutomationScanner(forceLocal: true, excludedProcessId: _excludedProcessId);
             foreach (var item in _queue.GetConsumingEnumerable())
             {
                 try

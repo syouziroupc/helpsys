@@ -43,6 +43,11 @@ need(scanner, 'depthLimit = OutlawModePolicy.Enabled ? 18 : 10',
   'Outlaw UIA traversal must retain deeper coverage without unbounded 24-level traversal');
 need(scanner, 'ReadOutlawVisibleText',
   'Outlaw must retain TextPattern-backed semantic text extraction');
+need(scanner, 'private bool IsExcludedProcess(int processId)',
+  'UIA observer scans must explicitly exclude both observer and parent HelpSys process IDs');
+need(scanner, '_excludedProcessId > 0 && processId == _excludedProcessId',
+  'parent HelpSys PID must not leak into full-desktop Outlaw candidates');
+
 need(facade, 'return OutlawModePolicy.Enabled ? candidates : ScopeToForegroundWindow(processId, candidates);',
   'Outlaw facade must not re-scope the expanded candidate set to the foreground window');
 need(capture, 'private const int MaxImageWidth = 2560;',
