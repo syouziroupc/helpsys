@@ -37,7 +37,7 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock Text="HelpSys" FontWeight="Bold" FontSize="15" VerticalAlignment="Center" Foreground="#FF172033" />
-        <TextBlock Grid.Column="1" Margin="10,0,0,0" Text="Outlaw 3.1.0 ・ PC操作を画面上で案内" FontSize="11" Foreground="#FF788397" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" x:Name="VersionLabel" Margin="10,0,0,0" Text="Outlaw ・ PC操作を画面上で案内" FontSize="11" Foreground="#FF788397" VerticalAlignment="Center" />
         <ComboBox Grid.Column="2" x:Name="AiProviderBox" Width="82" Height="22" Margin="4,0,2,0"
                   FontSize="10.5" VerticalContentAlignment="Center"
                   SelectionChanged="AiProviderBox_SelectionChanged"
