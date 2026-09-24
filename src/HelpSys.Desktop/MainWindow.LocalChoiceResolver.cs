@@ -47,7 +47,56 @@ public partial class MainWindow
             .Take(9)
             .ToArray();
 
+        return PresentOutlawChoiceButtons(
+            choices,
+            context,
+            generation,
+            "画面上の候補から、使いたいものを1つ選んでください。",
+            "画面に表示されている候補から、使いたいものを直接選んでください。",
+            "outlaw_direct_choice");
+    }
+
+    private bool TryPresentOutlawIdentityChoiceButtons(
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot context,
+        long generation)
+    {
+        if (!OutlawModePolicy.Enabled ||
+            !_sessionState.IsCurrent(generation) ||
+            !HasUsableForeground(context))
+            return false;
+
+        var choices = candidates
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)
+            .Where(x => x.ProcessId == context.ForegroundProcessId)
+            .Where(x =>
+                x.AutomationId.Equals("profileCardButton", StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(x.Name ?? string.Empty, @"(?:プロフィール|profile).*(?:開く|open)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .GroupBy(x => NormalizeLocalChoiceText(x.Name), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .Take(9)
+            .ToArray();
+
         if (choices.Length < 2) return false;
+
+        return PresentOutlawChoiceButtons(
+            choices,
+            context,
+            generation,
+            "複数の利用者プロフィールがあります。どのプロフィールを使うか選んでください。",
+            "利用するプロフィールを直接選んでください。",
+            "outlaw_identity_choice");
+    }
+
+    private bool PresentOutlawChoiceButtons(
+        IReadOnlyList<UiElementCandidate> choices,
+        SystemContextSnapshot context,
+        long generation,
+        string question,
+        string stateText,
+        string logEvent)
+    {
+        if (choices.Count < 2) return false;
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Clarifying)) return false;
 
         _technicalClarificationRetries = 0;
@@ -57,8 +106,8 @@ public partial class MainWindow
         _currentDecision = null;
         _currentTarget = null;
         _guidedBounds = null;
-        _clarificationQuestion = "画面上の候補から、使いたいものを1つ選んでください。";
-        _lastInstruction = _clarificationQuestion;
+        _clarificationQuestion = question;
+        _lastInstruction = question;
 
         ChoiceButtonsPanel.Children.Clear();
         foreach (var choice in choices)
@@ -76,7 +125,7 @@ public partial class MainWindow
             ChoiceButtonsPanel.Children.Add(button);
         }
 
-        ClarificationQuestionText.Text = "画面に表示されている候補から、使いたいものを直接選んでください。";
+        ClarificationQuestionText.Text = question;
         AnswerEntryPanel.Visibility = System.Windows.Visibility.Collapsed;
         ChoiceButtonsPanel.Visibility = System.Windows.Visibility.Visible;
         ClarificationPanel.Visibility = System.Windows.Visibility.Visible;
@@ -88,9 +137,9 @@ public partial class MainWindow
         PositionNearBottomRight();
 
         LocalLogService.Write(
-            "outlaw_direct_choice",
-            $"choices={choices.Length};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
-        SetState("画面上の候補から、使いたいものを直接選んでください。", speak: false);
+            logEvent,
+            $"choices={choices.Count};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+        SetState(stateText, speak: false);
         return true;
     }
 
