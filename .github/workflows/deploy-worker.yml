@@ -70,7 +70,12 @@ jobs:
               const r=await fetch(base+'/health/outlaw',{cache:'no-store'});
               if(r.ok){
                 const j=await r.json();
-                if(j?.ok===true && j?.service==='helpsys-outlaw' && j?.aiConfigured===true){
+                if(j?.ok===true &&
+                   j?.service==='helpsys-outlaw' &&
+                   j?.version==='outlaw-2026.09.24-r3.4' &&
+                   j?.aiConfigured===true &&
+                   Array.isArray(j?.providers) &&
+                   ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
                   health=j; break;
                 }
               }
@@ -101,6 +106,7 @@ jobs:
               }
             ]
           };
+          body.aiProvider='glm';
           const r=await fetch(base+'/v1/outlaw-plan',{
             method:'POST',
             headers:{'content-type':'application/json'},
