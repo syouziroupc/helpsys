@@ -7,7 +7,7 @@ namespace HelpSys.Services;
 
 public sealed class UiAutomationScanner
 {
-    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost"];
+    private static readonly string[] ShellSurfaceProcesses = ["explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost"];
     private static readonly Lazy<UiAutomationObserverClient> SharedObserver = new(() => new UiAutomationObserverClient());
     private readonly int _selfProcessId = Environment.ProcessId;
     private readonly int _excludedProcessId;
