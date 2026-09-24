@@ -740,6 +740,9 @@ public partial class MainWindow : Window
         _technicalClarificationRetries = 0;
         ResetCurrentStateReplanBudget();
         ResetOutlawLoopGuard();
+        _lastOutlawObservation = null;
+        _lastOutlawFrame = null;
+        _reuseLastOutlawObservationOnce = false;
         _forceVisionNext = false;
         _clarificationQuestion = null;
         _localChoiceTargetActive = false;
