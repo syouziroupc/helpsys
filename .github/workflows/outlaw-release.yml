@@ -74,7 +74,7 @@ jobs:
                 const j=await r.json();
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
-                   j?.version==='outlaw-2026.09.24-r3.4' &&
+                   j?.version==='outlaw-2026.09.24-r3.5' &&
                    j?.aiConfigured===true &&
                    Array.isArray(j?.providers) &&
                    ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
@@ -150,7 +150,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.1.3'
+          $version = '3.1.4'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -168,7 +168,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.1.3
+          Version: 3.1.4
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -201,7 +201,7 @@ jobs:
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
           - Dedicated Outlaw cloud planner with bounded client deadlines and Auto / GLM reasoning with Gemini disabled until configured
-          - Version 3.1.3 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Version 3.1.4 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
