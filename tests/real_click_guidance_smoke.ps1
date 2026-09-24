@@ -7,11 +7,37 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class HelpSysRealClickUser32 {
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    public static IntPtr FindOverlayLikeWindow(int processId, int x, int y, int maxWidth, int maxHeight)
+    {
+        IntPtr best = IntPtr.Zero;
+        long bestArea = long.MaxValue;
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var ownerPid);
+            if (ownerPid != (uint)processId || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect)) return true;
+            var width = Math.Max(0, rect.Right - rect.Left);
+            var height = Math.Max(0, rect.Bottom - rect.Top);
+            if (width < 12 || height < 12 || width > maxWidth || height > maxHeight) return true;
+            if (x < rect.Left || x > rect.Right || y < rect.Top || y > rect.Bottom) return true;
+            var area = (long)width * height;
+            if (area < bestArea) { bestArea = area; best = hWnd; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
 }
 '@
 
@@ -31,6 +57,19 @@ function Find-Element([System.Diagnostics.Process]$process, [string]$automationI
     [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
     $automationId)
   $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $idCondition)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Find-ElementByName([System.Diagnostics.Process]$process, [string]$name) {
+  if ($null -eq $process -or $process.HasExited) { return $null }
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+    $process.Id)
+  $nameCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::NameProperty,
+    $name)
+  $condition = New-Object System.Windows.Automation.AndCondition($processCondition, $nameCondition)
   return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
@@ -178,6 +217,42 @@ try {
     throw "Planner request arrived but visible guidance did not start. State=$($stateText.Current.Name)"
   }
 
+  # Verify that a real top-level HelpSys overlay is physically located over the planner target,
+  # then click through that overlay and confirm the target application receives the click.
+  $smokeButton = Find-Element $target 'SmokeButton'
+  if ($null -eq $smokeButton) {
+    Save-Screenshot 'helpsys-real-click-target-missing.png'
+    throw 'SmokeButton disappeared before overlay alignment verification.'
+  }
+  $targetRect = $smokeButton.Current.BoundingRectangle
+  $targetCenterX = [int][math]::Round($targetRect.Left + ($targetRect.Width / 2.0))
+  $targetCenterY = [int][math]::Round($targetRect.Top + ($targetRect.Height / 2.0))
+  $overlayHwnd = [HelpSysRealClickUser32]::FindOverlayLikeWindow(
+    $helpSys.Id,
+    $targetCenterX,
+    $targetCenterY,
+    [int][math]::Ceiling($targetRect.Width + 90),
+    [int][math]::Ceiling($targetRect.Height + 90))
+  if ($overlayHwnd -eq [IntPtr]::Zero) {
+    Save-Screenshot 'helpsys-real-click-overlay-misaligned.png'
+    throw "No HelpSys overlay window was physically aligned with SmokeButton. target=$targetRect"
+  }
+
+  Physical-LeftClick $targetRect
+
+  $clickedDeadline = [DateTime]::UtcNow.AddSeconds(5)
+  $clickedLabel = $null
+  do {
+    $clickedLabel = Find-ElementByName $target 'Button clicked'
+    if ($null -ne $clickedLabel) { break }
+    Start-Sleep -Milliseconds 80
+  } while ([DateTime]::UtcNow -lt $clickedDeadline)
+
+  if ($null -eq $clickedLabel) {
+    Save-Screenshot 'helpsys-real-click-overlay-hit-test-failure.png'
+    throw 'Physical click through the HelpSys overlay did not reach the guided SmokeButton.'
+  }
+
   Save-Screenshot 'helpsys-real-click-guidance.png'
   [ordered]@{
     targetPid = $target.Id
@@ -188,6 +263,8 @@ try {
     plannerRoute = $diagnostics.path
     clickToPlannerMilliseconds = [math]::Round($timer.Elapsed.TotalMilliseconds)
     finalState = $stateText.Current.Name
+    overlayAligned = $overlayHwnd -ne [IntPtr]::Zero
+    guidedTargetReceivedPhysicalClick = $null -ne $clickedLabel
   } | ConvertTo-Json | Set-Content 'artifacts/helpsys-real-click-metrics.json' -Encoding UTF8
 
   Write-Host "HelpSys real mouse click smoke passed. Route=$($diagnostics.path); click foreground=$foregroundAfterClick; planner foreground=$($diagnostics.foregroundProcessId); latency=$([math]::Round($timer.Elapsed.TotalMilliseconds)) ms."
