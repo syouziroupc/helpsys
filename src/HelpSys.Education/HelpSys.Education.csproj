@@ -7,6 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>HelpSys.Education</AssemblyName>
     <RootNamespace>HelpSys.Education</RootNamespace>
+    <Version>2.2.0</Version>
+    <AssemblyVersion>2.2.0.0</AssemblyVersion>
+    <FileVersion>2.2.0.0</FileVersion>
+    <InformationalVersion>2.2.0-education</InformationalVersion>
+    <Product>HelpSys Education</Product>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
