@@ -167,7 +167,7 @@ async function runQualityInference(env, model, userPayload, image) {
     if (!match) throw new Error('invalid_gemini_image');
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+    const timer = setTimeout(() => controller.abort(), 7_000);
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`,
@@ -202,6 +202,8 @@ async function runQualityInference(env, model, userPayload, image) {
       const rawText = payload?.candidates?.[0]?.content?.parts?.find(x => typeof x?.text === 'string')?.text;
       if (!rawText) throw new Error('gemini_empty_output');
       return { __geminiStructured: true, value: JSON.parse(rawText) };
+    } catch {
+      console.error('gemini_quality_fallback');
     } finally {
       clearTimeout(timer);
     }
