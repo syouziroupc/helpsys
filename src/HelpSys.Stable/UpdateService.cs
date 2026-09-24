@@ -171,7 +171,7 @@ internal sealed partial class UpdateService : IDisposable
         => uri.Scheme == Uri.UriSchemeHttps &&
            uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
 
-    [GeneratedRegex(@"^HelpSys-Stable-(?<version>\d+\.\d+\.\d+)-(?<build>[0-9a-fA-F]{8})-win-x64\.zip$",
+    [GeneratedRegex(@"^HelpSys-Stable-A3\.(?<release>\d{4})-(?<build>[0-9a-fA-F]{8})-win-x64\.zip$",
         RegexOptions.CultureInvariant)]
     private static partial Regex VersionedAssetRegex();
 
