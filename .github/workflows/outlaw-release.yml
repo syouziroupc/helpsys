@@ -54,7 +54,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $versionedName = "HelpSys-Outlaw-$shortSha-win-x64.zip"
+          $version = '3.1.0'
+          $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
           dotnet publish src/HelpSys.Desktop/HelpSys.Desktop.csproj `
@@ -69,6 +70,12 @@ jobs:
 
           if (-not (Test-Path (Join-Path $out 'HelpSys.exe'))) { throw 'Outlaw HelpSys executable was not produced.' }
           Copy-Item README.md (Join-Path $out 'README.md')
+          @"
+          HelpSys Outlaw
+          Version: 3.1.0
+          Build: $shortSha
+          Channel: outlaw-latest
+          "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
           Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $versionedName) -Force
           Copy-Item (Join-Path $PWD $versionedName) (Join-Path $PWD $stableName) -Force
           "HELPSYS_VERSIONED_ASSET=$versionedName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -98,6 +105,7 @@ jobs:
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
           - Dedicated Outlaw cloud planner with bounded client deadlines and switchable Auto / Gemini / GLM reasoning
+          - Version 3.1.0 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
