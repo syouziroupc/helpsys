@@ -56,7 +56,7 @@ public partial class MainWindow
             "outlaw_direct_choice");
     }
 
-    private bool TryPresentOutlawIdentityChoiceButtons(
+    private bool TryAutoSelectOutlawIdentityChoice(
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot context,
         long generation)
@@ -74,18 +74,40 @@ public partial class MainWindow
                 Regex.IsMatch(x.Name ?? string.Empty, @"(?:プロフィール|profile).*(?:開く|open)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             .GroupBy(x => NormalizeLocalChoiceText(x.Name), StringComparer.Ordinal)
             .Select(g => g.First())
+            .OrderBy(x => x.Y)
+            .ThenBy(x => x.X)
             .Take(9)
             .ToArray();
 
         if (choices.Length < 2) return false;
 
-        return PresentOutlawChoiceButtons(
-            choices,
-            context,
-            generation,
-            "複数の利用者プロフィールがあります。どのプロフィールを使うか選んでください。",
-            "利用するプロフィールを直接選んでください。",
-            "outlaw_identity_choice");
+        var request = _activeRequest ?? string.Empty;
+        var selected = choices.FirstOrDefault(x =>
+            !string.IsNullOrWhiteSpace(x.Name) &&
+            request.Contains(
+                Regex.Replace(x.Name, @"(?:\s*のプロフィールを開く|\s*profile.*)$", string.Empty, RegexOptions.IgnoreCase).Trim(),
+                StringComparison.OrdinalIgnoreCase))
+            ?? choices[0];
+
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return false;
+
+        var label = DisplayName(selected.Name, selected.ControlType);
+        var instruction = $"候補が{choices.Length}つあります。今回は「{label}」を選びます。青い枠の項目を1回押してください。";
+        var decision = new GuideDecision(
+            "target",
+            selected.Id,
+            "left_click",
+            instruction,
+            null,
+            null,
+            0.99);
+
+        LocalLogService.Write(
+            "outlaw_identity_auto_selected",
+            $"choices={choices.Length};selected={selected.Id};name={label};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+
+        ShowStructuredTarget(decision, selected, candidates, context, generation);
+        return true;
     }
 
     private bool PresentOutlawChoiceButtons(
