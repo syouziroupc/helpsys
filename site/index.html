@@ -26,8 +26,8 @@
         <h1>次の操作を、<br><span>画面上で教える。</span></h1>
         <p class="lead">HelpSysは、パソコンを代わりに操作するAIではありません。現在の画面とWindowsの構造情報を照合し、あなたが次に操作する場所を1手ずつ案内します。従来の通常版と安全版は1つに統合し、安全版のPrivacy Gateを標準機能にしました。</p>
         <div class="actions" aria-label="ダウンロード">
-          <a class="download-button" href="/download">HelpSys Stable v3.0.1</a>
-          <a class="download-button ghost" href="/download/outlaw">無法者版 v3.1.1</a>
+          <a class="download-button" href="/download">HelpSys Stable v3.0.2</a>
+          <a class="download-button ghost" href="/download/outlaw">無法者版 v3.1.6</a>
           <a class="download-button ghost" href="/download/education">Education版 v2.2.0</a>
           <span class="download-note">Windows 10 / 11 ・ 64-bit ・ 開発版 ・ /download は常に最新ビルド</span>
         </div>
@@ -53,14 +53,14 @@
       <div class="download-options">
         <article class="download-card">
           <p class="eyebrow">HELPSYS UNIFIED</p>
-          <h3>統合版 <small>v3.0.1</small></h3>
+          <h3>通常版 <small>v3.0.2</small></h3>
           <p>従来の通常版の認識・音声機能と、安全版のPrivacy Gate・fail-closed・通信経路制限を1つのアプリに統合しました。危険な画面ではクラウド解析だけを止め、依頼自体は保持します。</p>
-          <a class="download-button" href="/download">Stable v3.0.1 ZIP</a>
+          <a class="download-button" href="/download">Stable v3.0.2 ZIP</a>
         </article>
         <article class="download-card">
           <p class="eyebrow">HELPSYS OUTLAW PILOT</p>
           <h3>無法者版 <small>最新Pilot</small></h3>
-          <p>パイロット向け最新ビルドです。操作成功を最優先にし、AI判断を <strong>Auto / Gemini / GLM</strong> から切り替え可能。複数候補は聞き返しではなく画面上の候補から直接選択できます。</p>
+          <p>パイロット向け最新ビルドです。操作成功を最優先にし、AI判断は <strong>Auto / GLM</strong> を利用できます。Geminiは現在サーバー側未設定のため無効化しています。複数候補は低リスクならHelpSysが選択し、高影響の選択だけ利用者に確認します。</p>
           <a class="download-button ghost" href="/download/outlaw">Outlaw 最新ZIP</a>
         </article>
         <article class="download-card">
@@ -105,7 +105,7 @@
         <div><strong>単一の送信経路</strong><span>画面由来のクラウド要求はPrivacy Gateを通り、HTTP通信はCloud AI Adapterへ集約します。</span></div>
         <div><strong>通信先を固定</strong><span>外部通信はHelpSysの承認済みHTTPS originへ限定し、リダイレクト・Cookie・OSプロキシ継承を無効化します。</span></div>
         <div><strong>生の入力値を送らない</strong><span>入力欄の内容は保持せず、必要な場合も入力有無や検索欄の役割など最小限の状態だけを利用します。</span></div>
-        <div><strong>AI判断を切替可能</strong><span>無法者版では Auto / Gemini / GLM を実行中に切り替えられます。AutoはGeminiを優先し、失敗時のみGLMへ退避します。</span></div>
+        <div><strong>AI判断を切替可能</strong><span>無法者版では Auto / GLM を利用できます。Geminiは現在サーバー側未設定のため無効化しています。</span></div>
         <div><strong>音声は明示開始時のみ</strong><span>音声認識は音声ボタン、またはローカルの起動語で利用者が開始した場合だけクラウド文字起こしへ進みます。</span></div>
       </div>
     </section>
@@ -115,7 +115,7 @@
         <p class="eyebrow">OUTLAW UPDATE NOTICE</p>
         <h2>旧無法者版からの更新について。</h2>
       </div>
-      <p>旧無法者版の更新機能には、誤って Stable 3.0.1 の更新チャネルを見る不具合がありました。<strong>「3.0.1」への更新が表示される場合は更新せず、Outlaw v3.1.1 を一度だけサイトから直接取得してください。</strong> v3.1.1以降は無法者版専用の <code>outlaw-latest</code> チャネルを使用します。</p>
+      <p>旧無法者版の更新機能には、誤って Stable 3.0.1 の更新チャネルを見る不具合がありました。<strong>「3.0.1」への更新が表示される場合は更新せず、Outlaw v3.1.6 を一度だけサイトから直接取得してください。</strong> v3.1.1以降は無法者版専用の <code>outlaw-latest</code> チャネルを使用します。</p>
     </section>
 
     <section class="privacy">
@@ -123,7 +123,7 @@
         <p class="eyebrow">LATEST DOWNLOAD</p>
         <h2>/download は常に最新版。</h2>
       </div>
-      <p>mainブランチが更新されるたびWindows版を自動再ビルドし、GitHub Releaseの <strong>HelpSys-latest-win-x64.zip</strong> を差し替えます。過去の安全版URL <code>/download/safe</code> も互換性のため同じ統合版へ転送します。</p>
+      <p><code>/download</code> は通常版の <strong>HelpSys-latest-win-x64.zip</strong>、<code>/download/outlaw</code> は無法者版の <strong>HelpSys-Outlaw-latest-win-x64.zip</strong> に固定されています。両者の更新チャネルは共有しません。</p>
     </section>
 
     <section class="download-panel">
