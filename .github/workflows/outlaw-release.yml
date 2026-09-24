@@ -32,6 +32,13 @@ jobs:
       - name: Verify Outlaw repeat guard
         run: node tests/outlaw-repeat-guard-contract.mjs
 
+      - name: Verify swappable brain and direct-choice UI
+        run: |
+          node --check worker/quality-guide.js
+          node --check worker/reliability-v4-guard.js
+          node worker/quality-guide-selftest.mjs
+          node tests/local-choice-contract.mjs
+
       - name: Restore
         run: dotnet restore HelpSys.sln
 
