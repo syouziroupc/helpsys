@@ -67,3 +67,13 @@ if (!cloud.includes('TimeSpan.FromSeconds(60)') || !cloud.includes('outlaw_api_t
   throw new Error('Outlaw one-shot planner must allow long reasoning and persist exact API failures');
 if (!xaml.includes('AI: Gemini (未設定)') || !xaml.includes('Tag="gemini" IsEnabled="False"'))
   throw new Error('Pilot UI must not expose the unconfigured Gemini provider as selectable');
+
+const fastPath = fs.readFileSync('src/HelpSys.Desktop/MainWindow.OutlawFastPath.cs', 'utf8');
+if (!quality.includes('outlaw_phase_timing'))
+  throw new Error('Outlaw must log phase timing for observation/screenshot/planner/presentation');
+if (!quality.includes('TryOutlawBrowserSearchFastPath(candidates, systemContext, generation)'))
+  throw new Error('Outlaw must try the local browser-search fast path before screenshot/cloud planning');
+if (!fastPath.includes('ResolveBeginnerWebSearchText') || !fastPath.includes('outlaw_local_browser_search'))
+  throw new Error('Outlaw browser-search fast path must use simple service names and log its local decision');
+if (!fastPath.includes('x.Y >= 220') || !fastPath.includes('x.Width >= 220'))
+  throw new Error('Outlaw browser-search fast path must prefer a large visible page search field over the top omnibox');
