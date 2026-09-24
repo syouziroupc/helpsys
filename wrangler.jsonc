@@ -15,7 +15,7 @@
     ]
   },
   "vars": {
-    "HELPSYS_VERSION": "3.0.1"
+    "HELPSYS_VERSION": "3.0.2"
   },
   "ai": {
     "binding": "AI"
