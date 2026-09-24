@@ -50,22 +50,27 @@ public sealed class ObservationBroker
         var after = _systemContext.Capture();
         if (!HasSameIdentity(before, after))
         {
-            if (OutlawModePolicy.Enabled && HasSameProcess(before, after))
+            if (OutlawModePolicy.Enabled && (HasSameProcess(before, after) || HasSameShellSurface(before, after)))
             {
+                var shellRebound = HasSameShellSurface(before, after);
                 LocalLogService.Write(
                     "outlaw_observation_rebound",
-                    $"reason=same_process_hwnd_changed;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle}");
+                    $"reason={(shellRebound ? "windows_shell_host_changed" : "same_process_hwnd_changed")};before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle}");
 
-                // Maximize/restore and some Chromium transitions can recreate the foreground HWND
-                // while staying in the same process. Re-scan once against the new stable surface
-                // instead of treating that expected transition as a fatal observation change.
+                // Maximize/restore can recreate a HWND, while Windows 11 Start/Search can transfer
+                // foreground ownership among explorer/Start/Search host processes without changing
+                // the logical shell surface. Re-scan once after the handoff and only keep evidence
+                // from the now-current logical surface.
                 elements = await PerformanceTrace.MeasureAsync(
                     "observation.rescan",
                     () => _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)).ConfigureAwait(false);
                 elements = KeepForegroundProcessEvidence(elements, after);
                 var rebound = _systemContext.Capture();
-                if (!HasSameIdentity(after, rebound))
-                    throw new ObservationChangedException("同一アプリ内の画面切替が継続しているため、現在状態を取り直します。");
+                var stable = shellRebound
+                    ? HasSameShellSurface(after, rebound)
+                    : HasSameIdentity(after, rebound);
+                if (!stable)
+                    throw new ObservationChangedException("画面切替が継続しているため、現在状態を取り直します。");
                 after = rebound;
             }
             else
@@ -143,6 +148,12 @@ public sealed class ObservationBroker
            expected.ForegroundProcessId == current.ForegroundProcessId &&
            expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
 
+    private static bool HasSameShellSurface(SystemContextSnapshot expected, SystemContextSnapshot current)
+        => expected.ForegroundWindowHandle != nint.Zero &&
+           current.ForegroundWindowHandle != nint.Zero &&
+           IsShellSurfaceProcess(expected.ForegroundProcess) &&
+           IsShellSurfaceProcess(current.ForegroundProcess);
+
     public static bool HasSameIdentity(SystemContextSnapshot expected, SystemContextSnapshot current)
     {
         if (expected.ForegroundProcessId <= 0 || current.ForegroundProcessId <= 0) return false;
@@ -172,7 +183,10 @@ public sealed class ObservationBroker
             .Select(x =>
                 $"{x.ProcessId}:{x.ControlType}:{x.AutomationId}:{x.Name}:{Math.Round(x.X / 24d)},{Math.Round(x.Y / 24d)}:{x.ToggleState}:{x.Selected}:{x.ExpandCollapseState}");
 
-        return $"{system.ForegroundProcessId}|{system.ForegroundWindowHandle}|{browser}|{string.Join("\n", stableElements)}";
+        var surfaceIdentity = IsShellSurfaceProcess(system.ForegroundProcess)
+            ? "windows-shell"
+            : $"{system.ForegroundProcessId}|{system.ForegroundWindowHandle}";
+        return $"{surfaceIdentity}|{browser}|{string.Join("\n", stableElements)}";
     }
 }
 
