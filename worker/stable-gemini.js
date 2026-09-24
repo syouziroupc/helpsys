@@ -1,5 +1,5 @@
 const MODEL = 'gemini-3.8-flash';
-const VERSION = '3.0.2';
+const VERSION = 'A3.0001';
 const MAX_BODY_BYTES = 7_000_000;
 const MAX_CONTROLS = 240;
 
