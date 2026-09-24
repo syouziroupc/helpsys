@@ -31,6 +31,8 @@ if (quality.includes('outlaw_visual_capture_changed_ignored') || quality.include
 
 need(reliability, 'HasExpectedSystemTransitionV3(', 'progress verification must use expected state transitions');
 need(reliability, 'HasExpectedSemanticEvidenceV3(', 'progress verification must require semantic evidence');
+need(reliability, 'BuildExpectedStateAnchorsV3(', 'progress verification must derive expected destination anchors');
+need(reliability, '[ぁ-んァ-ヶ一-龯]{2,24}?', 'Japanese destination names must participate in expected-state verification');
 need(reliability, '"outlaw_progress_verified"', 'verified expected progress must be logged explicitly');
 need(reliability, 'substantialContentChange && (semanticEvidence || targetDisappeared)', 'generic screen change alone must not count as success');
 
