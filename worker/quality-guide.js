@@ -50,7 +50,7 @@ MULTI-SOURCE EVIDENCE FUSION:
 - completedSteps: sequence evidence. It explains how the current state may have been reached and which actions already failed, but never overrides current state.
 - windowsKnowledge/canonicalConstraint: Windows physical/safety constraints and invariants. They must not force a fixed route when current-state evidence supports a shorter safe path.
 - Compare all independent evidence that is available. Prefer a next step supported by at least two current-state signals when two or more exist.
-- If sources conflict, decide what each source can actually establish. Current foreground/window state beats stale history. A current actionable UIA node can establish control identity even when text is visually hard to read.
+- If sources conflict, decide what each source can actually establish. Current foreground/window state beats stale history. A current actionable UIA node can establish control identity even when text is visually hard to read.\n- Do not ask a free-text clarification when multiple visible actionable choices already exist. Return clarify only for a genuine user preference/identity/data-impact branch; the desktop will render the visible choices as direct buttons.
 - When the screenshot is ambiguous but UIA plus foreground/system state strongly identify a current actionable control, you may return that real UI element id with screenConfirmed=false. This path requires high confidence and will be revalidated by the desktop immediately before display.
 - Do not invent agreement. If a conflict changes what action is safe or correct, clarify instead of guessing.
 
@@ -144,22 +144,11 @@ export default {
     });
 
     try {
-      const result = await env.AI.run(model, {
-        messages: [
-          { role: 'system', content: qualitySystemPrompt },
-          { role: 'user', content: userPayload }
-        ],
-        image,
-        reasoning_effort: 'low',
-        temperature: 0.1,
-        max_completion_tokens: 520,
-        tools: [qualityTool],
-        tool_choice: 'required',
-        parallel_tool_calls: false,
-        store: false
-      });
+      const result = await runQualityInference(env, model, userPayload, image);
 
-      const raw = extractToolArguments(result, 'return_quality_guidance');
+      const raw = result.__geminiStructured === true
+        ? result.value
+        : extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
       return json(validateQualityDecision(raw, elements, task, recoveryMode));
     } catch {
@@ -169,6 +158,70 @@ export default {
     }
   }
 };
+
+
+async function runQualityInference(env, model, userPayload, image) {
+  if (env.GEMINI_API_KEY) {
+    const modelName = String(env.HELPSYS_OUTLAW_GEMINI_MODEL || 'gemini-3.8-flash').trim();
+    const match = /^data:image\/(png|jpeg);base64,(.+)$/i.exec(image || '');
+    if (!match) throw new Error('invalid_gemini_image');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': env.GEMINI_API_KEY
+          },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: qualitySystemPrompt }] },
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: userPayload },
+                { inlineData: { mimeType: `image/${match[1].toLowerCase()}`, data: match[2] } }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 700,
+              thinkingConfig: { thinkingLevel: 'low' },
+              responseMimeType: 'application/json',
+              responseSchema: qualityTool.parameters
+            }
+          }),
+          signal: controller.signal
+        }
+      );
+      if (!response.ok) throw new Error(`gemini_http_${response.status}`);
+      const payload = await response.json();
+      const rawText = payload?.candidates?.[0]?.content?.parts?.find(x => typeof x?.text === 'string')?.text;
+      if (!rawText) throw new Error('gemini_empty_output');
+      return { __geminiStructured: true, value: JSON.parse(rawText) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return env.AI.run(model, {
+    messages: [
+      { role: 'system', content: qualitySystemPrompt },
+      { role: 'user', content: userPayload }
+    ],
+    image,
+    reasoning_effort: 'low',
+    temperature: 0.1,
+    max_completion_tokens: 520,
+    tools: [qualityTool],
+    tool_choice: 'required',
+    parallel_tool_calls: false,
+    store: false
+  });
+}
 
 
 function qualityRawFromTaskDecision(decision) {
