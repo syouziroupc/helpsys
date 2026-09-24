@@ -52,6 +52,67 @@ jobs:
           node worker/quality-guide-selftest.mjs
           node tests/local-choice-contract.mjs
 
+      - name: Verify deployed Outlaw API generation
+        shell: bash
+        run: |
+          node <<'NODE'
+          const base='https://helpsys.syouziroupc.workers.dev';
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          let health=null;
+          for(let i=0;i<15;i++){
+            try{
+              const r=await fetch(base+'/health/outlaw',{cache:'no-store'});
+              if(r.ok){
+                const j=await r.json();
+                if(j?.ok===true &&
+                   j?.service==='helpsys-outlaw' &&
+                   j?.version==='outlaw-2026.09.24-r3.4' &&
+                   j?.aiConfigured===true &&
+                   Array.isArray(j?.providers) &&
+                   ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
+                  health=j; break;
+                }
+              }
+            }catch{}
+            await sleep(4000);
+          }
+          if(!health) throw new Error('Production Outlaw API did not reach r3.4 before desktop release.');
+
+          const body={
+            request:'設定を開く次の操作を案内して',
+            aiProvider:'glm',
+            history:[],
+            systemContext:{
+              foregroundProcess:'explorer',
+              foregroundTitle:'デスクトップ',
+              foregroundProcessId:1234,
+              taskbarVisible:true,
+              runningApps:['explorer'],
+              browser:null
+            },
+            evidence:{screenshotPresent:false},
+            elements:[{
+              id:'u1',name:'スタート',automationId:'Start',className:'',
+              controlType:'Button',processName:'explorer',interactable:true,
+              enabled:true,keyboardFocusable:true,focused:false,password:false,
+              processId:1234,value:null,toggleState:null,selected:null,
+              expandCollapseState:null,x:0,y:0,width:80,height:40
+            }]
+          };
+          const r=await fetch(base+'/v1/outlaw-plan',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:JSON.stringify(body)
+          });
+          const text=await r.text();
+          if(!r.ok) throw new Error('Production Outlaw API HTTP '+r.status+': '+text.slice(0,400));
+          const parsed=JSON.parse(text);
+          if(!['target','clarify','done','not_found'].includes(parsed?.status))
+            throw new Error('Production Outlaw API returned invalid planner response.');
+          console.log('production_outlaw_health',JSON.stringify(health));
+          console.log('production_outlaw_glm_smoke',JSON.stringify(parsed));
+          NODE
+
       - name: Restore
         run: dotnet restore HelpSys.sln
 
