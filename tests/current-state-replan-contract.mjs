@@ -77,3 +77,20 @@ if (!fastPath.includes('ResolveBeginnerWebSearchText') || !fastPath.includes('ou
   throw new Error('Outlaw browser-search fast path must use simple service names and log its local decision');
 if (!fastPath.includes('x.Y >= 220') || !fastPath.includes('x.Width >= 220'))
   throw new Error('Outlaw browser-search fast path must prefer a large visible page search field over the top omnibox');
+
+const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
+const mainCode = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml.cs', 'utf8');
+const observationBroker = fs.readFileSync('src/HelpSys.Desktop/Services/ObservationBroker.cs', 'utf8');
+
+if (!mainXaml.includes('x:Name="VersionLabel"') || mainXaml.includes('Outlaw 3.1.0'))
+  throw new Error('Outlaw UI version must not be hardcoded to 3.1.0');
+if (!mainCode.includes('Assembly.GetName().Version') && !mainCode.includes('typeof(MainWindow).Assembly.GetName().Version'))
+  throw new Error('Outlaw UI must derive its visible version from executable metadata');
+if (!fastPath.includes('query_already_submitted'))
+  throw new Error('Outlaw local browser-search fast path must not submit the same query twice');
+if (!observationBroker.includes('outlaw_background_uia_filtered') ||
+    !observationBroker.includes('KeepForegroundProcessEvidence'))
+  throw new Error('Outlaw observation must remove background-process UIA before planning');
+if (!observationBroker.includes('outlaw_observation_rebound') ||
+    !observationBroker.includes('observation.rescan'))
+  throw new Error('Outlaw must rescan once when the same process recreates its foreground HWND');
