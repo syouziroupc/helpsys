@@ -188,6 +188,13 @@ public partial class MainWindow
                 var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
                 if (_history.Count > historyLimit) _history.RemoveAt(0);
                 ClearCurrentGuidanceV3();
+                if (OutlawModePolicy.Enabled && _lastOutlawObservation is not null && _lastOutlawFrame is not null)
+                {
+                    _reuseLastOutlawObservationOnce = true;
+                    LocalLogService.Write(
+                        "outlaw_same_observation_retry_armed",
+                        $"sequence={_lastOutlawObservation.Sequence};fingerprint={_lastOutlawObservation.Fingerprint};action={decision.Action}");
+                }
                 replan = true;
             }
             else if (verification == ActionVerificationResult.Success)
