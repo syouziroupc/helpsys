@@ -55,22 +55,11 @@ public static class MonitorPlacementService
         return GetWorkAreaForPoint(x, y);
     }
 
-    public static double GetDpiScaleForBounds(Rect bounds)
+    public static double GetDpiScaleForWindow(nint hwnd)
     {
-        var x = bounds.IsEmpty ? 0 : (int)Math.Round(bounds.Left + bounds.Width / 2d);
-        var y = bounds.IsEmpty ? 0 : (int)Math.Round(bounds.Top + bounds.Height / 2d);
-        var monitor = MonitorFromPoint(new PointNative { X = x, Y = y }, MonitorDefaultToNearest);
-        if (monitor == nint.Zero) return 1d;
-
-        try
-        {
-            var hr = GetDpiForMonitor(monitor, MonitorDpiType.EffectiveDpi, out var dpiX, out _);
-            if (hr == 0 && dpiX > 0) return Math.Max(1d, dpiX / 96d);
-        }
-        catch (DllNotFoundException) { }
-        catch (EntryPointNotFoundException) { }
-
-        return 1d;
+        if (hwnd == nint.Zero) return 1d;
+        var dpi = GetDpiForWindow(hwnd);
+        return dpi > 0 ? Math.Max(1d, dpi / 96d) : 1d;
     }
 
     public static bool TryGetWindowBounds(nint hwnd, out Rect bounds)
@@ -119,10 +108,6 @@ public static class MonitorPlacementService
         public uint Flags;
     }
 
-    private enum MonitorDpiType
-    {
-        EffectiveDpi = 0
-    }
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -135,8 +120,9 @@ public static class MonitorPlacementService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
 
-    [DllImport("shcore.dll")]
-    private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint hwnd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
