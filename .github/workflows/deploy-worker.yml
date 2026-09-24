@@ -118,6 +118,23 @@ jobs:
           try{parsed=JSON.parse(text)}catch{throw new Error('Outlaw planner returned non-JSON');}
           if(!['target','clarify','done','not_found'].includes(parsed?.status))
             throw new Error('Outlaw planner returned invalid status: '+text.slice(0,400));
+
+          let geminiSmoke=null;
+          if(health?.geminiConfigured===true){
+            body.aiProvider='gemini';
+            const gr=await fetch(base+'/v1/outlaw-plan',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify(body)
+            });
+            const gt=await gr.text();
+            if(!gr.ok) throw new Error('Outlaw Gemini planner HTTP '+gr.status+': '+gt.slice(0,400));
+            try{geminiSmoke=JSON.parse(gt)}catch{throw new Error('Outlaw Gemini planner returned non-JSON');}
+            if(!['target','clarify','done','not_found'].includes(geminiSmoke?.status))
+              throw new Error('Outlaw Gemini planner returned invalid status: '+gt.slice(0,400));
+          }
+
           console.log('outlaw_health',JSON.stringify(health));
-          console.log('outlaw_smoke',JSON.stringify(parsed));
+          console.log('outlaw_glm_smoke',JSON.stringify(parsed));
+          console.log('outlaw_gemini_smoke',JSON.stringify(geminiSmoke));
           NODE
