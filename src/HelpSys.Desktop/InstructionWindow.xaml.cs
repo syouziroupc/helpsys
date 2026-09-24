@@ -23,7 +23,7 @@ public partial class InstructionWindow : Window
         if (!IsVisible) Show();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var dpiScale = Math.Max(1d, GetDpiForWindow(hwnd) / 96d);
+        var dpiScale = MonitorPlacementService.GetDpiScaleForBounds(physicalBounds);
         var width = Math.Max(1, (int)Math.Round(380 * dpiScale));
         var height = Math.Max(1, (int)Math.Round(76 * dpiScale));
         var gap = Math.Max(1, (int)Math.Round(14 * dpiScale));
@@ -37,7 +37,19 @@ public partial class InstructionWindow : Window
         var y = above >= work.Top ? above : below;
         y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
 
-        SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        var positioned = SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        if (MonitorPlacementService.TryGetWindowBounds(hwnd, out var actual))
+        {
+            LocalLogService.Write(
+                "instruction_placement",
+                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual={actual}");
+        }
+        else
+        {
+            LocalLogService.Write(
+                "instruction_placement",
+                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual=unavailable;win32={Marshal.GetLastWin32Error()}");
+        }
     }
 
     [DllImport("user32.dll")]
