@@ -41,13 +41,13 @@ public partial class MainWindow
                 "outlaw_repeat_blocked",
                 $"action={decision.Action};target={label};key={key}");
 
-            if (!TryQueueCurrentStateReplan("同じ画面で効果が無かった同一操作を再提示しようとした", generation))
-            {
-                _liveReplanPending = false;
-                SetState(
-                    "同じ画面で効果がなかった同じ操作が再び選ばれたため、自動反復を停止しました。画面が変化すると現在位置から再判定します。",
-                    speak: false);
-            }
+            // The Worker already receives the failed-action history and performs one alternate
+            // inference against the same immutable screenshot/UIA observation. If that still
+            // returns the failed state-action pair, do not waste time recapturing the same screen.
+            _liveReplanPending = false;
+            SetState(
+                "同じ観測状態で効果がなかった操作が再び選ばれたため、この画面の自動反復を停止しました。画面が変化すると現在位置から再判定します。",
+                speak: false);
 
             return false;
         }

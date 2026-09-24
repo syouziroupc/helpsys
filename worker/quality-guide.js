@@ -149,7 +149,7 @@ export default {
     const canonical = outlawMode ? null : compactCanonical(task, recoveryMode);
 
     const model = selectQualityModel(env.HELPSYS_QUALITY_MODEL);
-    const userPayload = JSON.stringify({
+    const payload = {
       goal,
       recoveryMode,
       routeIssue: routeIssue || null,
@@ -162,16 +162,35 @@ export default {
       instruction: recoveryMode
         ? 'The goal is fixed but the route is flexible. Infer the current state, then choose exactly one safe recovery step toward the goal. Do not stop merely because the current screen differs from the expected path.'
         : 'Reconcile the available independent evidence sources, then decide exactly one current-state step.'
-    });
+    };
 
     try {
-      const result = await runQualityInference(env, model, userPayload, hasImage ? image : '', aiProvider, outlawMode);
-
-      const raw = result.__geminiStructured === true
+      let userPayload = JSON.stringify(payload);
+      let result = await runQualityInference(env, model, userPayload, hasImage ? image : '', aiProvider, outlawMode);
+      let raw = result.__geminiStructured === true
         ? result.value
         : extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
-      return json(validateQualityDecision(raw, elements, task, recoveryMode, outlawMode));
+
+      let decision = validateQualityDecision(raw, elements, task, recoveryMode, outlawMode);
+
+      if (outlawMode && isKnownFailedOutlawDecision(decision, elements, history)) {
+        const rejected = describeOutlawDecision(decision, elements);
+        userPayload = JSON.stringify({
+          ...payload,
+          rejectedSameObservationAction: rejected,
+          instruction: 'The first proposal exactly repeats an action already confirmed ineffective in this same state. Using the SAME observation, choose one different grounded physical action. Do not request a new screenshot and do not repeat the rejected action.'
+        });
+
+        result = await runQualityInference(env, model, userPayload, hasImage ? image : '', aiProvider, true);
+        raw = result.__geminiStructured === true
+          ? result.value
+          : extractToolArguments(result, 'return_quality_guidance');
+        if (!raw) return json({ error: 'invalid_model_output' }, 502);
+        decision = validateQualityDecision(raw, elements, task, recoveryMode, true);
+      }
+
+      return json(decision);
     } catch {
       // Never serialize provider exceptions into Workers logs.
       console.error('quality_guide_inference_failed');
@@ -686,6 +705,40 @@ function compactEvidence(value, elements, history, systemContext) {
     browserDomain: nullableText(value?.browserDomain ?? value?.BrowserDomain ?? systemContext.browser?.domain, 220),
     historyCount: finite(value?.historyCount ?? value?.HistoryCount ?? history.length),
     recentTargets: Array.isArray(recentValues) ? recentValues.slice(0, 5).map(x => text(x, 180)).filter(Boolean) : []
+  };
+}
+
+function isKnownFailedOutlawDecision(decision, elements, history) {
+  if (!decision || decision.status !== 'target') return false;
+  const action = String(decision.action || '').toLowerCase();
+  if (!action || action === 'none') return false;
+
+  let label = '';
+  if (decision.targetId && decision.targetId !== 'vision-target') {
+    const target = elements.find(x => x.id === decision.targetId);
+    label = normalizeRankText(target?.name || target?.controlType || '');
+  } else if (action === 'press_key') {
+    label = normalizeRankText(decision.key || 'キーボード操作');
+  } else {
+    return false;
+  }
+
+  if (!label) return false;
+  const failedAction = `no_effect_${action}`;
+
+  return history.some(item =>
+    String(item?.action || '').toLowerCase() === failedAction &&
+    normalizeRankText(item?.targetName || '') === label);
+}
+
+function describeOutlawDecision(decision, elements) {
+  const target = decision?.targetId
+    ? elements.find(x => x.id === decision.targetId)
+    : null;
+  return {
+    action: decision?.action || 'none',
+    targetId: decision?.targetId ?? null,
+    targetName: target?.name || decision?.key || null
   };
 }
 

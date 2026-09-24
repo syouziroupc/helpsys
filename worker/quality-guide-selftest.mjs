@@ -7,18 +7,22 @@ function assert(condition, message) {
 
 let nextDecision;
 let lastInvocation;
+let invocationCount = 0;
 let value;
 const env = {
   AI: {
     async run(model, args) {
+      invocationCount++;
       lastInvocation = { model, args };
-      return { tool_calls: [{ name: 'return_quality_guidance', arguments: nextDecision }] };
+      const decision = Array.isArray(nextDecision) ? nextDecision.shift() : nextDecision;
+      return { tool_calls: [{ name: 'return_quality_guidance', arguments: decision }] };
     }
   }
 };
 
 async function ask(body, expectModel = true) {
   lastInvocation = null;
+  invocationCount = 0;
   const request = new Request('https://example.test/v1/quality-guide', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -326,6 +330,7 @@ console.log('HelpSys multisource evidence-fusion and route-recovery self-test pa
 
 async function askOutlaw(body) {
   lastInvocation = null;
+  invocationCount = 0;
   const request = new Request('https://example.test/v1/quality-guide', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -446,6 +451,7 @@ assert(payload().uiElements.find(x => x.id === 'search-box')?.value === '現在�
 
 async function askOutlawStructured(body) {
   lastInvocation = null;
+  invocationCount = 0;
   const request = new Request('https://example.test/v1/quality-guide', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -475,3 +481,38 @@ assert(value.status === 'target' && value.targetId === 'structured-only',
   'image-less Outlaw fallback must use the same operation-first validation instead of normal canonical planner guards');
 assert(lastInvocation?.args?.image === undefined,
   'structured-only Outlaw inference must not invent a fake screenshot');
+
+nextDecision = [
+  {
+    status: 'target', targetId: 'failed-route', action: 'left_click',
+    instruction: '続けるを押してください。', question: null, key: null,
+    confidence: 0.8, x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+  },
+  {
+    status: 'target', targetId: 'alternate-route', action: 'left_click',
+    instruction: '別経路を押してください。', question: null, key: null,
+    confidence: 0.8, x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+  }
+];
+value = await askOutlaw({
+  request: '先へ進んで',
+  history: [{
+    step: 1,
+    action: 'no_effect_left_click',
+    targetName: '続ける',
+    instruction: 'この操作は効果がなかった'
+  }],
+  systemContext: { foregroundProcess: 'app', foregroundProcessId: 10, runningApps: [] },
+  elements: [
+    { id: 'failed-route', name: '続ける', controlType: 'Button', processName: 'app', interactable: true, enabled: true },
+    { id: 'alternate-route', name: '別経路', controlType: 'Button', processName: 'app', interactable: true, enabled: true }
+  ]
+});
+assert(invocationCount === 2,
+  'Outlaw planner must retry exactly once on the same observation when the first proposal repeats a confirmed no-effect action');
+assert(value.status === 'target' && value.targetId === 'alternate-route',
+  'same-observation retry must return the alternative grounded action instead of asking for another screenshot');
+assert(payload().rejectedSameObservationAction?.targetId === 'failed-route',
+  'second inference must receive the rejected same-state action explicitly');

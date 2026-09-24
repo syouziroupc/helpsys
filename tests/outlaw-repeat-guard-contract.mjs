@@ -55,3 +55,11 @@ const sessionMain = main;
 need(sessionMain,
   'ResetOutlawLoopGuard();',
   'Starting/ending a guidance session must clear stale Outlaw loop-guard state');
+
+const repeatStart = guard.indexOf('_outlawFailedGuidanceKeys.Contains(key)');
+const repeatEnd = guard.indexOf('_outlawLastPresentedGuidanceKey = key;', repeatStart);
+const repeatBlock = guard.slice(repeatStart, repeatEnd);
+if (repeatBlock.includes('TryQueueCurrentStateReplan('))
+  throw new Error('a blocked same-state failed action must not recapture the same screen');
+if (!repeatBlock.includes('_liveReplanPending = false'))
+  throw new Error('repeat guard must terminate redundant same-observation recapture after Worker alternate planning is exhausted');
