@@ -38,6 +38,19 @@ const qualityTool = {
   }
 };
 
+const outlawQualitySystemPrompt = `You are the operation-first planning component of HelpSys Outlaw.
+The human operates the computer. Return exactly one concrete next physical GUI step using return_quality_guidance.
+
+Use the CURRENT screenshot, current UI elements, foreground context and history as evidence.
+Do not force a canonical route. Do not reject an otherwise grounded operation merely because it is nonstandard, crosses a site/domain boundary, uses a sponsored result, changes a default, or passes through a warning surface.
+When multiple visible routes exist, choose the grounded route that makes the most direct progress instead of asking an open-ended clarification.
+Never invent a target. A structured target must refer to a real current uiElements id; a visual target must use a tight visible rectangle.
+Use press_key only for a real keyboard action. Use type_text only for a focused editable control.
+Treat failed history entries as negative state-action memory and choose a different grounded action when the same state recurs.
+status=done only when the requested end state is visibly achieved.
+Keep the Japanese instruction short and physically explicit.
+confidence describes how strongly the CURRENT evidence supports the exact next operation.`;
+
 const qualitySystemPrompt = `You are the fast, careful multimodal planning component of HelpSys for Windows beginners.
 The human operates the computer. Return only ONE immediate next operation by calling return_quality_guidance exactly once.
 
@@ -119,17 +132,19 @@ export default {
       : [];
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
     const recoveryMode = body?.recoveryMode === true;
+    const outlawMode = body?.outlawMode === true;
     const routeIssue = text(body?.routeIssue, 180);
     const aiProvider = normalizeAiProvider(body?.aiProvider);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
-    if (task?.kind === 'choice' && task?.deterministic) {
+    if (!outlawMode && task?.kind === 'choice' && task?.deterministic) {
       return json(validateQualityDecision(
         qualityRawFromTaskDecision(task.deterministic),
         elements,
         task,
-        recoveryMode));
+        recoveryMode,
+        false));
     }
-    const canonical = compactCanonical(task, recoveryMode);
+    const canonical = outlawMode ? null : compactCanonical(task, recoveryMode);
 
     const model = selectQualityModel(env.HELPSYS_QUALITY_MODEL);
     const userPayload = JSON.stringify({
@@ -148,13 +163,13 @@ export default {
     });
 
     try {
-      const result = await runQualityInference(env, model, userPayload, image, aiProvider);
+      const result = await runQualityInference(env, model, userPayload, image, aiProvider, outlawMode);
 
       const raw = result.__geminiStructured === true
         ? result.value
         : extractToolArguments(result, 'return_quality_guidance');
       if (!raw) return json({ error: 'invalid_model_output' }, 502);
-      return json(validateQualityDecision(raw, elements, task, recoveryMode));
+      return json(validateQualityDecision(raw, elements, task, recoveryMode, outlawMode));
     } catch {
       // Never serialize provider exceptions into Workers logs.
       console.error('quality_guide_inference_failed');
@@ -164,7 +179,7 @@ export default {
 };
 
 
-async function runQualityInference(env, model, userPayload, image, provider = 'auto') {
+async function runQualityInference(env, model, userPayload, image, provider = 'auto', outlawMode = false) {
   const useGemini = provider !== 'glm';
   const allowGlmFallback = provider === 'auto';
 
@@ -185,7 +200,7 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
             'x-goog-api-key': env.GEMINI_API_KEY
           },
           body: JSON.stringify({
-            systemInstruction: { parts: [{ text: qualitySystemPrompt }] },
+            systemInstruction: { parts: [{ text: outlawMode ? outlawQualitySystemPrompt : qualitySystemPrompt }] },
             contents: [{
               role: 'user',
               parts: [
@@ -222,7 +237,7 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
 
   return env.AI.run(model, {
     messages: [
-      { role: 'system', content: qualitySystemPrompt },
+      { role: 'system', content: outlawMode ? outlawQualitySystemPrompt : qualitySystemPrompt },
       { role: 'user', content: userPayload }
     ],
     image,
@@ -254,7 +269,7 @@ function qualityRawFromTaskDecision(decision) {
   };
 }
 
-export function validateQualityDecision(raw, elements, task, recoveryMode = false) {
+export function validateQualityDecision(raw, elements, task, recoveryMode = false, outlawMode = false) {
   const ids = new Set(elements.map(x => x.id));
   const statuses = new Set(['target', 'clarify', 'done', 'not_found']);
   const actions = new Set(['left_click', 'double_click', 'type_text', 'press_key', 'none']);
@@ -277,14 +292,16 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     screenConfirmed, visualEvidence, observedDomain, sponsored
   };
 
-  const secretOverride = guardSecretClarification(base);
-  if (secretOverride) return secretOverride;
+  if (!outlawMode) {
+    const secretOverride = guardSecretClarification(base);
+    if (secretOverride) return secretOverride;
+  }
 
   if (status === 'done') {
-    if (!screenConfirmed || confidence < MIN_DONE_CONFIDENCE || visualEvidence.length < 3) return notFound('画面上で完了を確認できませんでした。');
-    if (task?.kind === 'site' && task?.deterministic?.status !== 'done')
+    if (!screenConfirmed || (!outlawMode && confidence < MIN_DONE_CONFIDENCE) || (!outlawMode && visualEvidence.length < 3)) return notFound('画面上で完了を確認できませんでした。');
+    if (!outlawMode && task?.kind === 'site' && task?.deterministic?.status !== 'done')
       return notFound('既知サイトは現在のブラウザードメインが公式ドメインと一致した場合だけ完了扱いにします。');
-    if (isStrictTask(task) && !relaxedCanonical && task?.deterministic && task.deterministic.status !== 'done')
+    if (!outlawMode && isStrictTask(task) && !relaxedCanonical && task?.deterministic && task.deterministic.status !== 'done')
       return notFound('画面上の状態と安全な標準手順が一致しないため、完了扱いにしません。');
     return { ...base, targetId: null, action: 'none', key: null, question: null };
   }
@@ -296,15 +313,15 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
 
   if (status !== 'target') return notFound(instruction || '現在の情報を照合しましたが、次の操作を安全に決められませんでした。');
   if (action === 'none') return notFound('操作対象は示されていますが、実行する操作を特定できませんでした。');
-  if (confidence < MIN_TARGET_CONFIDENCE) return notFound('次の操作を決める確度が足りませんでした。');
+  if (!outlawMode && confidence < MIN_TARGET_CONFIDENCE) return notFound('次の操作を決める確度が足りませんでした。');
 
   const structuredTarget = !screenConfirmed && targetId && ids.has(targetId) && confidence >= MIN_STRUCTURED_TARGET_CONFIDENCE;
-  if (!screenConfirmed && !structuredTarget)
+  if (!outlawMode && !screenConfirmed && !structuredTarget)
     return notFound('画像だけでは確定できず、構造情報でも十分な確度の操作対象を特定できませんでした。');
-  if (screenConfirmed && visualEvidence.length < 3)
+  if (!outlawMode && screenConfirmed && visualEvidence.length < 3)
     return notFound('画面上の根拠を十分に説明できませんでした。');
 
-  if (task?.kind === 'choice' && task?.deterministic?.status === 'clarify') {
+  if (!outlawMode && task?.kind === 'choice' && task?.deterministic?.status === 'clarify') {
     return {
       ...base,
       status: 'clarify', targetId: null, action: 'none', instruction: '',
@@ -312,16 +329,16 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     };
   }
 
-  if (task?.kind === 'safety-block' && task?.deterministic) {
+  if (!outlawMode && task?.kind === 'safety-block' && task?.deterministic) {
     const expected = task.deterministic;
     if (action !== expected.action || normalizeKey(key) !== normalizeKey(expected.key))
       return notFound('安全警告があるため、標準の安全な戻り方以外は案内しません。');
   }
 
   if (action === 'press_key') {
-    if (!screenConfirmed) return notFound('キーボード操作は現在画面でも確認できた場合だけ案内します。');
+    if (!outlawMode && !screenConfirmed) return notFound('キーボード操作は現在画面でも確認できた場合だけ案内します。');
     if (!key) return notFound('押すキーを確認できませんでした。');
-    if (isStrictTask(task) && !relaxedCanonical && task?.deterministic?.status === 'target' && task.deterministic.action === 'press_key' &&
+    if (!outlawMode && isStrictTask(task) && !relaxedCanonical && task?.deterministic?.status === 'target' && task.deterministic.action === 'press_key' &&
         normalizeKey(key) !== normalizeKey(task.deterministic.key))
       return notFound('画面と安全な標準手順で次のキーが一致しませんでした。');
     return { ...base, targetId: null };
@@ -331,7 +348,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     if (!screenConfirmed) return notFound('画像だけの操作位置は画面確認が必要です。');
     if (!['left_click', 'double_click'].includes(action) || base.width < 4 || base.height < 4)
       return notFound('画像上の押す場所を十分に確認できませんでした。');
-    if (task?.kind === 'site') {
+    if (!outlawMode && task?.kind === 'site') {
       const guardedVision = guardVisionDecisionForTask(task, {
         status: 'target', label: null, instruction: base.instruction, question: null,
         x: base.x, y: base.y, width: base.width, height: base.height,
@@ -346,7 +363,7 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   if (!targetId || !ids.has(targetId)) return notFound('Windowsの操作対象と一致させられませんでした。');
   const target = elements.find(x => x.id === targetId);
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
-  if (task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
+  if (!outlawMode && task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
     return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
   if (action === 'type_text' && !isEditableControl(target))
     return notFound('文字入力できる対象ではないため、この操作は案内しません。');
@@ -354,10 +371,10 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
     return notFound('入力欄が実際に選ばれていることを確認できませんでした。');
 
   let physical = normalizePhysicalAction(base, target, task);
-  if (task?.kind === 'site' && (physical.sponsored || /(?:広告|スポンサー|sponsored|\bad\b)/i.test(target.name || '')))
+  if (!outlawMode && task?.kind === 'site' && (physical.sponsored || /(?:広告|スポンサー|sponsored|\bad\b)/i.test(target.name || '')))
     return notFound('広告ではなく公式サイトへ進む必要があるため、この候補は選びません。');
 
-  if (task?.kind === 'site' || (isStrictTask(task) && !relaxedCanonical)) {
+  if (!outlawMode && (task?.kind === 'site' || (isStrictTask(task) && !relaxedCanonical))) {
     const guarded = guardDecisionForTask(task, {
       status: 'target', targetId: physical.targetId, action: physical.action,
       instruction: physical.instruction, question: null, key: physical.key, confidence

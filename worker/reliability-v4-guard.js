@@ -59,8 +59,17 @@ export default {
     }
 
     if (url.pathname === '/v1/outlaw-plan') {
-      const hasImage = typeof screenBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(screenBody.image);
-      const routed = rewriteRequestPath(screenRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
+      let outlawBody = null;
+      try {
+        const raw = await request.clone().json();
+        outlawBody = prepareOutlawScreenBody(raw);
+      } catch {
+        outlawBody = screenBody;
+      }
+
+      const hasImage = typeof outlawBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(outlawBody.image);
+      const outlawRequest = rebuildJsonRequest(request, { ...(outlawBody || {}), outlawMode: true });
+      const routed = rewriteRequestPath(outlawRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
       return hasImage ? quality.fetch(routed, privateEnv, ctx) : base.fetch(routed, privateEnv, ctx);
     }
 
@@ -89,6 +98,41 @@ export default {
     return override ? replaceJson(response, override) : response;
   }
 };
+
+export function prepareOutlawScreenBody(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+
+  // Preserve operational context that normal mode intentionally minimizes: ordinary input
+  // values, full browser URL, long labels and history. Password fields and obvious secret
+  // tokens remain redacted because they are not required to choose a physical GUI action.
+  const body = structuredClone(raw);
+
+  if (Array.isArray(body.elements)) {
+    body.elements = body.elements.map(element => {
+      if (!element || typeof element !== 'object' || Array.isArray(element)) return element;
+      const password = element.password === true || element.Password === true;
+      if (password) {
+        if ('value' in element) element.value = '';
+        if ('Value' in element) element.Value = '';
+      }
+      return element;
+    });
+  }
+
+  const redactSecretText = value => typeof value === 'string'
+    ? value
+        .replace(LABELED_SECRET, '$1=<redacted-secret>')
+        .replace(BEARER, 'Bearer <redacted-secret>')
+        .replace(JWT, '<redacted-jwt>')
+        .replace(API_KEY, '<redacted-api-key>')
+        .replace(PRIVATE_KEY, '<redacted-private-key>')
+    : value;
+
+  if (typeof body.request === 'string') body.request = redactSecretText(body.request);
+  if (typeof body.routeIssue === 'string') body.routeIssue = redactSecretText(body.routeIssue);
+
+  return body;
+}
 
 export function sanitizeScreenBody(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;

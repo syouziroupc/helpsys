@@ -323,3 +323,35 @@ value = await ask({
 assert(value.status === 'clarify', 'redacted account identity must never be guessed or auto-selected');
 
 console.log('HelpSys multisource evidence-fusion and route-recovery self-test passed.');
+
+async function askOutlaw(body) {
+  lastInvocation = null;
+  const request = new Request('https://example.test/v1/quality-guide', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ image: 'data:image/png;base64,AAAA', history: [], outlawMode: true, ...body })
+  });
+  const response = await quality.fetch(request, env, {});
+  assert(response.status === 200, `unexpected outlaw quality response ${response.status}`);
+  return response.json();
+}
+
+nextDecision = {
+  status: 'target', targetId: 'unsafe-route', action: 'left_click',
+  instruction: '青い枠の項目を1回押してください。', question: null, key: null,
+  confidence: 0.55, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlaw({
+  request: '現在画面から進んで',
+  systemContext: { foregroundProcess: 'browser', foregroundProcessId: 44, runningApps: [] },
+  elements: [{
+    id: 'unsafe-route', name: '続行', controlType: 'Button', processName: 'browser',
+    interactable: true, enabled: true, focused: false, keyboardFocusable: true
+  }]
+});
+assert(value.status === 'target' && value.targetId === 'unsafe-route',
+  'Outlaw must preserve a real mechanically valid target even when confidence is below normal quality thresholds');
+assert(lastInvocation?.args?.messages?.[0]?.content?.includes('operation-first planning component of HelpSys Outlaw'),
+  'Outlaw inference must use its dedicated operation-first system prompt');
+
