@@ -62,8 +62,7 @@ assert(release.includes('-p:HelpSysBuildId=$shortSha'), 'release must embed the 
 assert(release.includes('HELPSYS_VERSION=$version') && release.includes('$env:HELPSYS_VERSION'), 'release version must persist across workflow steps');
 assert(release.includes('HelpSys-latest-win-x64.zip'), 'public stable alias must remain compatible');
 assert(release.includes('HelpSys-latest-win-x64.sha256'), 'release must publish update integrity hash');
-assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'release must preserve legacy updater migration asset');
-assert(release.includes("Copy-Item (Join-Path $out 'HelpSys.Stable.exe') (Join-Path $legacyOut 'HelpSys.exe')"), 'migration package must expose HelpSys.exe for old updater');
+assert(!release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Stable release must not expose the legacy unified migration asset because it can cross update channels');
 
 assert(project.includes('HelpSysUpdateChannel') && project.includes('preview-latest'), 'Stable binary must embed the preview-latest update channel');
 assert(updater.includes('Channel: preview-latest'), 'Stable updater must verify package channel metadata');
