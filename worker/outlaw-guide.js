@@ -1,6 +1,7 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
-const VERSION = 'outlaw-2026.09.23-r3.3';
+const GEMINI_MODEL = 'gemini-3.8-flash';
+const VERSION = 'outlaw-2026.09.24-r3.4';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 4000;
 const MAX_HISTORY = 64;
@@ -90,7 +91,10 @@ export default {
         version: VERSION,
         visionModel: VISION_MODEL,
         reasoningModel: REASONING_MODEL,
+        geminiModel: GEMINI_MODEL,
         aiConfigured: Boolean(env?.AI),
+        geminiConfigured: Boolean(env?.GEMINI_API_KEY),
+        providers: ['auto','gemini','glm'],
         maxUiElements: MAX_UI_ELEMENTS,
         maxHistory: MAX_HISTORY,
         reasoningEffort: 'high',
@@ -112,6 +116,7 @@ export default {
 
     const goal = text(body?.request, 4000);
     const image = typeof body?.image === 'string' ? body.image : '';
+    const aiProvider = normalizeAiProvider(body?.aiProvider);
     if (!goal || (image && (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_BODY_BYTES)))
       return json({ error: 'invalid_request' }, 400);
 
@@ -130,6 +135,22 @@ export default {
     };
 
     try {
+      if (aiProvider !== 'glm') {
+        if (!env?.GEMINI_API_KEY) {
+          if (aiProvider === 'gemini') return json({ error: 'gemini_not_configured' }, 503);
+        } else {
+          try {
+            const geminiRaw = await runGeminiGuidance(env, visionPrompt, payload, image || null);
+            const geminiChecked = validate(geminiRaw, elements);
+            if (!geminiChecked.ok) return json({ error: geminiChecked.error }, 502);
+            return json(guardUserChoice(geminiChecked.value, goal, elements));
+          } catch (geminiError) {
+            console.error(aiProvider === 'auto' ? 'outlaw_gemini_fallback' : 'outlaw_gemini_failed', geminiError);
+            if (aiProvider === 'gemini') return json({ error: 'gemini_inference_failed' }, 502);
+          }
+        }
+      }
+
       if (!image) {
         const structuredRaw = await runGuidance(env, REASONING_MODEL, visionPrompt, payload, null);
         const structuredChecked = validate(structuredRaw, elements);
@@ -171,6 +192,53 @@ export default {
     }
   }
 };
+
+async function runGeminiGuidance(env, system, payload, image) {
+  const match = image ? /^data:image\/(png|jpeg);base64,(.+)$/i.exec(image) : null;
+  if (image && !match) throw new Error('invalid_gemini_image');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9_000);
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-goog-api-key': env.GEMINI_API_KEY
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{
+            role: 'user',
+            parts: match
+              ? [
+                  { text: JSON.stringify(payload) },
+                  { inlineData: { mimeType: `image/${match[1].toLowerCase()}`, data: match[2] } }
+                ]
+              : [{ text: JSON.stringify(payload) }]
+          }],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 1800,
+            thinkingConfig: { thinkingLevel: 'medium' },
+            responseMimeType: 'application/json',
+            responseSchema: tool.parameters
+          }
+        }),
+        signal: controller.signal
+      }
+    );
+    if (!response.ok) throw new Error(`gemini_http_${response.status}`);
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.find(x => typeof x?.text === 'string')?.text;
+    if (!rawText) throw new Error('gemini_empty_output');
+    return JSON.parse(rawText);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function runGuidance(env, model, system, payload, image) {
   const request = {
@@ -346,6 +414,11 @@ function extractToolArguments(result, toolName) {
   const raw = result?.response ?? result?.choices?.[0]?.message?.content;
   if (typeof raw !== 'string') return null;
   try { return JSON.parse(raw.replace(/^\x60\x60\x60(?:json)?\s*/i,'').replace(/\s*\x60\x60\x60$/,'')); } catch { return null; }
+}
+
+export function normalizeAiProvider(value) {
+  const provider = String(value || 'auto').trim().toLowerCase();
+  return provider === 'gemini' || provider === 'glm' ? provider : 'auto';
 }
 
 function text(value,max){ return typeof value === 'string' ? value.trim().slice(0,max) : ''; }
