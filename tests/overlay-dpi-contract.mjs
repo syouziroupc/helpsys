@@ -4,6 +4,8 @@ const instruction = fs.readFileSync('src/HelpSys.Desktop/InstructionWindow.xaml.
 const overlay = fs.readFileSync('src/HelpSys.Desktop/OverlayWindow.xaml.cs', 'utf8');
 const manifest = fs.readFileSync('src/HelpSys.Desktop/app.manifest', 'utf8');
 const placement = fs.readFileSync('src/HelpSys.Desktop/Services/MonitorPlacementService.cs', 'utf8');
+const project = fs.readFileSync('src/HelpSys.Desktop/HelpSys.Desktop.csproj', 'utf8');
+const release = fs.readFileSync('.github/workflows/outlaw-release.yml', 'utf8');
 
 for (const source of [instruction, overlay]) {
   if (!source.includes('MonitorPlacementService.GetDpiScaleForBounds(physicalBounds)'))
@@ -24,3 +26,8 @@ if (!manifest.includes('PerMonitorV2'))
   throw new Error('application must remain PerMonitorV2 aware');
 
 console.log('HelpSys per-monitor overlay DPI contract passed.');
+
+if (!project.includes('<Version>3.1.1</Version>') || !project.includes('<FileVersion>3.1.1.0</FileVersion>'))
+  throw new Error('Outlaw executable version metadata must identify the 3.1.1 build line');
+if (!release.includes("$version = '3.1.1'") || !release.includes('Version: 3.1.1'))
+  throw new Error('Outlaw release ZIP and VERSION.txt must stay synchronized with executable version metadata');
