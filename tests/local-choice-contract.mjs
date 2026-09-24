@@ -85,9 +85,16 @@ const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
 if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
   throw new Error('Pilot Outlaw provider selector must visibly default to GLM');
 
-if (!local.includes('TryPresentOutlawIdentityChoiceButtons'))
-  throw new Error('Outlaw must locally intercept visible identity/profile choices before cloud planning');
+if (!local.includes('TryAutoSelectOutlawIdentityChoice'))
+  throw new Error('Outlaw must locally auto-resolve visible low-risk identity/profile choices before cloud planning');
 if (!local.includes('profileCardButton') || !local.includes('outlaw_identity_choice'))
   throw new Error('Outlaw identity-choice fast path must specifically recognize profile-card choices and log them');
-if (!quality.includes('TryPresentOutlawIdentityChoiceButtons(candidates, systemContext, generation)'))
-  throw new Error('Outlaw must run identity-choice exception handling before screenshot/cloud planning');
+if (!quality.includes('TryAutoSelectOutlawIdentityChoice(candidates, systemContext, generation)'))
+  throw new Error('Outlaw must run identity auto-selection before screenshot/cloud planning');
+
+if (!local.includes('TryAutoSelectOutlawVisibleChoice'))
+  throw new Error('Outlaw low-risk visible choices must be auto-selected instead of asked back to the user');
+if (!local.includes('outlaw_visible_choice_auto_selected'))
+  throw new Error('Outlaw low-risk visible auto-selection must be logged');
+if (!quality.includes('TryPresentOutlawVisibleChoiceButtons(candidates, systemContext, generation)'))
+  throw new Error('Outlaw must retain explicit choice UI as a fallback for high-impact branches');
