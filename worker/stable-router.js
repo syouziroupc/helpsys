@@ -3,7 +3,7 @@ import education from './education-gemini.js';
 import outlaw from './outlaw-guide.js';
 import transcribe from './transcribe.js';
 
-const SITE_REVISION = 'a3.0001-outlaw-3.2.0';
+const SITE_REVISION = 'a3.0001-outlaw-3.2.0-05078b0e';
 
 export default {
   async fetch(request, env, ctx) {
@@ -17,6 +17,17 @@ export default {
 
     if (url.pathname === '/v1/outlaw-plan' || url.pathname === '/health/outlaw')
       return outlaw.fetch(request, env, ctx);
+
+    if (request.method === 'GET' && url.pathname === '/health/site') {
+      return new Response(JSON.stringify({
+        ok: true,
+        service: 'helpsys-site',
+        revision: SITE_REVISION
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+      });
+    }
 
     if (url.pathname === '/v1/transcribe')
       return transcribe.fetch(request, env, ctx);
