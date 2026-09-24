@@ -35,7 +35,7 @@ public sealed class UpdateService : IDisposable
     private const int MaximumRedirects = 5;
 
     private static readonly Regex VersionedAssetRegex = new(
-        @"^HelpSys-Outlaw-(?:\d+\.\d+\.\d+-)?(?<build>[0-9a-f]{8})-win-x64\.zip$",
+        @"^HelpSys-Outlaw-(?<version>\d+\.\d+\.\d+)-(?<build>[0-9a-f]{8})-win-x64\.zip$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly HashSet<string> AllowedDownloadHosts = new(StringComparer.OrdinalIgnoreCase)
@@ -90,12 +90,15 @@ public sealed class UpdateService : IDisposable
             throw new InvalidOperationException("更新ファイル一覧を確認できませんでした。");
 
         UpdateInfo? latest = null;
+        Version? latestVersion = null;
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
             if (string.IsNullOrWhiteSpace(name)) continue;
             var match = VersionedAssetRegex.Match(name);
             if (!match.Success) continue;
+            if (!Version.TryParse(match.Groups["version"].Value, out var candidateVersion)) continue;
+            if (latestVersion is not null && candidateVersion < latestVersion) continue;
 
             var url = asset.TryGetProperty("browser_download_url", out var urlElement) ? urlElement.GetString() : null;
             var digest = asset.TryGetProperty("digest", out var digestElement) ? digestElement.GetString() : null;
@@ -114,7 +117,7 @@ public sealed class UpdateService : IDisposable
                 downloadUri,
                 sha256,
                 size);
-            break;
+            latestVersion = candidateVersion;
         }
 
         if (latest is null)
