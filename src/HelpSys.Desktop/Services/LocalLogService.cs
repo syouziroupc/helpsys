@@ -13,10 +13,16 @@ public static class LocalLogService
     private static string? _path;
     private static string? _artifactPrefix;
     private static int _artifactSequence;
+    private static string _exitReason = "unknown";
 
     public static string? CurrentPath
     {
         get { lock (Gate) return _path; }
+    }
+
+    public static string ExitReason
+    {
+        get { lock (Gate) return _exitReason; }
     }
 
     public static void Initialize()
@@ -35,6 +41,7 @@ public static class LocalLogService
             _path = Path.Combine(root, stem + ".log");
             _artifactPrefix = Path.Combine(root, stem);
             _artifactSequence = 0;
+            _exitReason = "unknown";
 
             var writer = new StreamWriter(_path, append: true, new UTF8Encoding(false))
             {
@@ -47,6 +54,31 @@ public static class LocalLogService
             _writer.WriteLine($"{DateTimeOffset.Now:O}\tstartup\tlog={_path}");
             _writer.Flush();
         }
+    }
+
+    public static void MarkExitReason(string reason, string? detail = null, bool overwrite = false)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return;
+        lock (Gate)
+        {
+            try
+            {
+                if (overwrite || string.Equals(_exitReason, "unknown", StringComparison.Ordinal))
+                    _exitReason = reason.Trim();
+                _writer?.WriteLine($"{DateTimeOffset.Now:O}\texit_reason\t{_exitReason};detail={(detail ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ')}");
+                _writer?.Flush();
+            }
+            catch { }
+        }
+    }
+
+    public static void MarkExitReasonIfUnset(string reason, string? detail = null)
+        => MarkExitReason(reason, detail, overwrite: false);
+
+    public static void WriteException(string category, Exception exception)
+    {
+        if (exception is null) return;
+        Write(category, $"{exception.GetType().FullName}: {exception.Message} | {exception.StackTrace} | inner={exception.InnerException?.GetType().FullName}: {exception.InnerException?.Message}");
     }
 
     public static void Write(string category, string? message)
@@ -134,7 +166,7 @@ public static class LocalLogService
             {
                 if (_listener is not null)
                 {
-                    _writer?.WriteLine($"{DateTimeOffset.Now:O}\tshutdown");
+                    _writer?.WriteLine($"{DateTimeOffset.Now:O}\tshutdown\treason={_exitReason}");
                     _writer?.Flush();
                     Trace.Listeners.Remove(_listener);
                     _listener.Flush();
