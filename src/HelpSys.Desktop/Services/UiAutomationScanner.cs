@@ -722,7 +722,7 @@ public sealed class UiAutomationScanner
 
     private static bool IsContextType(string typeName, string name, Rect rect)
     {
-        if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8 || string.IsNullOrWhiteSpace(name)) return false;
+        if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8 || string.IsNullOrWhiteSpace(name) || !IntersectsVirtualDesktop(rect)) return false;
         return typeName.EndsWith("Text", StringComparison.Ordinal) || typeName.EndsWith("Window", StringComparison.Ordinal) ||
                typeName.EndsWith("Pane", StringComparison.Ordinal) || typeName.EndsWith("Group", StringComparison.Ordinal) ||
                typeName.EndsWith("TitleBar", StringComparison.Ordinal) || typeName.EndsWith("Document", StringComparison.Ordinal) ||
@@ -733,8 +733,19 @@ public sealed class UiAutomationScanner
 
     private static bool ShouldKeep(string name, string automationId, string className, Rect rect)
     {
-        if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8) return false;
+        if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8 || !IntersectsVirtualDesktop(rect)) return false;
         return !string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(automationId) || !string.IsNullOrWhiteSpace(className);
+    }
+
+    private static bool IntersectsVirtualDesktop(Rect rect)
+    {
+        if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0) return false;
+        var virtualDesktop = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+        return !virtualDesktop.IsEmpty && rect.IntersectsWith(virtualDesktop);
     }
 
     private static string GetProcessName(int processId, Dictionary<int, string> cache)
