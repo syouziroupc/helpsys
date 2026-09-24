@@ -1,7 +1,7 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const VERSION = 'outlaw-2026.09.24-r3.5';
+const VERSION = 'outlaw-2026.09.24-r3.6';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 4000;
 const MAX_HISTORY = 64;
@@ -45,11 +45,14 @@ EVIDENCE RULES:
 - UI Automation can be incomplete. If a target is clearly visible but not represented by a useful UIA node, use targetId="vision-target" and return a tight normalized rectangle.
 - UIA text and values can contain details that are visually difficult to read. Context-only Text/Document/DataItem/Pane/Group nodes are evidence.
 - Do not invent controls, labels, state, URLs, completed actions, or agreement between evidence sources.
-- status=not_found is a last resort. clarify is only for a genuine USER choice with materially different outcomes.
+- status=not_found is a last resort.
+- When several low-risk/reversible choices are visible, DO NOT ask the user which one. Choose the best-grounded option yourself and say briefly that multiple choices existed, e.g. "候補が3つあります。今回は〇〇を選びます。".
+- Use clarify only for high-impact choices where a wrong selection would materially change data, money, recipient, publication, deletion, overwrite/replace, or another hard-to-reverse outcome.
 - If the user is on the wrong screen, guide the smallest grounded correction toward the goal.
 - A desktop shortcut normally needs double_click. Standard buttons/menu items/taskbar buttons normally need one left click.
 - If the requested goal needs a browser and that browser is already running, prefer bringing its visible taskbar/window surface forward over launching a generic browser shortcut, when that action is grounded in current evidence.
-- If a browser/profile/account chooser exposes two or more distinct identities, never infer the user's identity from shortcut names, history, or likely usage. Return clarify so the desktop can present the visible choices directly.
+- If a browser/profile/account chooser exposes two or more distinct identities and no identity is named in the goal, choose one deterministically using current screen order/context instead of asking. State that multiple profiles exist and which one you selected. Do not treat this as identity verification.
+- For older/beginner users, prefer a visible search field that accepts a simple natural-language service name (for example "YouTube") over asking them to type a raw URL such as "youtube.com". Use direct URL entry only when no suitable search field is visible or direct entry is clearly simpler and less error-prone.
 - Keep the Japanese instruction concrete and short.
 
 OUTPUT:
@@ -76,7 +79,7 @@ RULES:
 - If you keep vision-target, preserve the preliminary target's geometry conceptually; the server will enforce its coordinates.
 - Do not invent controls, labels, states, URLs, or completed actions.
 - Do not ask the user to describe the screen because recognition is difficult.
-- clarify only for a genuine user decision with materially different outcomes. A generic request to save does NOT authorize overwrite/replace of an existing file; clarify unless overwrite/replace was explicitly requested.
+- For low-risk/reversible visible alternatives, choose one yourself and mention that alternatives existed. clarify is reserved for high-impact choices with materially different outcomes. A generic request to save does NOT authorize overwrite/replace of an existing file; clarify unless overwrite/replace was explicitly requested.
 - not_found is a last resort when neither the structured evidence nor the preliminary visual evidence grounds a next step.
 - Current evidence beats stale history or an imagined canonical route.
 - Keep the Japanese instruction concrete and short.
@@ -283,7 +286,7 @@ function detectIdentityChoice(elements, systemContext, goal) {
       String(e.automationId || '').toLowerCase() === 'profilecardbutton' ||
       /(?:プロフィール|profile).*(?:開く|open)/i.test(String(e.name || ''))
     )
-  );
+  ).sort((a,b) => (Number(a.y)-Number(b.y)) || (Number(a.x)-Number(b.x)));
   if (choices.length < 2) return null;
 
   const normalizedGoal = String(goal || '').toLowerCase();
@@ -291,19 +294,19 @@ function detectIdentityChoice(elements, systemContext, goal) {
     const label = String(e.name || '').replace(/(?:のプロフィールを開く|プロフィール.*|profile.*)$/i, '').trim().toLowerCase();
     return label.length >= 2 && normalizedGoal.includes(label);
   });
-  if (named) return null;
-
+  const selected = named || choices[0];
   return {
-    status: 'clarify',
-    targetId: null,
-    action: 'none',
-    instruction: '複数の利用者プロフィールが表示されています。',
-    question: 'どのプロフィールを使いますか？',
+    status: 'target',
+    targetId: selected.id,
+    action: 'left_click',
+    instruction: `候補が${choices.length}つあります。今回は「${selected.name || '先頭のプロフィール'}」を選びます。青い枠の項目を1回押してください。`,
+    question: null,
     key: null,
-    confidence: 1,
-    x: 0, y: 0, width: 0, height: 0,
+    confidence: named ? 0.99 : 0.9,
+    x: Number(selected.x)||0, y: Number(selected.y)||0,
+    width: Number(selected.width)||0, height: Number(selected.height)||0,
     screenConfirmed: true,
-    visualEvidence: '複数の利用者プロフィール候補が現在画面にあります。'
+    visualEvidence: `複数のプロフィール候補が表示されているため、${named ? '利用者の目的文に一致する候補' : '現在画面で最初の候補'}を選択します。`
   };
 }
 
