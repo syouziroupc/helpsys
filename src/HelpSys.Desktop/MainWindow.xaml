@@ -42,9 +42,9 @@
                   FontSize="10.5" VerticalContentAlignment="Center"
                   SelectionChanged="AiProviderBox_SelectionChanged"
                   ToolTip="無法者版の判断モデルを切り替えます">
-          <ComboBoxItem Content="AI: Auto" Tag="auto" IsSelected="True" />
+          <ComboBoxItem Content="AI: Auto" Tag="auto" />
           <ComboBoxItem Content="AI: Gemini" Tag="gemini" />
-          <ComboBoxItem Content="AI: GLM" Tag="glm" />
+          <ComboBoxItem Content="AI: GLM" Tag="glm" IsSelected="True" />
         </ComboBox>
         <Button Grid.Column="3" x:Name="UpdateButton" Content="更新確認"
                 MinWidth="68" Height="22" Padding="7,0" Margin="4,0,2,0"
