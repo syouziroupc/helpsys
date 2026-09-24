@@ -31,5 +31,9 @@ need('independentVisionReview: true',
   'health endpoint must expose independent visual review');
 need('geometryConsensus: true',
   'health endpoint must expose geometry consensus');
+need('visualConsensusField: true',
+  'health endpoint must expose dual-pass visual consensus attestation');
+need('visualConsensus: true',
+  'reconciled visual targets must be explicitly attested by the server');
 
 console.log('HelpSys Outlaw worker grounding contract passed.');
