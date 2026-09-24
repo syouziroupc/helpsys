@@ -17,7 +17,7 @@ const router = fs.readFileSync('worker/stable-router.js', 'utf8');
 const wrangler = fs.readFileSync('wrangler.jsonc', 'utf8');
 const release = fs.readFileSync('.github/workflows/release.yml', 'utf8');
 
-assert(project.includes('<Version>3.0.2</Version>'), 'Stable version must be explicit');
+assert(project.includes('<HelpSysDisplayVersion>A3.0001</HelpSysDisplayVersion>'), 'Stable A3 display version must be explicit');
 assert(project.includes('HelpSysBuildId'), 'Stable build id must be embedded for same-version updates');
 assert(!project.includes('ProjectReference'), 'Stable project must not reference legacy HelpSys projects');
 assert(project.includes('System.Speech') && project.includes('10.0.12'), 'voice features must use the pinned Microsoft System.Speech package');
@@ -48,8 +48,8 @@ assert(updater.includes('IsTrustedReleaseUri'), 'updater must reject untrusted r
 
 for (const source of [worker, education, router]) assert(!source.toLowerCase().includes('glm'), 'Gemini services must not contain GLM');
 assert(worker.includes("const MODEL = 'gemini-3.8-flash'"), 'planner must pin Gemini 3.8 Flash');
-assert(worker.includes("const VERSION = '3.0.2'"), 'Worker health version must match Stable 3.0.2');
-assert(wrangler.includes('"HELPSYS_VERSION": "3.0.2"'), 'Wrangler Stable version must match 3.0.2');
+assert(worker.includes("const VERSION = 'A3.0001'"), 'Worker health version must match Stable A3.0001');
+assert(wrangler.includes('"HELPSYS_VERSION": "A3.0001"'), 'Wrangler Stable version must match A3.0001');
 assert(education.includes("const MODEL = 'gemini-3.8-flash'"), 'Education must pin Gemini 3.8 Flash');
 assert(worker.includes("thinkingLevel: 'medium'"), 'planner must use medium thinking');
 assert(education.includes("thinkingLevel: 'low'"), 'Education must use low thinking');
@@ -66,4 +66,5 @@ assert(!release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Stable relea
 
 assert(project.includes('HelpSysUpdateChannel') && project.includes('preview-latest'), 'Stable binary must embed the preview-latest update channel');
 assert(updater.includes('Channel: preview-latest'), 'Stable updater must verify package channel metadata');
-console.log('HelpSys Stable 3.0.2 architecture contract passed.');
+assert(updater.includes('HelpSys-Stable-A3\\.(?<release>\\d{4})'), 'Stable updater must accept only A3.XXXX versioned assets');
+console.log('HelpSys A3.0001 architecture contract passed.');
