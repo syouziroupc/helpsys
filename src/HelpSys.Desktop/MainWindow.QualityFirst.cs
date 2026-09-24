@@ -94,6 +94,13 @@ public partial class MainWindow
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
+            if (OutlawModePolicy.Enabled &&
+                TryPresentOutlawIdentityChoiceButtons(candidates, systemContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", "reason=identity_choice");
+                return;
+            }
+
             var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
             var visualCaptureStartedUtc = DateTime.UtcNow;
