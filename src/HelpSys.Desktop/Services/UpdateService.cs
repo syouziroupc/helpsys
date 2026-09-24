@@ -35,7 +35,7 @@ public sealed class UpdateService : IDisposable
     private const int MaximumRedirects = 5;
 
     private static readonly Regex VersionedAssetRegex = new(
-        @"^HelpSys-Outlaw-(?<build>[0-9a-f]{8})-win-x64\.zip$",
+        @"^HelpSys-Outlaw-(?:\d+\.\d+\.\d+-)?(?<build>[0-9a-f]{8})-win-x64\.zip$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly HashSet<string> AllowedDownloadHosts = new(StringComparer.OrdinalIgnoreCase)
