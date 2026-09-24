@@ -136,7 +136,7 @@ public partial class MainWindow
                 {
                     frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
                     visualCaptureCompletedUtc = DateTime.UtcNow;
-                    LogOutlawPhase("screenshot", $"width={frame.Width};height={frame.Height}");
+                    LogOutlawPhase("screenshot", $"width={frame.ImageWidth};height={frame.ImageHeight}");
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
