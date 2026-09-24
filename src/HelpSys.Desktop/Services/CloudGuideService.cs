@@ -212,7 +212,7 @@ public sealed class CloudGuideService : IDisposable
                 () => _adapter.PostJsonAsync(
                     "/v1/outlaw-plan",
                     body,
-                    TimeSpan.FromSeconds(30),
+                    TimeSpan.FromSeconds(60),
                     cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -221,13 +221,15 @@ public sealed class CloudGuideService : IDisposable
         }
         catch (OperationCanceledException ex)
         {
+            LocalLogService.Write("outlaw_api_timeout", $"provider={body.aiProvider};timeoutSeconds=60");
             throw new GuideServiceException(
                 GuideFailureKind.ServiceUnavailable,
-                "無法者版AIの判断が30秒以内に完了しませんでした。",
+                "無法者版AIの判断が60秒以内に完了しませんでした。",
                 ex);
         }
         catch (HttpRequestException ex)
         {
+            LocalLogService.Write("outlaw_api_network_error", $"provider={body.aiProvider};type={ex.GetType().Name};message={Short(ex.Message)}");
             throw new GuideServiceException(
                 GuideFailureKind.Network,
                 "無法者版AI APIへの通信に失敗しました。",
@@ -236,6 +238,9 @@ public sealed class CloudGuideService : IDisposable
 
         if (!response.IsSuccessStatusCode)
         {
+            LocalLogService.Write(
+                "outlaw_api_error",
+                $"provider={body.aiProvider};status={response.StatusCode};body={Short(response.Body)}");
             var kind = IsTransientStatus(response.StatusCode)
                 ? GuideFailureKind.ServiceUnavailable
                 : GuideFailureKind.Rejected;
