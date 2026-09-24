@@ -249,14 +249,15 @@ async function runGeminiGuidance(env, system, payload, image) {
 }
 
 async function runGuidance(env, model, system, payload, image) {
+  const fullReasoning = model === REASONING_MODEL;
   const request = {
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: JSON.stringify(payload) }
     ],
     temperature: 0,
-    reasoning_effort: 'high',
-    max_completion_tokens: MAX_COMPLETION_TOKENS,
+    reasoning_effort: fullReasoning ? 'high' : 'low',
+    max_completion_tokens: fullReasoning ? MAX_COMPLETION_TOKENS : 1400,
     tools: [tool],
     tool_choice: 'required',
     parallel_tool_calls: false
