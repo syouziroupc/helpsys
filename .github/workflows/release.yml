@@ -52,8 +52,8 @@ jobs:
           $out = Join-Path $PWD 'publish\stable-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
           $projectXml = Get-Content 'src\HelpSys.Stable\HelpSys.Stable.csproj' -Raw
-          $versionMatch = [regex]::Match($projectXml, '<Version>([^<]+)</Version>')
-          if (-not $versionMatch.Success) { throw 'Stable project version is missing.' }
+          $versionMatch = [regex]::Match($projectXml, '<HelpSysDisplayVersion>([^<]+)</HelpSysDisplayVersion>')
+          if (-not $versionMatch.Success) { throw 'Stable A3 display version is missing.' }
           $version = $versionMatch.Groups[1].Value
           $versionedName = "HelpSys-Stable-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-latest-win-x64.zip'
@@ -73,7 +73,7 @@ jobs:
           if (-not (Test-Path $exe)) { throw 'HelpSys.Stable.exe was not produced.' }
 
           @"
-          HelpSys Stable
+          HelpSys Standard
           Version: $version
           Build: $shortSha
           Channel: preview-latest
@@ -113,7 +113,7 @@ jobs:
           $allowed = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET, $env:HELPSYS_SHA_ASSET)
 
           $notes = @"
-          HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition
+          HelpSys $($env:HELPSYS_VERSION) — Standard
 
           - Windows 10 / 11 x64, self-contained
           - Gemini 3.8 Flash only; no GLM fallback
@@ -141,9 +141,9 @@ jobs:
             }
             gh release upload $tag $versioned $stable $sha --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload Stable assets.' }
-            gh release edit $tag --target main --title "HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release edit $tag --target main --title "HelpSys $($env:HELPSYS_VERSION) — Standard" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $versioned $stable $sha --target main --title "HelpSys Stable $($env:HELPSYS_VERSION) — Gemini Edition" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $versioned $stable $sha --target main --title "HelpSys $($env:HELPSYS_VERSION) — Standard" --notes $notes --latest --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create Stable release.' }
           }
 
