@@ -420,3 +420,26 @@ assert(payload().completedSteps.some(x => x.action === 'outlaw_repeat_blocked'),
   'Outlaw planner must retain older repeat-block evidence beyond the recent tail');
 assert(payload().completedSteps.some(x => x.instruction === 'history-39'),
   'Outlaw planner must still retain the most recent operational context');
+
+nextDecision = {
+  status: 'target', targetId: 'search-box', action: 'type_text',
+  instruction: '入力欄に文字を入力してください。', question: null, key: null,
+  confidence: 0.7, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlaw({
+  request: '検索を続けて',
+  systemContext: {
+    foregroundProcess: 'browser', foregroundProcessId: 55, runningApps: [],
+    browser: { processName: 'browser', url: 'https://example.test/settings/search?q=helpsys', domain: 'example.test', https: true }
+  },
+  elements: [{
+    id: 'search-box', name: '検索', controlType: 'Edit', processName: 'browser',
+    interactable: true, enabled: true, focused: true, keyboardFocusable: true,
+    value: '現在の検索語'
+  }]
+});
+assert(payload().systemContext?.browser?.url === 'https://example.test/settings/search?q=helpsys',
+  'Outlaw planner must retain the full current browser URL for same-domain page-state grounding');
+assert(payload().uiElements.find(x => x.id === 'search-box')?.value === '現在の検索語',
+  'Outlaw planner must retain ordinary non-password input values needed to understand the current UI state');

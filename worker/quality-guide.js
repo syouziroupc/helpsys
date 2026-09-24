@@ -121,12 +121,13 @@ export default {
     if (!goal || goal.length > 1600) return json({ error: 'invalid_request' }, 400);
     if (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_IMAGE_CHARS) return json({ error: 'invalid_image' }, 400);
 
-    const systemContext = compactSystemContext(body?.systemContext);
+    const outlawMode = body?.outlawMode === true;
+    const systemContext = compactSystemContext(body?.systemContext, outlawMode);
     const capture = compactCapture(body?.capture);
     const elements = Array.isArray(body?.elements)
       ? rankElementsForGoal(goal, body.elements, systemContext, capture)
           .slice(0, MAX_UI_ELEMENTS)
-          .map(compactElement)
+          .map(value => compactElement(value, outlawMode))
           .filter(Boolean)
       : [];
     const history = Array.isArray(body?.history)
@@ -134,7 +135,6 @@ export default {
       : [];
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
     const recoveryMode = body?.recoveryMode === true;
-    const outlawMode = body?.outlawMode === true;
     const routeIssue = text(body?.routeIssue, 180);
     const aiProvider = normalizeAiProvider(body?.aiProvider);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
@@ -555,7 +555,7 @@ function normalizeRankText(value) {
     .replace(/[\s\p{P}\p{S}]+/gu, '');
 }
 
-function compactElement(value) {
+function compactElement(value, outlawMode = false) {
   if (!value || typeof value !== 'object') return null;
   const id = text(value.id, 40);
   if (!id) return null;
@@ -566,6 +566,7 @@ function compactElement(value) {
     interactable: value.interactable !== false, enabled: value.enabled !== false,
     keyboardFocusable: value.keyboardFocusable === true, focused: value.focused === true, password: value.password === true,
     inputPresent: value.password === true ? false : value.inputPresent === true,
+    value: outlawMode && value.password !== true ? nullableText(value.value ?? value.Value, 420) : null,
     toggleState: nullableText(value.toggleState, 60),
     selected: typeof value.selected === 'boolean' ? value.selected : null,
     expandCollapseState: nullableText(value.expandCollapseState, 60),
@@ -634,11 +635,12 @@ function compactHistory(value) {
   };
 }
 
-function compactSystemContext(value) {
+function compactSystemContext(value, outlawMode = false) {
   if (!value || typeof value !== 'object') return { foregroundProcess: '', foregroundTitle: '', foregroundProcessId: 0, taskbarVisible: false, runningApps: [], browser: null };
   const b = value.browser ?? value.Browser;
   const browser = b && typeof b === 'object' ? {
     processName: text(b.processName ?? b.ProcessName, 80),
+    url: outlawMode ? nullableText(b.url ?? b.Url, 4000) : null,
     domain: nullableText(b.domain ?? b.Domain, 220),
     https: typeof (b.https ?? b.Https) === 'boolean' ? (b.https ?? b.Https) : null,
     addressFieldFocused: (b.addressFieldFocused ?? b.AddressFieldFocused) === true
