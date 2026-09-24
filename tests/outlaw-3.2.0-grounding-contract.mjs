@@ -42,9 +42,9 @@ need(reliability, 'substantialContentChange && (semanticEvidence || targetDisapp
 
 need(cloud, 'frame.ImageWidth', 'outlaw planner must send screenshot image width');
 need(cloud, 'frame.ImageHeight', 'outlaw planner must send screenshot image height');
-need(project, '<Version>3.2.1</Version>', 'Outlaw 3.2.1 must retain the 3.2.0 grounding contract');
-need(project, '<FileVersion>3.2.1.0</FileVersion>', 'Outlaw 3.2.1 file version must be synchronized');
-need(release, "$version = '3.2.1'", 'release workflow must publish 3.2.1 while retaining the 3.2.0 asset');
-need(release, 'Version: 3.2.1', 'VERSION.txt must identify 3.2.1');
+need(project, '<Version>3.2.2</Version>', 'Outlaw 3.2.2 must retain the 3.2.0 grounding contract');
+need(project, '<FileVersion>3.2.2.0</FileVersion>', 'Outlaw 3.2.2 file version must be synchronized');
+need(release, "$version = '3.2.2'", 'release workflow must publish 3.2.2 while retaining the 3.2.0 asset');
+need(release, 'Version: 3.2.2', 'VERSION.txt must identify 3.2.2');
 
-console.log('HelpSys Outlaw 3.2.1 retains the 3.2.0 visual grounding and transition contract.');
+console.log('HelpSys Outlaw 3.2.2 retains the 3.2.0 visual grounding and transition contract.');
