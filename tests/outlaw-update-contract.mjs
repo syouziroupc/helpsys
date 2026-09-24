@@ -17,3 +17,9 @@ if (!update.includes('releases/tags/outlaw-latest'))
   throw new Error('Outlaw updater must remain pinned to the outlaw-latest release channel');
 
 console.log('HelpSys Outlaw updater contract passed.');
+
+const project = fs.readFileSync('src/HelpSys.Desktop/HelpSys.Desktop.csproj', 'utf8');
+if (!project.includes('HelpSysUpdateChannel') || !project.includes('outlaw-latest'))
+  throw new Error('Outlaw binary must embed the outlaw-latest update channel');
+if (!update.includes('GetCurrentUpdateChannel()') || !update.includes('Channel: outlaw-latest'))
+  throw new Error('Outlaw updater must verify both executable and package channel metadata');
