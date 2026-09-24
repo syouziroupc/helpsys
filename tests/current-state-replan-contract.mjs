@@ -14,17 +14,17 @@ if (!helper.includes('_liveReplanPending = true') || !helper.includes('TryRunPen
 if (helper.includes('await AdvanceGuideAsync()'))
   throw new Error('current-state helper must not recursively invoke the planner');
 
-if (!policy.includes('if (TryQueueCurrentStateReplan(reason, generation)) return;'))
-  throw new Error('technical uncertainty must receive one bounded refresh first');
-if (!policy.includes('"automatic_replan_exhausted"') || !policy.includes('LocalLogService.Write("replan_stop", reason)'))
-  throw new Error('exhausted same-state refresh must stop explicitly instead of looping');
+if (!policy.includes('if (!OutlawModePolicy.Enabled && TryQueueCurrentStateReplan(reason, generation)) return;'))
+  throw new Error('Outlaw technical uncertainty must not re-run the planner on the same observation');
+if (!policy.includes('"one_shot_planning_failed"') || !policy.includes('"outlaw_one_shot_failed"'))
+  throw new Error('Outlaw one-shot planning failure must be logged explicitly without same-screen retry');
 if (policy.includes('QueueResilientRecovery(reason, generation)'))
   throw new Error('technical uncertainty must not enter a second same-state recovery loop after the one refresh');
 if (policy.includes('WaitForClarification('))
   throw new Error('technical observer uncertainty must not become a user clarification question');
 
-if (!quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(35))'))
-  throw new Error('one interactive planning attempt must have a bounded 35 second hard deadline');
+if (!quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(42))'))
+  throw new Error('one interactive planning attempt must have a bounded 42 second hard deadline');
 if (quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(180))'))
   throw new Error('legacy 180 second interactive planning window must stay removed');
 
@@ -42,8 +42,15 @@ const visionFallbackStart = main.indexOf('private async Task<bool> TryVisionFall
 const structuredBlock = main.slice(structuredStart, keyboardStart);
 const keyboardBlock = main.slice(keyboardStart, visionFallbackStart);
 for (const block of [structuredBlock, keyboardBlock]) {
-  if (!block.includes('if (!OutlawModePolicy.Enabled)'))
-    throw new Error('Outlaw presentation must not reset same-state loop budgets merely because a target was shown');
+  if (!block.includes('ResetCurrentStateReplanBudget()') || !block.includes('ResetResilienceRecovery()'))
+    throw new Error('a successfully presented target must clear stale failure state for every edition');
 }
 
 console.log('HelpSys single-refresh current-state contract passed.');
+
+if (!quality.includes('_observationBroker.CaptureAsync(4000, cancellationToken)'))
+  throw new Error('Outlaw one-shot observation must provide up to 4000 current UIA candidates');
+if (!quality.includes('outlaw_visual_capture_changed_ignored') || !quality.includes('outlaw_post_capture_change_ignored'))
+  throw new Error('Outlaw must not discard a first-pass decision for soft same-window WinEvent churn');
+if (!quality.includes('outlaw_target_revalidation_fallback'))
+  throw new Error('Outlaw must retain immutable first-observation target bounds when same-window revalidation is transiently unavailable');
