@@ -1,3 +1,4 @@
+const deepAudit = fs.readFileSync('src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs', 'utf8');
 import fs from 'node:fs';
 
 const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs', 'utf8');
@@ -28,3 +29,8 @@ if (!inconclusiveMatch || inconclusiveMatch[0].includes('RecordOutlawGuidanceOut
   throw new Error('inconclusive verification must not poison Outlaw success/failure memory');
 
 console.log('HelpSys tri-state action verification contract passed.');
+
+if (!deepAudit.includes('outlaw_type_submit_focus_guard_skipped'))
+  throw new Error('Outlaw type_text submit must not reject expected focus loss during navigation');
+if (!deepAudit.includes('if (OutlawModePolicy.Enabled)'))
+  throw new Error('Outlaw must bypass the post-Enter focus revalidation guard and defer to transition verification');
