@@ -16,4 +16,5 @@ public sealed record QualityGuideDecision(
     string VisualEvidence,
     string? CoordinateSpace = null,
     int CoordinateImageWidth = 0,
-    int CoordinateImageHeight = 0);
+    int CoordinateImageHeight = 0,
+    bool VisualConsensus = false);
