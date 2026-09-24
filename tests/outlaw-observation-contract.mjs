@@ -31,6 +31,10 @@ need(quality, 'phase=after_planner;discarding planner result because foreground 
   'Outlaw must discard an LLM result when foreground identity changes while the planner is running');
 if (quality.includes('if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))'))
   throw new Error('Outlaw freshness checks must not be bypassed around screenshot or planner latency');
+if (quality.includes('if (freshTarget is null) freshTarget = target'))
+  throw new Error('failed target revalidation must never fall back to stale pre-plan bounds');
+need(quality, '"outlaw_target_revalidation_failed"',
+  'Outlaw must log and reject a stale structured target when pre-display revalidation fails');
 need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 18000 : 4500',
   'Outlaw UIA traversal must remain broad but bounded to reduce observation staleness');
 need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 4500 : 1400',

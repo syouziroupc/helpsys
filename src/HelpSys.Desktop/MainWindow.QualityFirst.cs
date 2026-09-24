@@ -248,7 +248,15 @@ public partial class MainWindow
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
-            if (freshTarget is null) freshTarget = target;
+            if (freshTarget is null)
+            {
+                LocalLogService.Write(
+                    OutlawModePolicy.Enabled ? "outlaw_target_revalidation_failed" : "target_revalidation_failed",
+                    $"target={target.Id};action={decision.Action};rejecting stale pre-plan bounds");
+                HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
+                return;
+            }
+
             ShowStructuredTarget(decision, freshTarget, candidates, systemContext, generation);
         }
         catch (OperationCanceledException)
