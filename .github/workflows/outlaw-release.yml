@@ -96,7 +96,7 @@ jobs:
 
           - Privacy/Sentinel blocking and screenshot redaction disabled in this edition
           - Full-monitor screenshots up to 2560x1440
-          - Full-desktop UI Automation observation: up to 4000 candidates / 40000 visited nodes / 24 levels / 15 seconds
+          - Full-desktop UI Automation observation: up to 1200 candidates / 18000 visited nodes / 18 levels / 4.5 seconds, with planner-side goal ranking
           - UIA TextPattern semantic text extraction enabled
           - Visual-only targets are retained even when UIA exposes no matching control
           - Cross-process foreground changes are watched globally; background object-event noise is filtered

@@ -23,20 +23,20 @@ need(broker, '"outlaw_observation_discarded"',
   'Outlaw must log discarded mixed observations for field diagnostics');
 if (broker.includes('if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))'))
   throw new Error('Outlaw must not retain a mixed observation merely because it is operation-first');
-need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
-  'Outlaw quality planner must retain the expanded 4000-element observation budget');
+need(quality, '_observationBroker.CaptureAsync(1200, cancellationToken)',
+  'Outlaw quality planner must use a bounded broad observation budget that avoids stale multi-second snapshots');
 need(quality, 'phase=after_screenshot;discarding planner observation because foreground identity changed',
   'Outlaw must discard an observation when foreground identity changes after screenshot capture');
 need(quality, 'phase=after_planner;discarding planner result because foreground identity changed',
   'Outlaw must discard an LLM result when foreground identity changes while the planner is running');
 if (quality.includes('if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))'))
   throw new Error('Outlaw freshness checks must not be bypassed around screenshot or planner latency');
-need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 40000 : 4500',
-  'Outlaw UIA traversal must retain the 40k node budget');
-need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 15000 : 1400',
-  'Outlaw UIA traversal must retain the 15s observation budget');
-need(scanner, 'depthLimit = OutlawModePolicy.Enabled ? 24 : 10',
-  'Outlaw UIA traversal must retain the 24-level depth budget');
+need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 18000 : 4500',
+  'Outlaw UIA traversal must remain broad but bounded to reduce observation staleness');
+need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 4500 : 1400',
+  'Outlaw UIA traversal must cap one observation scan near interactive latency instead of 15 seconds');
+need(scanner, 'depthLimit = OutlawModePolicy.Enabled ? 18 : 10',
+  'Outlaw UIA traversal must retain deeper coverage without unbounded 24-level traversal');
 need(scanner, 'ReadOutlawVisibleText',
   'Outlaw must retain TextPattern-backed semantic text extraction');
 need(facade, 'return OutlawModePolicy.Enabled ? candidates : ScopeToForegroundWindow(processId, candidates);',
