@@ -95,9 +95,9 @@ public partial class MainWindow
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
             if (OutlawModePolicy.Enabled &&
-                TryPresentOutlawIdentityChoiceButtons(candidates, systemContext, generation))
+                TryAutoSelectOutlawIdentityChoice(candidates, systemContext, generation))
             {
-                LocalLogService.Write("outlaw_local_fast_path", "reason=identity_choice");
+                LocalLogService.Write("outlaw_local_fast_path", "reason=identity_auto_select");
                 return;
             }
 
