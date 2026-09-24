@@ -63,6 +63,9 @@ jobs:
         continue-on-error: true
         run: node tests/outlaw-update-contract.mjs
 
+      - name: Verify Outlaw 3.2.0 grounding and transition contract
+        run: node tests/outlaw-3.2.0-grounding-contract.mjs
+
       - name: Check deployed Outlaw API generation
         continue-on-error: true
         shell: bash
@@ -78,7 +81,10 @@ jobs:
                 const j=await r.json();
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
-                   j?.version==='outlaw-2026.09.24-r3.6' &&
+                   j?.version==='outlaw-2026.09.24-r3.7' &&
+                   j?.independentVisionReview===true &&
+                   j?.visualCoordinateSpace==='image_px' &&
+                   j?.geometryConsensus===true &&
                    j?.aiConfigured===true &&
                    Array.isArray(j?.providers) &&
                    ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
@@ -88,7 +94,7 @@ jobs:
             }catch{}
             await sleep(4000);
           }
-          if(!health) throw new Error('Production Outlaw API did not reach r3.4 before desktop release.');
+          if(!health) throw new Error('Production Outlaw API did not reach r3.7 grounding contract before desktop release.');
 
           const body={
             request:'設定を開く次の操作を案内して',
@@ -154,7 +160,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.1.9'
+          $version = '3.2.0'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -172,7 +178,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.1.9
+          Version: 3.2.0
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -198,14 +204,18 @@ jobs:
           - Full-monitor screenshots up to 2560x1440
           - Full-desktop UI Automation observation: up to 1200 candidates / 18000 visited nodes / 18 levels / 4.5 seconds, with planner-side goal ranking
           - UIA TextPattern semantic text extraction enabled
-          - Visual-only targets are retained even when UIA exposes no matching control
+          - Visual-only targets use explicit screenshot-pixel coordinates tied to the exact captured image dimensions
+          - Visual coordinates are independently re-grounded by a second screenshot pass; large geometry disagreement is rejected
+          - Accessible hit geometry is cross-checked when available; incompatible visual/UIA positions are rejected
+          - Screenshot coordinates are invalidated and re-observed when the foreground UI changes during or after capture
+          - Progress is accepted only when the observed transition matches expected semantic/action evidence
           - Cross-process foreground changes are watched globally; background object-event noise is filtered
           - Failed actions are blocked from being re-presented on the same observed state
           - Recovery/replan budgets reset only after verified progress
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
           - Dedicated Outlaw cloud planner with bounded client deadlines and Auto / GLM reasoning with Gemini disabled until configured
-          - Version 3.1.9 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Version 3.2.0 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
