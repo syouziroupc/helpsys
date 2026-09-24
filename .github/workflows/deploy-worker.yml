@@ -137,4 +137,15 @@ jobs:
           console.log('outlaw_health',JSON.stringify(health));
           console.log('outlaw_glm_smoke',JSON.stringify(parsed));
           console.log('outlaw_gemini_smoke',JSON.stringify(geminiSmoke));
+
+          const tr=await fetch(base+'/v1/transcribe',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:'{}'
+          });
+          if(tr.status!==415){
+            const tt=await tr.text();
+            throw new Error('Transcribe route is not wired correctly. Expected 415, got '+tr.status+': '+tt.slice(0,300));
+          }
+          console.log('transcribe_route_smoke','HTTP 415 as expected for non-audio payload');
           NODE
