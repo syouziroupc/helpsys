@@ -383,6 +383,13 @@ public partial class MainWindow
 
         if (quick.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(quick.Question))
         {
+            if (OutlawModePolicy.Enabled)
+            {
+                if (TryPresentOutlawVisibleChoiceButtons(candidates, expectedContext, generation)) return true;
+                HandleTechnicalPlanningUncertainty("高速構造判断が選択を要求したが現在画面から直接選択肢を構成できない", generation);
+                return true;
+            }
+
             WaitForClarification(quick.Question, generation);
             return true;
         }
@@ -394,7 +401,8 @@ public partial class MainWindow
             return true;
         }
 
-        if (!quick.Status.Equals("target", StringComparison.OrdinalIgnoreCase) || quick.Confidence < 0.93)
+        if (!quick.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
+            (!OutlawModePolicy.Enabled && quick.Confidence < 0.93))
             return false;
 
         if (quick.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(quick.TargetId))
