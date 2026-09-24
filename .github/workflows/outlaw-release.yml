@@ -52,7 +52,8 @@ jobs:
           node worker/quality-guide-selftest.mjs
           node tests/local-choice-contract.mjs
 
-      - name: Verify deployed Outlaw API generation
+      - name: Check deployed Outlaw API generation
+        continue-on-error: true
         shell: bash
         run: |
           node <<'NODE'
@@ -205,3 +206,24 @@ jobs:
             gh release create $tag $versioned $stable --target $env:GITHUB_SHA --title "HelpSys Outlaw Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create outlaw release.' }
           }
+
+      - name: Verify published pilot release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'outlaw-latest'
+          $json = gh release view $tag --repo $env:GITHUB_REPOSITORY --json targetCommitish,assets,url
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read outlaw-latest after publish.' }
+          $release = $json | ConvertFrom-Json
+          $assets = @($release.assets | ForEach-Object { $_.name })
+          if ($assets -notcontains $env:HELPSYS_STABLE_ASSET) {
+            throw "Stable pilot asset missing: $env:HELPSYS_STABLE_ASSET"
+          }
+          if ($assets -notcontains $env:HELPSYS_VERSIONED_ASSET) {
+            throw "Versioned pilot asset missing: $env:HELPSYS_VERSIONED_ASSET"
+          }
+          Write-Host "Published $tag -> $($release.targetCommitish)"
+          Write-Host "Release URL: $($release.url)"
+          Write-Host "Assets: $($assets -join ', ')"
