@@ -54,6 +54,10 @@ public partial class MainWindow : Window
     {
         _observationBroker = new ObservationBroker(_systemContext, _scanner);
         InitializeComponent();
+        var displayVersion = typeof(MainWindow).Assembly.GetName().Version;
+        VersionLabel.Text = displayVersion is null
+            ? "Outlaw ・ PC操作を画面上で案内"
+            : $"Outlaw {displayVersion.Major}.{displayVersion.Minor}.{displayVersion.Build} ・ PC操作を画面上で案内";
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
         Closing += OnClosing;
