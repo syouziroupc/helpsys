@@ -28,7 +28,7 @@ const STABLE_ALIAS = 'HelpSys-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
 const DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${STABLE_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
-const OUTLAW_DEST = 'https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-latest-win-x64.zip';
+const OUTLAW_DEST = 'https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip';
 
 function redirectMap(text) {
   const map = new Map();
@@ -55,6 +55,7 @@ assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site must expose Edu
 assert(index.includes('通常版 A3 と無法者版を分離'), 'Public site must explain the separated Standard A3 and Outlaw lines.');
 assert(index.includes('/download は常に最新版'), 'Public site must disclose the stable latest-download behavior.');
 assert(index.includes('A3.0001'), 'Public site must identify the current Standard A3 version.');
+assert(index.includes('Outlaw 3.2.0') || index.includes('v3.2.0'), 'Public site must identify the current Outlaw 3.2.0 version.');
 assert(!index.includes('3.0.1') && !index.includes('3.0.2'), 'Retired Stable 3.x labels must not appear on the public site.');
 assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must use local stable routes, not a direct versioned ZIP URL.');
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing.');
