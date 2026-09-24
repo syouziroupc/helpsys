@@ -23,10 +23,8 @@ need('HandleTechnicalPlanningUncertainty("操作結果の検証が不確定", ge
 need('changedSignal.Task.IsCompleted ? ActionVerificationResult.Inconclusive : ActionVerificationResult.NoEffect',
   'an observed UI event without a provable expected effect must not be mislabeled as no-effect');
 
-const inconclusiveStart = reliability.indexOf('else\n            {\n                LocalLogService.Write(\n                    "action_verification_inconclusive"');
-const postBlock = reliability.indexOf('        }\n        catch (OperationCanceledException)', inconclusiveStart);
-const inconclusiveBlock = reliability.slice(inconclusiveStart, postBlock);
-if (inconclusiveStart < 0 || inconclusiveBlock.includes('RecordOutlawGuidanceOutcome('))
+const inconclusiveMatch = /else\s*\{\s*LocalLogService\.Write\(\s*"action_verification_inconclusive"[\s\S]*?inconclusive\s*=\s*true;\s*\}/m.exec(reliability);
+if (!inconclusiveMatch || inconclusiveMatch[0].includes('RecordOutlawGuidanceOutcome('))
   throw new Error('inconclusive verification must not poison Outlaw success/failure memory');
 
 console.log('HelpSys tri-state action verification contract passed.');
