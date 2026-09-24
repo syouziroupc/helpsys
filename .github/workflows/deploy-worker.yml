@@ -37,6 +37,7 @@ jobs:
           node --check worker/education-gemini.js
           node --check worker/outlaw-guide.js
           node --check worker/stable-router.js
+          node tests/outlaw-worker-grounding-contract.mjs
 
       - name: Detect explicit Cloudflare deployment credentials
         id: cf
