@@ -36,7 +36,8 @@ internal sealed partial class UpdateService : IDisposable
         if (!document.RootElement.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             throw new PlannerException("更新情報の形式が不正です。");
 
-        System.Version? newest = null;
+        string? newestVersion = null;
+        int newestReleaseNumber = -1;
         string? newestBuildId = null;
         Uri? stableZip = null;
         Uri? shaUrl = null;
@@ -54,27 +55,29 @@ internal sealed partial class UpdateService : IDisposable
             else
             {
                 var match = VersionedAssetRegex().Match(name);
-                if (match.Success && System.Version.TryParse(match.Groups["version"].Value, out var parsed) &&
-                    (newest is null || parsed > newest))
+                if (match.Success &&
+                    int.TryParse(match.Groups["release"].Value, out var parsedRelease) &&
+                    parsedRelease > newestReleaseNumber)
                 {
-                    newest = parsed;
+                    newestVersion = $"A3.{parsedRelease:D4}";
+                    newestReleaseNumber = parsedRelease;
                     newestBuildId = match.Groups["build"].Value.ToLowerInvariant();
                 }
             }
         }
 
-        if (newest is null || newestBuildId is null) return null;
-        if (newest < VersionInfo.SemanticVersion) return null;
+        if (newestVersion is null || newestReleaseNumber < 0 || newestBuildId is null) return null;
+        if (newestReleaseNumber < VersionInfo.ReleaseNumber) return null;
 
         var sameVersionAndBuild =
-            newest == VersionInfo.SemanticVersion &&
+            newestReleaseNumber == VersionInfo.ReleaseNumber &&
             newestBuildId.Equals(VersionInfo.BuildId, StringComparison.OrdinalIgnoreCase);
         if (sameVersionAndBuild) return null;
 
         if (stableZip is null || shaUrl is null)
             throw new PlannerException("最新版はありますが、検証付き更新ファイルが揃っていません。");
 
-        return new UpdateInfo(newest, newestBuildId, stableZip, shaUrl);
+        return new UpdateInfo(newestVersion, newestReleaseNumber, newestBuildId, stableZip, shaUrl);
     }
 
     public async Task InstallAsync(UpdateInfo info, CancellationToken cancellationToken)
