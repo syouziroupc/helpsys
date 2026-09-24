@@ -73,6 +73,9 @@ jobs:
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
                    j?.version==='outlaw-2026.09.24-r3.7' &&
+                   j?.independentVisionReview===true &&
+                   j?.visualCoordinateSpace==='image_px' &&
+                   j?.geometryConsensus===true &&
                    j?.aiConfigured===true &&
                    Array.isArray(j?.providers) &&
                    ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
