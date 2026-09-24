@@ -73,6 +73,13 @@ jobs:
           $exe = Join-Path $out 'HelpSys.Stable.exe'
           if (-not (Test-Path $exe)) { throw 'HelpSys.Stable.exe was not produced.' }
 
+          @"
+          HelpSys Stable
+          Version: $version
+          Build: $shortSha
+          Channel: preview-latest
+          "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
+
           Compress-Archive -Path "$out\*" -DestinationPath (Join-Path $PWD $versionedName) -Force
           Copy-Item (Join-Path $PWD $versionedName) (Join-Path $PWD $stableName) -Force
 
@@ -132,7 +139,8 @@ jobs:
           - SHA-256 verified in-app updater
           - Stable alias: $($env:HELPSYS_STABLE_ASSET)
           - Traceable asset: $($env:HELPSYS_VERSIONED_ASSET)
-          - Existing v8 clients can migrate through: $($env:HELPSYS_LEGACY_ASSET)
+          - Existing legacy clients can migrate through: $($env:HELPSYS_LEGACY_ASSET)
+          - Update channel is pinned to preview-latest; Outlaw packages are rejected
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
