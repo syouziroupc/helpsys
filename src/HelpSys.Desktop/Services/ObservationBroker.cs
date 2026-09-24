@@ -39,19 +39,41 @@ public sealed class ObservationBroker
                     maxCandidates,
                     cancellationToken)).ConfigureAwait(false);
 
+        if (OutlawModePolicy.Enabled)
+            elements = KeepForegroundProcessEvidence(elements, before);
+
         var after = _systemContext.Capture();
         if (!HasSameIdentity(before, after))
         {
-            if (OutlawModePolicy.Enabled)
+            if (OutlawModePolicy.Enabled && HasSameProcess(before, after))
             {
                 LocalLogService.Write(
-                    "outlaw_observation_discarded",
-                    $"reason=foreground_changed_during_scan;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle};candidates={elements.Count}");
-            }
+                    "outlaw_observation_rebound",
+                    $"reason=same_process_hwnd_changed;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle}");
 
-            // Never fuse UI Automation collected under one foreground HWND with system context
-            // captured from another. A planner decision must belong to one coherent observation.
-            throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。観測を破棄して現在状態を取り直します。");
+                // Maximize/restore and some Chromium transitions can recreate the foreground HWND
+                // while staying in the same process. Re-scan once against the new stable surface
+                // instead of treating that expected transition as a fatal observation change.
+                elements = await PerformanceTrace.MeasureAsync(
+                    "observation.rescan",
+                    () => _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)).ConfigureAwait(false);
+                elements = KeepForegroundProcessEvidence(elements, after);
+                var rebound = _systemContext.Capture();
+                if (!HasSameIdentity(after, rebound))
+                    throw new ObservationChangedException("同一アプリ内の画面切替が継続しているため、現在状態を取り直します。");
+                after = rebound;
+            }
+            else
+            {
+                if (OutlawModePolicy.Enabled)
+                {
+                    LocalLogService.Write(
+                        "outlaw_observation_discarded",
+                        $"reason=foreground_changed_during_scan;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle};candidates={elements.Count}");
+                }
+
+                throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。観測を破棄して現在状態を取り直します。");
+            }
         }
 
         after = _systemContext.EnrichWithObservedElements(after, elements);
@@ -66,6 +88,30 @@ public sealed class ObservationBroker
 
     public bool IsCurrent(ObservationSnapshot snapshot)
         => HasSameIdentity(snapshot.System, _systemContext.Capture());
+
+    private static IReadOnlyList<UiElementCandidate> KeepForegroundProcessEvidence(
+        IReadOnlyList<UiElementCandidate> elements,
+        SystemContextSnapshot context)
+    {
+        if (context.ForegroundProcessId <= 0) return elements;
+        var coherent = elements
+            .Where(x => x.ProcessId == context.ForegroundProcessId)
+            .ToArray();
+
+        if (coherent.Length == 0) return elements;
+
+        if (coherent.Length != elements.Count)
+            LocalLogService.Write(
+                "outlaw_background_uia_filtered",
+                $"foreground={context.ForegroundProcess}/{context.ForegroundProcessId};kept={coherent.Length};dropped={elements.Count - coherent.Length}");
+
+        return coherent;
+    }
+
+    private static bool HasSameProcess(SystemContextSnapshot expected, SystemContextSnapshot current)
+        => expected.ForegroundProcessId > 0 &&
+           expected.ForegroundProcessId == current.ForegroundProcessId &&
+           expected.ForegroundProcess.Equals(current.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
 
     public static bool HasSameIdentity(SystemContextSnapshot expected, SystemContextSnapshot current)
     {
