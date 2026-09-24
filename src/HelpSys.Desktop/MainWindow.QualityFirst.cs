@@ -35,6 +35,16 @@ public partial class MainWindow
         planningCts.CancelAfter(TimeSpan.FromSeconds(75));
         var cancellationToken = planningCts.Token;
 
+        var operationStopwatch = Stopwatch.StartNew();
+        void LogOutlawPhase(string phase, string? detail = null)
+        {
+            if (!OutlawModePolicy.Enabled) return;
+            LocalLogService.Write(
+                "outlaw_phase_timing",
+                $"phase={phase};elapsedMs={operationStopwatch.ElapsedMilliseconds}" +
+                (string.IsNullOrWhiteSpace(detail) ? string.Empty : $";{detail}"));
+        }
+
         try
         {
             SetState("今の画面と操作できる場所を確認しています…", speak: false);
@@ -75,6 +85,7 @@ public partial class MainWindow
             _lastObservationFingerprint = snapshot.Fingerprint;
             var systemContext = snapshot.System;
             var candidates = snapshot.Elements;
+            LogOutlawPhase("observation", $"candidates={candidates.Count};sequence={snapshot.Sequence}");
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
 
             if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
@@ -98,6 +109,15 @@ public partial class MainWindow
                 TryAutoSelectOutlawIdentityChoice(candidates, systemContext, generation))
             {
                 LocalLogService.Write("outlaw_local_fast_path", "reason=identity_auto_select");
+                LogOutlawPhase("local_identity");
+                return;
+            }
+
+            if (OutlawModePolicy.Enabled &&
+                TryOutlawBrowserSearchFastPath(candidates, systemContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", "reason=browser_search");
+                LogOutlawPhase("local_browser_search");
                 return;
             }
 
@@ -116,6 +136,7 @@ public partial class MainWindow
                 {
                     frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
                     visualCaptureCompletedUtc = DateTime.UtcNow;
+                    LogOutlawPhase("screenshot", $"width={frame.Width};height={frame.Height}");
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -189,6 +210,7 @@ public partial class MainWindow
                     _history,
                     systemContext,
                     cancellationToken);
+                LogOutlawPhase("planner", $"status={quality.Status};action={quality.Action};confidence={quality.Confidence:F3}");
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -346,6 +368,7 @@ public partial class MainWindow
                 freshTarget = target;
             }
 
+            LogOutlawPhase("present", $"target={freshTarget.Id};action={decision.Action}");
             ShowStructuredTarget(decision, freshTarget, candidates, systemContext, generation);
         }
         catch (OperationCanceledException)
