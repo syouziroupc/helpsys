@@ -568,6 +568,15 @@ public partial class MainWindow
                 return;
             }
 
+            if (!quality.VisualConsensus)
+            {
+                LocalLogService.Write(
+                    "outlaw_visual_consensus_rejected",
+                    $"screenConfirmed={quality.ScreenConfirmed};confidence={quality.Confidence:F3};reason=server_consensus_missing");
+                HandleTechnicalPlanningUncertainty("画像位置の二重確認結果を確認できない", generation);
+                return;
+            }
+
             bounds = frame.MapImagePixelBounds(
                 quality.X,
                 quality.Y,
@@ -587,36 +596,44 @@ public partial class MainWindow
             return;
         }
 
-        Rect? snapped = null;
-        try { snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
+        var surfaceVerified = IsVisualTargetOnCurrentSurface(bounds, candidates, systemContext);
+        UiElementCandidate? snapped = null;
+        try { snapped = await _scanner.SnapToAccessibleCandidateAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { throw; }
         catch { }
 
         if (!_sessionState.IsCurrent(generation)) return;
-        if (snapped is { } accessible && !accessible.IsEmpty)
+        if (snapped is { } accessible && !accessible.Bounds.IsEmpty)
         {
-            if (!IsCompatibleVisualSnap(bounds, accessible))
+            if (!IsCompatibleVisualSnap(bounds, accessible.Bounds) ||
+                !IsCurrentSurfaceCandidate(accessible, systemContext))
             {
                 LocalLogService.Write(
                     "outlaw_visual_snap_rejected",
-                    $"requested={bounds};accessible={accessible};reason=geometry_disagreement");
+                    $"requested={bounds};accessible={accessible.Bounds};pid={accessible.ProcessId};process={accessible.ProcessName};reason=geometry_or_surface_disagreement");
                 if (OutlawModePolicy.Enabled &&
-                    TryQueueCurrentStateReplan("画像座標とWindowsの押下候補が一致しないため再取得する", generation))
+                    TryQueueCurrentStateReplan("画像座標と現在画面の押下候補が一致しないため再取得する", generation))
                     return;
                 HandleTechnicalPlanningUncertainty("画像座標と実際の操作候補が一致しない", generation);
                 return;
             }
-            bounds = accessible;
+            bounds = accessible.Bounds;
+            surfaceVerified = true;
         }
-        else if (OutlawModePolicy.Enabled &&
-                 (!quality.ScreenConfirmed ||
-                  quality.Confidence < 0.72 ||
-                  string.IsNullOrWhiteSpace(quality.VisualEvidence)))
+
+        if (OutlawModePolicy.Enabled &&
+            (!surfaceVerified ||
+             !quality.ScreenConfirmed ||
+             !quality.VisualConsensus ||
+             quality.Confidence < 0.72 ||
+             string.IsNullOrWhiteSpace(quality.VisualEvidence)))
         {
             LocalLogService.Write(
                 "outlaw_visual_target_rejected",
-                $"confidence={quality.Confidence:F3};screenConfirmed={quality.ScreenConfirmed};reason=no_accessible_confirmation");
-            HandleTechnicalPlanningUncertainty("画像だけの操作位置を二重確認できない", generation);
+                $"confidence={quality.Confidence:F3};screenConfirmed={quality.ScreenConfirmed};visualConsensus={quality.VisualConsensus};surfaceVerified={surfaceVerified};reason=visual_validation_incomplete");
+            if (TryQueueCurrentStateReplan("画像上の操作位置を現在画面で十分に検証できないため再取得する", generation))
+                return;
+            HandleTechnicalPlanningUncertainty("画像上の操作位置を二重確認できない", generation);
             return;
         }
 
@@ -631,7 +648,7 @@ public partial class MainWindow
 
         LocalLogService.Write(
             "outlaw_visual_target",
-            $"confidence={quality.Confidence:F2} bounds={bounds} coordinateSpace={quality.CoordinateSpace ?? "legacy"} image={quality.CoordinateImageWidth}x{quality.CoordinateImageHeight} evidence={quality.VisualEvidence}");
+            $"confidence={quality.Confidence:F2} bounds={bounds} coordinateSpace={quality.CoordinateSpace ?? "legacy"} image={quality.CoordinateImageWidth}x{quality.CoordinateImageHeight} visualConsensus={quality.VisualConsensus} evidence={quality.VisualEvidence}");
 
         var visualDecision = new GuideDecision(
             "target",
@@ -663,6 +680,36 @@ public partial class MainWindow
         ShowInstruction(instruction);
     }
 
+
+    private static bool IsVisualTargetOnCurrentSurface(
+        Rect bounds,
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot systemContext)
+    {
+        if (bounds.IsEmpty) return false;
+        var center = new Point(
+            bounds.Left + bounds.Width / 2d,
+            bounds.Top + bounds.Height / 2d);
+
+        return candidates.Any(candidate =>
+            IsCurrentSurfaceCandidate(candidate, systemContext) &&
+            !candidate.Bounds.IsEmpty &&
+            candidate.Bounds.Contains(center) &&
+            candidate.ControlType is "Window" or "Document" or "Pane" or "Group" or "Custom");
+    }
+
+    private static bool IsCurrentSurfaceCandidate(
+        UiElementCandidate candidate,
+        SystemContextSnapshot systemContext)
+    {
+        if (candidate.ProcessId > 0 && systemContext.ForegroundProcessId > 0 &&
+            candidate.ProcessId == systemContext.ForegroundProcessId)
+            return true;
+
+        return !string.IsNullOrWhiteSpace(candidate.ProcessName) &&
+               !string.IsNullOrWhiteSpace(systemContext.ForegroundProcess) &&
+               candidate.ProcessName.Equals(systemContext.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsCompatibleVisualSnap(Rect requested, Rect accessible)
     {
