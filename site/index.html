@@ -57,6 +57,12 @@
           <a class="download-button" href="/download">最新版ZIPをダウンロード</a>
         </article>
         <article class="download-card">
+          <p class="eyebrow">HELPSYS OUTLAW</p>
+          <h3>無法者版</h3>
+          <p>操作成功を最優先にした実験版です。AI判断を <strong>Auto / Gemini / GLM</strong> から切り替え可能。複数候補は聞き返しではなく画面上の候補ボタンから直接選択できます。</p>
+          <a class="download-button ghost" href="/download/outlaw">無法者版 最新ZIP</a>
+        </article>
+        <article class="download-card">
           <p class="eyebrow">HELPSYS EDUCATION</p>
           <h3>Education版</h3>
           <p>PC未経験から、教育 → 練習 → テストを順番に進める学習用アプリです。</p>
@@ -98,6 +104,7 @@
         <div><strong>単一の送信経路</strong><span>画面由来のクラウド要求はPrivacy Gateを通り、HTTP通信はCloud AI Adapterへ集約します。</span></div>
         <div><strong>通信先を固定</strong><span>外部通信はHelpSysの承認済みHTTPS originへ限定し、リダイレクト・Cookie・OSプロキシ継承を無効化します。</span></div>
         <div><strong>生の入力値を送らない</strong><span>入力欄の内容は保持せず、必要な場合も入力有無や検索欄の役割など最小限の状態だけを利用します。</span></div>
+        <div><strong>AI判断を切替可能</strong><span>無法者版では Auto / Gemini / GLM を実行中に切り替えられます。AutoはGeminiを優先し、失敗時のみGLMへ退避します。</span></div>
         <div><strong>音声は明示開始時のみ</strong><span>音声認識は音声ボタン、またはローカルの起動語で利用者が開始した場合だけクラウド文字起こしへ進みます。</span></div>
       </div>
     </section>
@@ -118,6 +125,7 @@
       </div>
       <div class="download-panel-actions">
         <a class="download-button secondary" href="/download">HelpSys 最新版</a>
+        <a class="download-button secondary ghost" href="/download/outlaw">無法者版</a>
         <a class="download-button secondary ghost" href="/download/education">Education版</a>
       </div>
     </section>
