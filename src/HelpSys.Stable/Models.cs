@@ -53,7 +53,8 @@ public sealed record PlanResult(
     double Height);
 
 public sealed record UpdateInfo(
-    System.Version Version,
+    string Version,
+    int ReleaseNumber,
     string BuildId,
     Uri ZipUrl,
     Uri Sha256Url);
