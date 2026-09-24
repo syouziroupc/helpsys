@@ -43,6 +43,17 @@ public partial class MainWindow
 
         var expected = string.IsNullOrWhiteSpace(_currentDecision.Key) ? "Enter" : _currentDecision.Key;
         if (!MatchesKeySpecV3(expected, observation)) return;
+
+        // In Outlaw, the finishing key often starts navigation immediately. By the time an
+        // asynchronous UIA revalidation returns, the address/search field can legitimately lose
+        // focus. Let the normal post-action transition verifier decide success instead of
+        // rejecting that expected navigation as a focus error.
+        if (OutlawModePolicy.Enabled)
+        {
+            LocalLogService.Write("outlaw_type_submit_focus_guard_skipped", $"target={_currentTarget.Id};key={expected}");
+            return;
+        }
+
         if (Interlocked.Exchange(ref _typeTextFocusRecoveryInFlight, 1) != 0) return;
 
         // Do not query AutomationElement from the desktop process. The isolated observer performs
