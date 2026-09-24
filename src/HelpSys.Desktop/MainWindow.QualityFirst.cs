@@ -208,12 +208,12 @@ public partial class MainWindow
             var structuredFusionTarget =
                 quality.Status.Equals("target", StringComparison.OrdinalIgnoreCase) &&
                 !quality.ScreenConfirmed &&
-                quality.Confidence >= MinimumStructuredFallbackConfidence &&
+                (OutlawModePolicy.Enabled || quality.Confidence >= MinimumStructuredFallbackConfidence) &&
                 !string.IsNullOrWhiteSpace(quality.TargetId) &&
                 !string.Equals(quality.TargetId, "vision-target", StringComparison.Ordinal);
 
             if (!quality.Status.Equals("target", StringComparison.OrdinalIgnoreCase) ||
-                quality.Confidence < MinimumQualityTargetConfidence)
+                (!OutlawModePolicy.Enabled && quality.Confidence < MinimumQualityTargetConfidence))
             {
                 HandleTechnicalPlanningUncertainty(
                     string.IsNullOrWhiteSpace(quality.Instruction)

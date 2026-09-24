@@ -63,6 +63,10 @@ need(quality, '"outlaw_visual_capture_changed"',
   'visual evidence must be discarded when the observed UI changes during screenshot capture');
 need(quality, '"outlaw_stale_vision_target"',
   'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
+need(quality, 'OutlawModePolicy.Enabled || quality.Confidence >= MinimumStructuredFallbackConfidence',
+  'Outlaw structured targets must not be rejected solely by the normal confidence threshold');
+need(quality, '(!OutlawModePolicy.Enabled && quality.Confidence < MinimumQualityTargetConfidence)',
+  'normal confidence veto must remain disabled only for Outlaw target guidance');
 need(live, 'outlaw_vision_target_invalidated',
   'Outlaw must discard vision-only coordinates when live foreground UI changes after presentation');
 if (live.includes('outlaw_vision_target_kept'))
