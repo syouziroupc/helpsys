@@ -32,7 +32,7 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(35));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(42));
         var cancellationToken = planningCts.Token;
 
         try
@@ -57,7 +57,7 @@ public partial class MainWindow
             {
                 try
                 {
-                    snapshot = await _observationBroker.CaptureAsync(1200, cancellationToken);
+                    snapshot = await _observationBroker.CaptureAsync(4000, cancellationToken);
                 }
                 catch (ObservationChangedException)
                 {
@@ -150,10 +150,13 @@ public partial class MainWindow
                 duringCapture <= visualCaptureCompletedUtc)
             {
                 LocalLogService.Write(
-                    OutlawModePolicy.Enabled ? "outlaw_visual_capture_changed" : "visual_capture_changed",
+                    OutlawModePolicy.Enabled ? "outlaw_visual_capture_changed_ignored" : "visual_capture_changed",
                     $"changed={duringCapture:O};start={visualCaptureStartedUtc:O};end={visualCaptureCompletedUtc:O}");
-                HandleTechnicalPlanningUncertainty("画面画像取得中に内容が変化した", generation);
-                return;
+                if (!OutlawModePolicy.Enabled)
+                {
+                    HandleTechnicalPlanningUncertainty("画面画像取得中に内容が変化した", generation);
+                    return;
+                }
             }
 
             if (!_observationBroker.IsCurrent(snapshot))
@@ -273,10 +276,13 @@ public partial class MainWindow
                 if (lastVisualChangeUtc is { } afterCapture && afterCapture > visualCaptureCompletedUtc)
                 {
                     LocalLogService.Write(
-                        "outlaw_stale_vision_target",
-                        $"changed={afterCapture:O};capture={visualCaptureCompletedUtc:O};rejecting planner coordinates");
-                    HandleTechnicalPlanningUncertainty("画像判断後に画面内容が変化した", generation);
-                    return;
+                        OutlawModePolicy.Enabled ? "outlaw_post_capture_change_ignored" : "stale_vision_target",
+                        $"changed={afterCapture:O};capture={visualCaptureCompletedUtc:O}");
+                    if (!OutlawModePolicy.Enabled)
+                    {
+                        HandleTechnicalPlanningUncertainty("画像判断後に画面内容が変化した", generation);
+                        return;
+                    }
                 }
             }
 
@@ -321,10 +327,15 @@ public partial class MainWindow
             if (freshTarget is null)
             {
                 LocalLogService.Write(
-                    OutlawModePolicy.Enabled ? "outlaw_target_revalidation_failed" : "target_revalidation_failed",
-                    $"target={target.Id};action={decision.Action};rejecting stale pre-plan bounds");
-                HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
-                return;
+                    OutlawModePolicy.Enabled ? "outlaw_target_revalidation_fallback" : "target_revalidation_failed",
+                    $"target={target.Id};action={decision.Action};sameForeground={_observationBroker.IsCurrent(snapshot)}");
+                if (!OutlawModePolicy.Enabled || !_observationBroker.IsCurrent(snapshot))
+                {
+                    HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
+                    return;
+                }
+
+                freshTarget = target;
             }
 
             ShowStructuredTarget(decision, freshTarget, candidates, systemContext, generation);
