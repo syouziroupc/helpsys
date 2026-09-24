@@ -63,8 +63,10 @@ need(quality, '"outlaw_visual_capture_changed"',
   'visual evidence must be discarded when the observed UI changes during screenshot capture');
 need(quality, '"outlaw_stale_vision_target"',
   'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
-need(live, 'outlaw_vision_target_kept',
-  'Outlaw must keep grounded vision-only targets even without a UIA snap target');
+need(live, 'outlaw_vision_target_invalidated',
+  'Outlaw must discard vision-only coordinates when live foreground UI changes after presentation');
+if (live.includes('outlaw_vision_target_kept'))
+  throw new Error('Outlaw must never re-show stale vision coordinates merely because UIA cannot snap them');
 need(cloud, '"/v1/outlaw-plan"',
   'Outlaw must use the dedicated planner endpoint');
 need(cloud, 'TimeSpan.FromSeconds(18)',

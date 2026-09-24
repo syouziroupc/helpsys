@@ -64,11 +64,24 @@ public partial class MainWindow
 
         if (OutlawModePolicy.Enabled)
         {
-            _validatedVisionInstruction = _currentDecision.Instruction;
-            _overlay.ShowTarget(_guidedBounds.Value, _currentDecision.Instruction);
+            // This method is reached from live UI-change observation. A vision-only target has no
+            // stable accessibility identity to revalidate, so keeping old coordinates after a live
+            // foreground change is unsafe for operation accuracy. Discard and re-ground once.
+            var staleBounds = _guidedBounds.Value;
             LocalLogService.Write(
-                "outlaw_vision_target_kept",
-                $"bounds={_guidedBounds.Value};instruction={_currentDecision.Instruction}");
+                "outlaw_vision_target_invalidated",
+                $"bounds={staleBounds};instruction={_currentDecision.Instruction}");
+            _history.Add(new GuideHistoryItem(
+                _stepNumber,
+                "vision_target_stale",
+                "画像上の候補",
+                "案内表示後に現在画面のUI変化を検出したため、古い画像座標を破棄して現在状態から再判断する。"));
+            if (_history.Count > 64) _history.RemoveAt(0);
+
+            InvalidateCurrentGuidanceForLiveChange();
+            _sessionState.Invalidate(GuidanceSessionState.Idle);
+            _liveReplanPending = true;
+            SetState("画面が変化したため、古い青枠を破棄して現在位置を確認しています…", speak: false);
             return;
         }
 
