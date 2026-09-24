@@ -34,18 +34,27 @@
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock Text="HelpSys" FontWeight="Bold" FontSize="15" VerticalAlignment="Center" Foreground="#FF172033" />
         <TextBlock Grid.Column="1" Margin="10,0,0,0" Text="PC操作を画面上で案内" FontSize="11" Foreground="#FF788397" VerticalAlignment="Center" />
-        <Button Grid.Column="2" x:Name="UpdateButton" Content="更新確認"
+        <ComboBox Grid.Column="2" x:Name="AiProviderBox" Width="82" Height="22" Margin="4,0,2,0"
+                  FontSize="10.5" VerticalContentAlignment="Center"
+                  SelectionChanged="AiProviderBox_SelectionChanged"
+                  ToolTip="無法者版の判断モデルを切り替えます">
+          <ComboBoxItem Content="AI: Auto" Tag="auto" IsSelected="True" />
+          <ComboBoxItem Content="AI: Gemini" Tag="gemini" />
+          <ComboBoxItem Content="AI: GLM" Tag="glm" />
+        </ComboBox>
+        <Button Grid.Column="3" x:Name="UpdateButton" Content="更新確認"
                 MinWidth="68" Height="22" Padding="7,0" Margin="4,0,2,0"
                 FontSize="10.5" VerticalAlignment="Center" Click="UpdateButton_Click"
                 ToolTip="HelpSysの最新版を確認します" />
-        <Button Grid.Column="3" x:Name="PrivacyButton" Content="解析停止"
+        <Button Grid.Column="4" x:Name="PrivacyButton" Content="解析停止"
                 MinWidth="72" Height="22" Padding="8,0" Margin="4,0,6,0"
                 FontSize="10.5" VerticalAlignment="Center" Click="PrivacyButton_Click"
                 ToolTip="画面解析を停止します" />
-        <Button Grid.Column="4" x:Name="ExitButton" Content="×" Width="26" Height="22" Padding="0" FontSize="14" ToolTip="HelpSysを終了" Click="ExitButton_Click" />
+        <Button Grid.Column="5" x:Name="ExitButton" Content="×" Width="26" Height="22" Padding="0" FontSize="14" ToolTip="HelpSysを終了" Click="ExitButton_Click" />
       </Grid>
 
       <Grid Grid.Row="1" Margin="0,4,0,2">
