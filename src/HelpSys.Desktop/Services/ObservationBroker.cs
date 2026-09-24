@@ -40,14 +40,18 @@ public sealed class ObservationBroker
                     cancellationToken)).ConfigureAwait(false);
 
         var after = _systemContext.Capture();
-        if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))
-            throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。");
-
-        if (OutlawModePolicy.Enabled && !HasSameIdentity(before, after))
+        if (!HasSameIdentity(before, after))
         {
-            LocalLogService.Write(
-                "outlaw_foreground_changed_during_scan",
-                $"before={before.ForegroundProcess}/{before.ForegroundProcessId};after={after.ForegroundProcess}/{after.ForegroundProcessId};candidates={elements.Count}");
+            if (OutlawModePolicy.Enabled)
+            {
+                LocalLogService.Write(
+                    "outlaw_observation_discarded",
+                    $"reason=foreground_changed_during_scan;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle};candidates={elements.Count}");
+            }
+
+            // Never fuse UI Automation collected under one foreground HWND with system context
+            // captured from another. A planner decision must belong to one coherent observation.
+            throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。観測を破棄して現在状態を取り直します。");
         }
 
         after = _systemContext.EnrichWithObservedElements(after, elements);

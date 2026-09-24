@@ -17,8 +17,12 @@ const need = (source, fragment, message) => {
 
 need(broker, 'OutlawModePolicy.Enabled\n                ? _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)',
   'Outlaw must scan the full desktop UIA tree instead of only the foreground process');
-need(broker, 'if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))',
-  'Outlaw must not discard a deep all-desktop observation solely because foreground changed during the scan');
+need(broker, 'if (!HasSameIdentity(before, after))',
+  'Every planner observation must reject mixed UIA/system-context snapshots when foreground identity changes during the scan');
+need(broker, '"outlaw_observation_discarded"',
+  'Outlaw must log discarded mixed observations for field diagnostics');
+if (broker.includes('if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))'))
+  throw new Error('Outlaw must not retain a mixed observation merely because it is operation-first');
 need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
   'Outlaw quality planner must retain the expanded 4000-element observation budget');
 need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 40000 : 4500',
