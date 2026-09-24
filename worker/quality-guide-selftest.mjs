@@ -443,3 +443,35 @@ assert(payload().systemContext?.browser?.url === 'https://example.test/settings/
   'Outlaw planner must retain the full current browser URL for same-domain page-state grounding');
 assert(payload().uiElements.find(x => x.id === 'search-box')?.value === '現在の検索語',
   'Outlaw planner must retain ordinary non-password input values needed to understand the current UI state');
+
+async function askOutlawStructured(body) {
+  lastInvocation = null;
+  const request = new Request('https://example.test/v1/quality-guide', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ history: [], outlawMode: true, ...body })
+  });
+  const response = await quality.fetch(request, env, {});
+  assert(response.status === 200, `unexpected structured-only outlaw response ${response.status}`);
+  return response.json();
+}
+
+nextDecision = {
+  status: 'target', targetId: 'structured-only', action: 'left_click',
+  instruction: '項目を押してください。', question: null, key: null,
+  confidence: 0.45, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlawStructured({
+  request: '現在画面から進んで',
+  systemContext: { foregroundProcess: 'app', foregroundProcessId: 9, runningApps: [] },
+  evidence: { screenshotAvailable: false },
+  elements: [{
+    id: 'structured-only', name: '続ける', controlType: 'Button', processName: 'app',
+    interactable: true, enabled: true
+  }]
+});
+assert(value.status === 'target' && value.targetId === 'structured-only',
+  'image-less Outlaw fallback must use the same operation-first validation instead of normal canonical planner guards');
+assert(lastInvocation?.args?.image === undefined,
+  'structured-only Outlaw inference must not invent a fake screenshot');

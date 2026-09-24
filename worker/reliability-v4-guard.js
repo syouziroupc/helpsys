@@ -67,10 +67,9 @@ export default {
         outlawBody = screenBody;
       }
 
-      const hasImage = typeof outlawBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(outlawBody.image);
       const outlawRequest = rebuildJsonRequest(request, { ...(outlawBody || {}), outlawMode: true });
-      const routed = rewriteRequestPath(outlawRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
-      return hasImage ? quality.fetch(routed, privateEnv, ctx) : base.fetch(routed, privateEnv, ctx);
+      const routed = rewriteRequestPath(outlawRequest, '/v1/quality-guide');
+      return quality.fetch(routed, privateEnv, ctx);
     }
 
     if (url.pathname === '/v1/quality-guide') {

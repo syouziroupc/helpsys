@@ -118,10 +118,10 @@ export default {
 
     const goal = typeof body?.request === 'string' ? body.request.trim() : '';
     const image = typeof body?.image === 'string' ? body.image : '';
-    if (!goal || goal.length > 1600) return json({ error: 'invalid_request' }, 400);
-    if (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_IMAGE_CHARS) return json({ error: 'invalid_image' }, 400);
-
     const outlawMode = body?.outlawMode === true;
+    const hasImage = /^data:image\/(?:png|jpeg);base64,/i.test(image);
+    if (!goal || goal.length > 1600) return json({ error: 'invalid_request' }, 400);
+    if ((!hasImage && !outlawMode) || image.length > MAX_IMAGE_CHARS) return json({ error: 'invalid_image' }, 400);
     const systemContext = compactSystemContext(body?.systemContext, outlawMode);
     const capture = compactCapture(body?.capture);
     const elements = Array.isArray(body?.elements)
@@ -165,7 +165,7 @@ export default {
     });
 
     try {
-      const result = await runQualityInference(env, model, userPayload, image, aiProvider, outlawMode);
+      const result = await runQualityInference(env, model, userPayload, hasImage ? image : '', aiProvider, outlawMode);
 
       const raw = result.__geminiStructured === true
         ? result.value
@@ -188,7 +188,7 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
   if (useGemini && env.GEMINI_API_KEY) {
     const modelName = String(env.HELPSYS_OUTLAW_GEMINI_MODEL || 'gemini-3.8-flash').trim();
     const match = /^data:image\/(png|jpeg);base64,(.+)$/i.exec(image || '');
-    if (!match) throw new Error('invalid_gemini_image');
+    if (image && !match) throw new Error('invalid_gemini_image');
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7_000);
@@ -205,10 +205,12 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
             systemInstruction: { parts: [{ text: outlawMode ? outlawQualitySystemPrompt : qualitySystemPrompt }] },
             contents: [{
               role: 'user',
-              parts: [
-                { text: userPayload },
-                { inlineData: { mimeType: `image/${match[1].toLowerCase()}`, data: match[2] } }
-              ]
+              parts: match
+                ? [
+                    { text: userPayload },
+                    { inlineData: { mimeType: `image/${match[1].toLowerCase()}`, data: match[2] } }
+                  ]
+                : [{ text: userPayload }]
             }],
             generationConfig: {
               temperature: 0.1,
@@ -242,7 +244,7 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
       { role: 'system', content: outlawMode ? outlawQualitySystemPrompt : qualitySystemPrompt },
       { role: 'user', content: userPayload }
     ],
-    image,
+    ...(image ? { image } : {}),
     reasoning_effort: 'low',
     temperature: 0.1,
     max_completion_tokens: 520,
