@@ -23,3 +23,10 @@ if (!project.includes('HelpSysUpdateChannel') || !project.includes('outlaw-lates
   throw new Error('Outlaw binary must embed the outlaw-latest update channel');
 if (!update.includes('GetCurrentUpdateChannel()') || !update.includes('Channel: outlaw-latest'))
   throw new Error('Outlaw updater must verify both executable and package channel metadata');
+
+if (!update.includes('Version.TryParse(match.Groups["version"].Value, out var candidateVersion)'))
+  throw new Error('Outlaw updater must parse semantic versions from release assets');
+if (!update.includes('candidateVersion < latestVersion'))
+  throw new Error('Outlaw updater must select the highest semantic version instead of the first asset');
+if (update.includes('(?:\\d+\\.\\d+\\.\\d+-)?'))
+  throw new Error('Outlaw updater must not accept unversioned legacy Outlaw assets');
