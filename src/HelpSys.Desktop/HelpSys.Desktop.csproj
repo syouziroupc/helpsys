@@ -25,6 +25,7 @@
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="HelpSysBuildId" Value="$(HelpSysBuildId)" />
+    <AssemblyMetadata Include="HelpSysUpdateChannel" Value="outlaw-latest" />
     <Compile Include="..\Shared\CloudAiAdapter.cs" Link="Shared\CloudAiAdapter.cs" />
     <PackageReference Include="NAudio" Version="3.0.1" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
