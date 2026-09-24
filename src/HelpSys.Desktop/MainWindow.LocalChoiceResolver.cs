@@ -24,6 +24,79 @@ public partial class MainWindow
     private Task<LocalChoiceAnswerResult> TryHandleLocalAccountChoiceAnswerAsync(string answer)
         => TryHandleLocalVisibleChoiceAnswerAsync(answer);
 
+    private async Task TryShowLocalVisibleChoiceButtonsAsync()
+    {
+        if (!_awaitingClarification || !LooksLikeVisibleChoiceQuestion(_clarificationQuestion) ||
+            _sessionCts is null || _sessionCts.IsCancellationRequested)
+        {
+            ChoiceButtonsPanel.Visibility = System.Windows.Visibility.Collapsed;
+            AnswerEntryPanel.Visibility = System.Windows.Visibility.Visible;
+            return;
+        }
+
+        var token = _sessionCts.Token;
+        var context = _systemContext.Capture();
+        if (!HasUsableForeground(context)) return;
+
+        IReadOnlyList<UiElementCandidate> candidates;
+        try
+        {
+            candidates = await _scanner.CaptureCandidatesForProcessAsync(context.ForegroundProcessId, 420, token);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || !_awaitingClarification) return;
+
+        var choices = candidates
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name))
+            .Where(x => context.ForegroundProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ForegroundProcessId)
+            .Where(x => !Regex.IsMatch(x.Name, @"^(閉じる|戻る|キャンセル|次へ|追加|設定|メニュー|その他|close|back|cancel|next|add|settings?|menu|more)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .GroupBy(x => NormalizeLocalChoiceText(x.Name), StringComparer.Ordinal)
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() == 1)
+            .Select(g => g.Single())
+            .Take(9)
+            .ToArray();
+
+        if (choices.Length < 2) return;
+
+        ChoiceButtonsPanel.Children.Clear();
+        foreach (var choice in choices)
+        {
+            var button = new System.Windows.Controls.Button
+            {
+                Content = choice.Name,
+                Tag = choice.Name,
+                Margin = new System.Windows.Thickness(0, 0, 7, 7),
+                Padding = new System.Windows.Thickness(10, 5, 10, 5),
+                MinHeight = 32,
+                MaxWidth = 280
+            };
+            button.Click += LocalVisibleChoiceButton_Click;
+            ChoiceButtonsPanel.Children.Add(button);
+        }
+
+        ClarificationQuestionText.Text = "画面に表示されている候補から、使いたいものを直接選んでください。";
+        AnswerEntryPanel.Visibility = System.Windows.Visibility.Collapsed;
+        ChoiceButtonsPanel.Visibility = System.Windows.Visibility.Visible;
+        UpdateLayout();
+        PositionNearBottomRight();
+    }
+
+    private async void LocalVisibleChoiceButton_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.Tag is not string answer ||
+            string.IsNullOrWhiteSpace(answer))
+            return;
+
+        button.IsEnabled = false;
+        var result = await TryHandleLocalVisibleChoiceAnswerAsync(answer);
+        if (result != LocalChoiceAnswerResult.Handled) button.IsEnabled = true;
+    }
+
     private async Task<LocalChoiceAnswerResult> TryHandleLocalVisibleChoiceAnswerAsync(string answer)
     {
         if (!LooksLikeVisibleChoiceQuestion(_clarificationQuestion))
