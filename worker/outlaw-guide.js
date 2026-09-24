@@ -110,6 +110,9 @@ export default {
         reasoningEffort: 'high',
         maxCompletionTokens: MAX_COMPLETION_TOKENS,
         dualStageVisionReview: true,
+        independentVisionReview: true,
+        visualCoordinateSpace: 'image_px',
+        geometryConsensus: true,
         fastStructuredReturn: true
       });
     }
