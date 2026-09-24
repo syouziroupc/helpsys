@@ -4,7 +4,7 @@ import quality from './quality-guide.js';
 import transcribe from './transcribe.js';
 
 const START_PROCESS = /(searchhost|startmenuexperiencehost)/i;
-const SCREEN_ROUTES = new Set(['/v2/plan', '/v1/quality-guide', '/v1/guide', '/v1/vision-guide']);
+const SCREEN_ROUTES = new Set(['/v2/plan', '/v1/outlaw-plan', '/v1/quality-guide', '/v1/guide', '/v1/vision-guide']);
 const EMAIL = /(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])/g;
 const JP_PHONE = /(?<!\d)(?:(?:0[5789]0[- ]?\d{4}[- ]?\d{4})|(?:0\d{1,4}[- ]\d{1,4}[- ]\d{3,4})|(?:\+81[- ]?[1-9]\d{0,4}[- ]?\d{1,4}[- ]?\d{3,4}))(?!\d)/g;
 const JP_POSTAL = /(?<!\d)〒?\s*\d{3}-\d{4}(?!\d)/g;
@@ -56,6 +56,12 @@ export default {
       const hasImage = typeof screenBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(screenBody.image);
       screenRequest = rewriteRequestPath(screenRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
       if (hasImage) return quality.fetch(screenRequest, privateEnv, ctx);
+    }
+
+    if (url.pathname === '/v1/outlaw-plan') {
+      const hasImage = typeof screenBody?.image === 'string' && /^data:image\/(?:png|jpeg);base64,/i.test(screenBody.image);
+      const routed = rewriteRequestPath(screenRequest, hasImage ? '/v1/quality-guide' : '/v1/guide');
+      return hasImage ? quality.fetch(routed, privateEnv, ctx) : base.fetch(routed, privateEnv, ctx);
     }
 
     if (url.pathname === '/v1/quality-guide') {
