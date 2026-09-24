@@ -50,8 +50,10 @@ console.log('HelpSys single-refresh current-state contract passed.');
 
 if (!quality.includes('_observationBroker.CaptureAsync(4000, cancellationToken)'))
   throw new Error('Outlaw one-shot observation must provide up to 4000 current UIA candidates');
-if (!quality.includes('outlaw_visual_capture_changed_ignored') || !quality.includes('outlaw_post_capture_change_ignored'))
-  throw new Error('Outlaw must not discard a first-pass decision for soft same-window WinEvent churn');
+if (!quality.includes('outlaw_visual_capture_stale') || !quality.includes('outlaw_stale_vision_target'))
+  throw new Error('Outlaw visual targets must discard stale screenshot coordinates after same-window UI changes');
+if (quality.includes('outlaw_visual_capture_changed_ignored') || quality.includes('outlaw_post_capture_change_ignored'))
+  throw new Error('Outlaw 3.2.0 must not keep visual coordinates after capture-time or post-capture UI changes');
 if (!quality.includes('outlaw_target_revalidation_fallback'))
   throw new Error('Outlaw must retain immutable first-observation target bounds when same-window revalidation is transiently unavailable');
 
