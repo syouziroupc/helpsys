@@ -29,7 +29,7 @@ public partial class MainWindow
         GuideButton.IsEnabled = false;
 
         using var planningCts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCts.Token);
-        planningCts.CancelAfter(TimeSpan.FromSeconds(180));
+        planningCts.CancelAfter(TimeSpan.FromSeconds(35));
         var cancellationToken = planningCts.Token;
 
         try

@@ -32,6 +32,9 @@ jobs:
       - name: Verify Outlaw repeat guard
         run: node tests/outlaw-repeat-guard-contract.mjs
 
+      - name: Verify bounded current-state replanning
+        run: node tests/current-state-replan-contract.mjs
+
       - name: Verify swappable brain and direct-choice UI
         run: |
           node --check worker/quality-guide.js
