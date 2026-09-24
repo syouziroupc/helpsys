@@ -71,6 +71,8 @@ public sealed class UpdateService : IDisposable
 
     public async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
+        if (!string.Equals(GetCurrentUpdateChannel(), RequiredTag, StringComparison.Ordinal))
+            throw new InvalidOperationException("このHelpSysは無法者版更新チャネルとして識別できないため、自動更新を中止しました。");
         using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApi);
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -155,7 +157,14 @@ public sealed class UpdateService : IDisposable
 
             var stagedExe = Path.Combine(extractDirectory, "HelpSys.exe");
             if (!File.Exists(stagedExe))
-                throw new InvalidOperationException("更新パッケージにHelpSys.exeが含まれていません。");
+                throw new InvalidOperationException("更新パッケージにHelpSys Outlaw本体が含まれていません。");
+
+            var versionFile = Path.Combine(extractDirectory, "VERSION.txt");
+            if (!File.Exists(versionFile))
+                throw new InvalidOperationException("無法者版の更新チャネル情報がないため更新を中止しました。");
+            var versionText = await File.ReadAllTextAsync(versionFile, cancellationToken);
+            if (!versionText.Contains("Channel: outlaw-latest", StringComparison.Ordinal))
+                throw new InvalidOperationException("無法者版以外の更新パッケージを検出したため更新を中止しました。");
 
             var scriptPath = CreateReplacementScript(
                 updateRoot,
@@ -360,6 +369,14 @@ public sealed class UpdateService : IDisposable
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(attribute => attribute.Key.Equals("HelpSysBuildId", StringComparison.Ordinal));
         return string.IsNullOrWhiteSpace(metadata?.Value) ? "dev" : metadata.Value.Trim().ToLowerInvariant();
+    }
+
+    private static string GetCurrentUpdateChannel()
+    {
+        var metadata = Assembly.GetExecutingAssembly()
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(attribute => attribute.Key.Equals("HelpSysUpdateChannel", StringComparison.Ordinal));
+        return metadata?.Value?.Trim() ?? string.Empty;
     }
 
     private static string NormalizeBuildId(string value)
