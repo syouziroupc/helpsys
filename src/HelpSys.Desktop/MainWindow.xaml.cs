@@ -412,11 +412,8 @@ public partial class MainWindow : Window
             return;
         }
         _technicalClarificationRetries = 0;
-        if (!OutlawModePolicy.Enabled)
-        {
-            ResetCurrentStateReplanBudget();
-            ResetResilienceRecovery();
-        }
+        ResetCurrentStateReplanBudget();
+        ResetResilienceRecovery();
         _currentDecision = decision;
         _currentTarget = target;
         _stepBaseline = candidates;
