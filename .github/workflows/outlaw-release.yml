@@ -97,7 +97,7 @@ jobs:
           - Recovery/replan budgets reset only after verified progress
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
-          - Dedicated Outlaw cloud planner with up to 120-second client deadline and high reasoning
+          - Dedicated Outlaw cloud planner with bounded client deadlines and switchable Auto / Gemini / GLM reasoning
           - Windows 10 / 11 x64 self-contained
           "@
 
