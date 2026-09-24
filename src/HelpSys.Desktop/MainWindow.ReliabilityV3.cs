@@ -9,6 +9,13 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
+    private enum ActionVerificationResult
+    {
+        Success,
+        NoEffect,
+        Inconclusive
+    }
+
     private GuideDecision? _v3TrackedDecision;
     private bool _v3TypeActivityObserved;
 
@@ -150,14 +157,19 @@ public partial class MainWindow
             : _currentTarget is null ? (decision.Key ?? "キーボード操作") : DisplayName(_currentTarget.Name, _currentTarget.ControlType);
         bool replan = false;
         bool advance = false;
+        bool inconclusive = false;
 
         try
         {
             SetState("操作の結果を確認しています…", speak: false);
-            var changed = await WaitForStableStateTransitionV3Async(decision.Action, _stepBaseline, _stepSystemBaseline, _sessionCts.Token);
+            var verification = await WaitForStableStateTransitionV3Async(
+                decision.Action,
+                _stepBaseline,
+                _stepSystemBaseline,
+                _sessionCts.Token);
             if (!_sessionState.IsCurrent(generation)) return;
 
-            if (!changed)
+            if (verification == ActionVerificationResult.NoEffect)
             {
                 _consecutiveFailures++;
                 _doubleClickCount = 0;
@@ -172,13 +184,13 @@ public partial class MainWindow
                     _stepNumber,
                     $"no_effect_{decision.Action}",
                     targetName,
-                    "案内した操作の期待結果を確認できなかったため、同じ操作を繰り返さず現在状態から再計画する。"));
+                    "安定した観測で期待結果が無いことを確認したため、同じ操作を繰り返さず現在状態から再計画する。"));
                 var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
                 if (_history.Count > historyLimit) _history.RemoveAt(0);
                 ClearCurrentGuidanceV3();
                 replan = true;
             }
-            else
+            else if (verification == ActionVerificationResult.Success)
             {
                 _consecutiveFailures = 0;
                 RecordOutlawGuidanceOutcome(
@@ -195,6 +207,21 @@ public partial class MainWindow
                 _rejectedVisionTargets = 0;
                 advance = true;
             }
+            else
+            {
+                LocalLogService.Write(
+                    "action_verification_inconclusive",
+                    $"action={decision.Action};target={decision.TargetId ?? "none"};state={_lastObservationFingerprint}");
+                _history.Add(new GuideHistoryItem(
+                    _stepNumber,
+                    $"verification_inconclusive_{decision.Action}",
+                    targetName,
+                    "操作結果を成功とも無効とも確定できないため、失敗として記録せず現在状態を1回だけ再観測する。"));
+                var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
+                if (_history.Count > historyLimit) _history.RemoveAt(0);
+                ClearCurrentGuidanceV3();
+                inconclusive = true;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -202,6 +229,12 @@ public partial class MainWindow
         }
 
         if (!_sessionState.IsCurrent(generation) || _sessionCts is null || _sessionCts.IsCancellationRequested || _activeRequest is null) return;
+
+        if (inconclusive)
+        {
+            HandleTechnicalPlanningUncertainty("操作結果の検証が不確定", generation);
+            return;
+        }
 
         if (replan)
         {
@@ -266,7 +299,7 @@ public partial class MainWindow
         _localChoiceTargetActive = false;
     }
 
-    private async Task<bool> WaitForStableStateTransitionV3Async(
+    private async Task<ActionVerificationResult> WaitForStableStateTransitionV3Async(
         string action,
         IReadOnlyList<UiElementCandidate> before,
         SystemContextSnapshot? systemBefore,
@@ -289,7 +322,7 @@ public partial class MainWindow
         try
         {
             var immediateSystem = _systemContext.Capture();
-            if (HasSystemTransitionV3(systemBefore, immediateSystem)) return true;
+            if (HasSystemTransitionV3(systemBefore, immediateSystem)) return ActionVerificationResult.Success;
 
             var initialDelay = action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
                 ? TimeSpan.FromMilliseconds(420)
@@ -311,14 +344,16 @@ public partial class MainWindow
             catch (ObservationChangedException)
             {
                 var current = _systemContext.Capture();
-                return HasSystemTransitionV3(systemBefore, current);
+                return HasSystemTransitionV3(systemBefore, current)
+                    ? ActionVerificationResult.Success
+                    : ActionVerificationResult.Inconclusive;
             }
             catch (InvalidOperationException)
             {
-                return false;
+                return ActionVerificationResult.Inconclusive;
             }
 
-            return HasExpectedEffectV3(
+            var expectedEffect = HasExpectedEffectV3(
                 expectation,
                 before,
                 systemBefore,
@@ -326,6 +361,14 @@ public partial class MainWindow
                 afterSnapshot.System,
                 strong,
                 allowFocusOnly);
+
+            if (expectedEffect) return ActionVerificationResult.Success;
+
+            // A real Windows event occurred, but the bounded verifier could not map it to the
+            // expected effect. Treat that as unknown rather than poisoning the failed-action memory.
+            return changedSignal.Task.IsCompleted
+                ? ActionVerificationResult.Inconclusive
+                : ActionVerificationResult.NoEffect;
         }
         finally
         {

@@ -35,6 +35,9 @@ jobs:
       - name: Verify bounded current-state replanning
         run: node tests/current-state-replan-contract.mjs
 
+      - name: Verify tri-state action effects
+        run: node tests/action-verification-contract.mjs
+
       - name: Verify swappable brain and direct-choice UI
         run: |
           node --check worker/quality-guide.js
