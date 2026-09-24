@@ -24,6 +24,76 @@ public partial class MainWindow
     private Task<LocalChoiceAnswerResult> TryHandleLocalAccountChoiceAnswerAsync(string answer)
         => TryHandleLocalVisibleChoiceAnswerAsync(answer);
 
+    private bool TryPresentOutlawVisibleChoiceButtons(
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot context,
+        long generation)
+    {
+        if (!OutlawModePolicy.Enabled ||
+            !_sessionState.IsCurrent(generation) ||
+            !HasUsableForeground(context))
+            return false;
+
+        var choices = candidates
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name))
+            .Where(x => context.ForegroundProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ForegroundProcessId)
+            .Where(x => !Regex.IsMatch(
+                x.Name,
+                @"^(閉じる|戻る|キャンセル|次へ|追加|設定|メニュー|その他|close|back|cancel|next|add|settings?|menu|more)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .GroupBy(x => NormalizeLocalChoiceText(x.Name), StringComparer.Ordinal)
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() == 1)
+            .Select(g => g.Single())
+            .Take(9)
+            .ToArray();
+
+        if (choices.Length < 2) return false;
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Clarifying)) return false;
+
+        _technicalClarificationRetries = 0;
+        _overlay.Hide();
+        _keyHint.Hide();
+        _actionObserver.Stop();
+        _currentDecision = null;
+        _currentTarget = null;
+        _guidedBounds = null;
+        _clarificationQuestion = "画面上の候補から、使いたいものを1つ選んでください。";
+        _lastInstruction = _clarificationQuestion;
+
+        ChoiceButtonsPanel.Children.Clear();
+        foreach (var choice in choices)
+        {
+            var button = new System.Windows.Controls.Button
+            {
+                Content = choice.Name,
+                Tag = choice.Name,
+                Margin = new System.Windows.Thickness(0, 0, 7, 7),
+                Padding = new System.Windows.Thickness(10, 5, 10, 5),
+                MinHeight = 32,
+                MaxWidth = 280
+            };
+            button.Click += LocalVisibleChoiceButton_Click;
+            ChoiceButtonsPanel.Children.Add(button);
+        }
+
+        ClarificationQuestionText.Text = "画面に表示されている候補から、使いたいものを直接選んでください。";
+        AnswerEntryPanel.Visibility = System.Windows.Visibility.Collapsed;
+        ChoiceButtonsPanel.Visibility = System.Windows.Visibility.Visible;
+        ClarificationPanel.Visibility = System.Windows.Visibility.Visible;
+        RequestBox.IsReadOnly = true;
+        GuideButton.Content = "案内";
+        GuideButton.IsEnabled = false;
+        VoiceButton.IsEnabled = false;
+        UpdateLayout();
+        PositionNearBottomRight();
+
+        LocalLogService.Write(
+            "outlaw_direct_choice",
+            $"choices={choices.Length};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+        SetState("画面上の候補から、使いたいものを直接選んでください。", speak: false);
+        return true;
+    }
+
     private async Task TryShowLocalVisibleChoiceButtonsAsync()
     {
         if (!_awaitingClarification || !LooksLikeVisibleChoiceQuestion(_clarificationQuestion) ||

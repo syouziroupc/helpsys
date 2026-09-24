@@ -17,6 +17,10 @@ if (liveHook < 0 || liveHistory < 0 || liveHook > liveHistory)
 
 if (!local.includes('TryHandleLocalVisibleChoiceAnswerAsync'))
   throw new Error('local clarification handling must be implemented as a generic visible-choice resolver');
+if (!local.includes('TryPresentOutlawVisibleChoiceButtons'))
+  throw new Error('Outlaw clarify handling must be able to present current visible choices directly');
+if (!local.includes('"outlaw_direct_choice"'))
+  throw new Error('Outlaw direct-choice presentation must be logged');
 if (!local.includes('LocalVisibleChoiceQuestionRegex'))
   throw new Error('generic visible-choice questions must be recognized independently from account-specific wording');
 if (local.includes('IsSupportedLocalChoiceBrowser') || local.includes('LocalAccountChoiceSurfaceRegex'))
@@ -62,3 +66,10 @@ if (!facade.includes('IsAllowedByForegroundWindow(fresh, rootProcessId)'))
   throw new Error('revalidated targets must remain bound to the current foreground window when possible');
 
 console.log('HelpSys generic visible-choice and foreground-window contract passed.');
+
+const quality = fs.readFileSync('src/HelpSys.Desktop/MainWindow.QualityFirst.cs', 'utf8');
+const outlawClarify = quality.indexOf('if (OutlawModePolicy.Enabled)', quality.indexOf('quality.Status.Equals("clarify"'));
+const directChoice = quality.indexOf('TryPresentOutlawVisibleChoiceButtons(candidates, systemContext, generation)', outlawClarify);
+const technicalFallback = quality.indexOf('モデルが選択を要求したが現在画面から直接選択肢を構成できない', directChoice);
+if (outlawClarify < 0 || directChoice < 0 || technicalFallback < 0)
+  throw new Error('Outlaw clarification must prefer direct visible-choice UI and avoid open-ended questioning');

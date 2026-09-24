@@ -194,6 +194,13 @@ public partial class MainWindow
 
             if (quality.Status.Equals("clarify", StringComparison.OrdinalIgnoreCase))
             {
+                if (OutlawModePolicy.Enabled)
+                {
+                    if (TryPresentOutlawVisibleChoiceButtons(candidates, systemContext, generation)) return;
+                    HandleTechnicalPlanningUncertainty("モデルが選択を要求したが現在画面から直接選択肢を構成できない", generation);
+                    return;
+                }
+
                 WaitForClarification(quality.Question ?? "画面上に複数の選択肢があります。どれを使うか教えてください。", generation);
                 return;
             }
