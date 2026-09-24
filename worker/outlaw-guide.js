@@ -52,7 +52,7 @@ EVIDENCE RULES:
 - A desktop shortcut normally needs double_click. Standard buttons/menu items/taskbar buttons normally need one left click.
 - If the requested goal needs a browser and that browser is already running, prefer bringing its visible taskbar/window surface forward over launching a generic browser shortcut, when that action is grounded in current evidence.
 - If a browser/profile/account chooser exposes two or more distinct identities and no identity is named in the goal, choose one deterministically using current screen order/context instead of asking. State that multiple profiles exist and which one you selected. Do not treat this as identity verification.
-- For older/beginner users, prefer a visible search field that accepts a simple natural-language service name (for example "YouTube") over asking them to type a raw URL such as "youtube.com". Use direct URL entry only when no suitable search field is visible or direct entry is clearly simpler and less error-prone.
+- For older/beginner users, prefer a large visible page/search-engine search field that accepts a simple natural-language service name (for example "YouTube") over the browser omnibox when both are visible. Prefer a simple service/query word over a raw URL such as "youtube.com". Use direct URL entry only when no suitable natural-language search field is visible or direct entry is clearly simpler and less error-prone.
 - Keep the Japanese instruction concrete and short.
 
 OUTPUT:
@@ -170,7 +170,8 @@ export default {
       const visionRaw = await runGuidance(env, VISION_MODEL, visionPrompt, payload, image);
       const visionChecked = validate(visionRaw, elements);
       if (!visionChecked.ok) return json({ error: visionChecked.error }, 502);
-      const preliminary = visionChecked.value;
+      let preliminary = visionChecked.value;
+      preliminary = preferBeginnerSearchField(preliminary, elements, goal, payload.systemContext);
 
       if (canReturnFastStructured(preliminary, elements, payload.systemContext)) {
         return json(guardUserChoice(preliminary, goal, elements));
@@ -274,6 +275,54 @@ async function runGuidance(env, model, system, payload, image) {
   return raw;
 }
 
+
+function preferBeginnerSearchField(decision, elements, goal, systemContext) {
+  if (!decision || decision.status !== 'target') return decision;
+  if (!['type_text','left_click'].includes(String(decision.action || ''))) return decision;
+
+  const current = elements.find(e => e.id === decision.targetId);
+  const currentLooksOmnibox =
+    current &&
+    (
+      /Omnibox/i.test(String(current.className || '')) ||
+      /browser_address/i.test(String(current.automationId || ''))
+    ) &&
+    Number(current.y || 0) < 220;
+
+  if (!currentLooksOmnibox) return decision;
+
+  const foregroundPid = Number(systemContext?.foregroundProcessId ?? systemContext?.ForegroundProcessId ?? 0);
+  const pageSearch = elements
+    .filter(e =>
+      e &&
+      e.enabled !== false &&
+      e.interactable !== false &&
+      (!foregroundPid || !e.processId || e.processId === foregroundPid) &&
+      ['edit','combobox'].includes(String(e.controlType || '').toLowerCase()) &&
+      Number(e.y || 0) >= 220 &&
+      Number(e.width || 0) >= 220 &&
+      /(?:検索|search)/i.test(String(e.name || ''))
+    )
+    .sort((a,b) => (Number(b.width||0) * Number(b.height||0)) - (Number(a.width||0) * Number(a.height||0)))[0];
+
+  if (!pageSearch) return decision;
+
+  return {
+    ...decision,
+    targetId: pageSearch.id,
+    action: 'left_click',
+    instruction: `入力方法を簡単にするため、中央の「${pageSearch.name || '検索欄'}」を1回押してください。`,
+    question: null,
+    key: null,
+    confidence: Math.max(Number(decision.confidence || 0), 0.96),
+    x: Number(pageSearch.x)||0,
+    y: Number(pageSearch.y)||0,
+    width: Number(pageSearch.width)||0,
+    height: Number(pageSearch.height)||0,
+    screenConfirmed: true,
+    visualEvidence: 'ブラウザのURL欄より、画面中央に大きな自然言語検索欄が見えているため、初心者向けにそちらを優先します。'
+  };
+}
 
 function detectIdentityChoice(elements, systemContext, goal) {
   const foregroundPid = Number(systemContext?.foregroundProcessId ?? systemContext?.ForegroundProcessId ?? 0);
