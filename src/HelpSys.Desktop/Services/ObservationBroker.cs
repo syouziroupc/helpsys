@@ -4,6 +4,11 @@ namespace HelpSys.Services;
 
 public sealed class ObservationBroker
 {
+    private static readonly HashSet<string> ShellSurfaceProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost"
+    };
+
     private readonly SystemContextService _systemContext;
     private readonly global::HelpSys.UiAutomationScanner _scanner;
     private long _sequence;
@@ -94,6 +99,27 @@ public sealed class ObservationBroker
         SystemContextSnapshot context)
     {
         if (context.ForegroundProcessId <= 0) return elements;
+
+        // Windows 11 shell surfaces are intentionally split across explorer,
+        // StartMenuExperienceHost, SearchHost, ShellExperienceHost and TextInputHost.
+        // Treat those processes as one logical UI surface. Restricting Outlaw evidence to
+        // only the foreground PID removes the actual Start/Search controls while leaving
+        // the desktop's explorer tree, which is exactly the failure mode seen on Start.
+        if (IsShellSurfaceProcess(context.ForegroundProcess))
+        {
+            var shell = elements
+                .Where(x => IsShellSurfaceProcess(x.ProcessName))
+                .ToArray();
+
+            if (shell.Length > 0)
+            {
+                LocalLogService.Write(
+                    "outlaw_shell_uia_fused",
+                    $"foreground={context.ForegroundProcess}/{context.ForegroundProcessId};kept={shell.Length};dropped={elements.Count - shell.Length};processes={string.Join(',', shell.Select(x => x.ProcessName).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                return shell;
+            }
+        }
+
         var coherent = elements
             .Where(x => x.ProcessId == context.ForegroundProcessId)
             .ToArray();
@@ -107,6 +133,10 @@ public sealed class ObservationBroker
 
         return coherent;
     }
+
+    private static bool IsShellSurfaceProcess(string? processName)
+        => !string.IsNullOrWhiteSpace(processName) &&
+           ShellSurfaceProcesses.Contains(processName);
 
     private static bool HasSameProcess(SystemContextSnapshot expected, SystemContextSnapshot current)
         => expected.ForegroundProcessId > 0 &&
