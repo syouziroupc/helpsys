@@ -167,6 +167,7 @@ public sealed class CloudGuideService : IDisposable
         var body = new
         {
             request,
+            aiProvider = NormalizeOutlawAiProvider(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER")),
             history,
             systemContext = new
             {
@@ -300,6 +301,7 @@ public sealed class CloudGuideService : IDisposable
         var body = new
         {
             request,
+            aiProvider = NormalizeOutlawAiProvider(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER")),
             history,
             systemContext = new
             {
@@ -406,6 +408,14 @@ public sealed class CloudGuideService : IDisposable
         EnsurePrivacyEpochCurrent(privacyEpoch);
         return decision;
     }
+
+    private static string NormalizeOutlawAiProvider(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "gemini" => "gemini",
+            "glm" => "glm",
+            _ => "auto"
+        };
 
     private long CapturePrivacyEpoch()
     {
