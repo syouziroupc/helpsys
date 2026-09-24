@@ -66,6 +66,9 @@ jobs:
       - name: Verify Outlaw 3.2.0 grounding and transition contract
         run: node tests/outlaw-3.2.0-grounding-contract.mjs
 
+      - name: Verify Outlaw 3.2.1 Windows shell surface contract
+        run: node tests/outlaw-3.2.1-shell-surface-contract.mjs
+
       - name: Check deployed Outlaw API generation
         shell: bash
         run: |
@@ -160,7 +163,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.2.0'
+          $version = '3.2.1'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -178,7 +181,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.2.0
+          Version: 3.2.1
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -215,20 +218,16 @@ jobs:
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
           - Dedicated Outlaw cloud planner with bounded client deadlines and Auto / GLM reasoning with Gemini disabled until configured
-          - Version 3.2.0 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Windows 11 Start/Search UIA evidence is fused across explorer, StartMenuExperienceHost, SearchHost, ShellExperienceHost and TextInputHost
+          - Shell host handoffs are re-scanned once instead of discarding the current Start/Search surface
+          - Version 3.2.1 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            $allowed = @($env:HELPSYS_VERSIONED_ASSET, $env:HELPSYS_STABLE_ASSET)
-            $oldAssets = @(gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name')
-            foreach ($old in $oldAssets) {
-              if (($old -like 'HelpSys-Outlaw-*.zip') -and $allowed -notcontains $old) {
-                gh release delete-asset $tag $old --yes --repo $env:GITHUB_REPOSITORY
-                if ($LASTEXITCODE -ne 0) { throw "Failed to delete stale Outlaw asset: $old" }
-              }
-            }
+            # Keep versioned historical packages. In particular, 3.2.0 remains the known-stable
+            # fallback while only the mutable "latest" alias is replaced by 3.2.1.
             gh release upload $tag $versioned $stable --clobber --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw 'Failed to upload outlaw release assets.' }
             gh release edit $tag --target $env:GITHUB_SHA --title "HelpSys Outlaw Preview" --notes $notes --repo $env:GITHUB_REPOSITORY
@@ -257,6 +256,10 @@ jobs:
           }
           if ($assets -notcontains $env:HELPSYS_VERSIONED_ASSET) {
             throw "Versioned pilot asset missing: $env:HELPSYS_VERSIONED_ASSET"
+          }
+          $stable320 = 'HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip'
+          if ($assets -notcontains $stable320) {
+            throw "Stable Outlaw 3.2.0 fallback asset was removed unexpectedly: $stable320"
           }
           Write-Host "Published $tag -> $($release.targetCommitish)"
           Write-Host "Release URL: $($release.url)"
