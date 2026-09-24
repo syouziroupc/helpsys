@@ -7,6 +7,7 @@ function assert(condition, message) {
 
 let nextDecision;
 let lastInvocation;
+let value;
 const env = {
   AI: {
     async run(model, args) {
@@ -75,7 +76,7 @@ const baseDone = {
 };
 
 nextDecision = { ...baseDone, screenConfirmed: false, visualEvidence: '' };
-let value = await ask({
+value = await ask({
   request: 'Excelを開いて',
   evidence: {
     screenshotAvailable: true,
