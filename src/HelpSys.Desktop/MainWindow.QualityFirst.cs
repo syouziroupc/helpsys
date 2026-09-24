@@ -11,6 +11,9 @@ public partial class MainWindow
     private const double MinimumQualityDoneConfidence = 0.65;
     private const double MinimumVisualOnlyTargetConfidence = 0.60;
     private const double MinimumStructuredFallbackConfidence = 0.60;
+    private ObservationSnapshot? _lastOutlawObservation;
+    private ScreenCaptureFrame? _lastOutlawFrame;
+    private bool _reuseLastOutlawObservationOnce;
 
     private async Task AdvanceGuideAsync()
     {
@@ -36,19 +39,36 @@ public partial class MainWindow
         {
             SetState("今の画面と操作できる場所を確認しています…", speak: false);
             ObservationSnapshot snapshot;
-            try
+            var reuseOutlawObservation = OutlawModePolicy.Enabled &&
+                _reuseLastOutlawObservationOnce &&
+                _lastOutlawObservation is not null &&
+                _lastOutlawFrame is not null &&
+                _observationBroker.IsCurrent(_lastOutlawObservation);
+            _reuseLastOutlawObservationOnce = false;
+
+            if (reuseOutlawObservation)
             {
-                snapshot = await _observationBroker.CaptureAsync(1200, cancellationToken);
+                snapshot = _lastOutlawObservation!;
+                LocalLogService.Write(
+                    "outlaw_observation_reused",
+                    $"sequence={snapshot.Sequence};fingerprint={snapshot.Fingerprint};reason=verified_no_effect");
             }
-            catch (ObservationChangedException)
+            else
             {
-                HandleTechnicalPlanningUncertainty("観測中に前面画面が切り替わった", generation);
-                return;
-            }
-            catch (InvalidOperationException)
-            {
-                HandleTechnicalPlanningUncertainty("前面ウィンドウを特定できない", generation);
-                return;
+                try
+                {
+                    snapshot = await _observationBroker.CaptureAsync(1200, cancellationToken);
+                }
+                catch (ObservationChangedException)
+                {
+                    HandleTechnicalPlanningUncertainty("観測中に前面画面が切り替わった", generation);
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                    HandleTechnicalPlanningUncertainty("前面ウィンドウを特定できない", generation);
+                    return;
+                }
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
@@ -78,28 +98,42 @@ public partial class MainWindow
             ScreenCaptureFrame frame;
             var visualCaptureStartedUtc = DateTime.UtcNow;
             DateTime visualCaptureCompletedUtc;
-            try
+            if (reuseOutlawObservation)
             {
-                frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
-                visualCaptureCompletedUtc = DateTime.UtcNow;
+                frame = _lastOutlawFrame!;
+                visualCaptureCompletedUtc = visualCaptureStartedUtc;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            else
             {
-                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-                if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
-                HandleTechnicalPlanningUncertainty("Privacy Gateにより画像を使えず、構造情報でも次の操作を確定できない", generation);
-                return;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch
-            {
-                if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
-                if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
-                HandleTechnicalPlanningUncertainty("画像を取得できず、構造情報でも次の操作を確定できない", generation);
-                return;
+                try
+                {
+                    frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
+                    visualCaptureCompletedUtc = DateTime.UtcNow;
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
+                    if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
+                    HandleTechnicalPlanningUncertainty("Privacy Gateにより画像を使えず、構造情報でも次の操作を確定できない", generation);
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return;
+                    if (candidates.Count > 0 && await TryFastStructuredPlanAsync(candidates, systemContext, generation, cancellationToken)) return;
+                    HandleTechnicalPlanningUncertainty("画像を取得できず、構造情報でも次の操作を確定できない", generation);
+                    return;
+                }
+
+                if (OutlawModePolicy.Enabled)
+                {
+                    _lastOutlawObservation = snapshot;
+                    _lastOutlawFrame = frame;
+                }
             }
 
             if (!_sessionState.IsCurrent(generation)) return;
@@ -110,7 +144,8 @@ public partial class MainWindow
             }
 
             var captureChangeUtc = _liveWatcher.LastChangeUtc;
-            if (captureChangeUtc is { } duringCapture &&
+            if (!reuseOutlawObservation &&
+                captureChangeUtc is { } duringCapture &&
                 duringCapture >= visualCaptureStartedUtc &&
                 duringCapture <= visualCaptureCompletedUtc)
             {
