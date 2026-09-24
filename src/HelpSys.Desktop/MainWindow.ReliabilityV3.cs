@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using HelpSys.Models;
 using HelpSys.Services;
@@ -200,6 +201,12 @@ public partial class MainWindow
             else if (verification == ActionVerificationResult.Success)
             {
                 _consecutiveFailures = 0;
+                if (OutlawModePolicy.Enabled)
+                {
+                    LocalLogService.Write(
+                        "outlaw_progress_verified",
+                        $"action={decision.Action};target={decision.TargetId ?? "none"};verification=expected_effect");
+                }
                 RecordOutlawGuidanceOutcome(
                     decision,
                     _currentTarget,
@@ -329,7 +336,8 @@ public partial class MainWindow
         try
         {
             var immediateSystem = _systemContext.Capture();
-            if (HasSystemTransitionV3(systemBefore, immediateSystem)) return ActionVerificationResult.Success;
+            if (HasExpectedSystemTransitionV3(expectation, systemBefore, immediateSystem, _activeRequest))
+                return ActionVerificationResult.Success;
 
             var initialDelay = action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
                 ? TimeSpan.FromMilliseconds(420)
@@ -351,7 +359,7 @@ public partial class MainWindow
             catch (ObservationChangedException)
             {
                 var current = _systemContext.Capture();
-                return HasSystemTransitionV3(systemBefore, current)
+                return HasExpectedSystemTransitionV3(expectation, systemBefore, current, _activeRequest)
                     ? ActionVerificationResult.Success
                     : ActionVerificationResult.Inconclusive;
             }
@@ -367,7 +375,8 @@ public partial class MainWindow
                 afterSnapshot.Elements,
                 afterSnapshot.System,
                 strong,
-                allowFocusOnly);
+                allowFocusOnly,
+                _activeRequest);
 
             if (expectedEffect) return ActionVerificationResult.Success;
 
@@ -390,10 +399,10 @@ public partial class MainWindow
         IReadOnlyList<UiElementCandidate> after,
         SystemContextSnapshot systemAfter,
         bool strong,
-        bool allowFocusOnly)
+        bool allowFocusOnly,
+        string? goal)
     {
-        // A foreground/window/browser transition is strong causal evidence for every action type.
-        if (HasSystemTransitionV3(systemBefore, systemAfter)) return true;
+        if (HasExpectedSystemTransitionV3(expectation, systemBefore, systemAfter, goal)) return true;
 
         var targetBefore = expectation.Target;
         var current = targetBefore is null ? null : FindMatchingTargetV3(targetBefore, after);
@@ -438,8 +447,8 @@ public partial class MainWindow
                     systemAfter,
                     strong,
                     allowFocusOnly,
-                    targetBefore,
-                    expectation.Action);
+                    expectation,
+                    goal);
         }
     }
 
@@ -450,14 +459,18 @@ public partial class MainWindow
         SystemContextSnapshot systemAfter,
         bool strong,
         bool allowFocusOnly,
-        UiElementCandidate? targetBefore,
-        string action)
+        ActionExpectation expectation,
+        string? goal)
     {
-        if (HasSystemTransitionV3(systemBefore, systemAfter)) return true;
+        var targetBefore = expectation.Target;
+        var action = expectation.Action;
+        if (HasExpectedSystemTransitionV3(expectation, systemBefore, systemAfter, goal)) return true;
         if (HasActionSpecificTransitionV3(targetBefore, after, action, systemBefore)) return true;
 
         var foreground = systemBefore?.ForegroundProcess ?? systemAfter.ForegroundProcess;
-        if (HasWindowSetTransitionV3(before, after, foreground)) return true;
+        var semanticEvidence = HasExpectedSemanticEvidenceV3(expectation, goal, after, systemAfter);
+        var targetDisappeared = targetBefore is not null && FindMatchingTargetV3(targetBefore, after) is null;
+        if (HasWindowSetTransitionV3(before, after, foreground) && (semanticEvidence || targetDisappeared)) return true;
 
         if (allowFocusOnly)
         {
@@ -477,7 +490,93 @@ public partial class MainWindow
         if (Math.Abs(beforeKeys.Count - afterKeys.Count) >= countThreshold) return true;
         var overlap = beforeKeys.Count(x => afterKeys.Contains(x));
         var similarity = overlap / (double)Math.Max(beforeKeys.Count, afterKeys.Count);
-        return similarity < (strong ? 0.72 : 0.82);
+        var substantialContentChange = similarity < (strong ? 0.72 : 0.82);
+        return substantialContentChange && (semanticEvidence || targetDisappeared);
+    }
+
+    private static bool HasExpectedSystemTransitionV3(
+        ActionExpectation expectation,
+        SystemContextSnapshot? before,
+        SystemContextSnapshot after,
+        string? goal)
+    {
+        if (before is null) return false;
+        if (after.ForegroundProcessId <= 0 || string.IsNullOrWhiteSpace(after.ForegroundProcess)) return false;
+
+        var ownershipChanged =
+            (before.ForegroundProcessId > 0 && after.ForegroundProcessId > 0 &&
+             before.ForegroundProcessId != after.ForegroundProcessId) ||
+            !before.ForegroundProcess.Equals(after.ForegroundProcess, StringComparison.OrdinalIgnoreCase);
+
+        var browserChanged = false;
+        if (before.Browser is not null || after.Browser is not null)
+        {
+            var beforeTitle = before.ForegroundTitle?.Trim() ?? string.Empty;
+            var afterTitle = after.ForegroundTitle?.Trim() ?? string.Empty;
+            var beforeUrl = before.Browser?.Url ?? string.Empty;
+            var afterUrl = after.Browser?.Url ?? string.Empty;
+            browserChanged =
+                (!string.IsNullOrWhiteSpace(afterTitle) &&
+                 !beforeTitle.Equals(afterTitle, StringComparison.Ordinal)) ||
+                (!string.IsNullOrWhiteSpace(afterUrl) &&
+                 !beforeUrl.Equals(afterUrl, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!ownershipChanged && !browserChanged) return false;
+        return HasExpectedSemanticEvidenceV3(expectation, goal, Array.Empty<UiElementCandidate>(), after);
+    }
+
+    private static bool HasExpectedSemanticEvidenceV3(
+        ActionExpectation expectation,
+        string? goal,
+        IReadOnlyList<UiElementCandidate> after,
+        SystemContextSnapshot systemAfter)
+    {
+        var anchors = BuildExpectedStateAnchorsV3(goal, expectation.Target?.Name);
+        if (anchors.Count == 0) return false;
+
+        var visibleText = string.Join(
+            " ",
+            after
+                .Where(x => !x.Password && x.ControlType is not ("Edit" or "ComboBox"))
+                .Select(x => x.Name)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(120));
+
+        var haystack = $"{systemAfter.ForegroundProcess} {systemAfter.ForegroundTitle} {systemAfter.Browser?.Domain} {systemAfter.Browser?.Url} {visibleText}"
+            .ToLowerInvariant();
+
+        return anchors.Any(anchor => haystack.Contains(anchor, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<string> BuildExpectedStateAnchorsV3(string? goal, string? targetName)
+    {
+        var source = $"{goal ?? string.Empty} {targetName ?? string.Empty}";
+        var anchors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stop = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "click","button","left","right","open","search","enter","next",
+            "クリック","ボタン","押す","押して","開く","検索","次へ","画面","案内"
+        };
+
+        foreach (Match match in Regex.Matches(source, @"[A-Za-z][A-Za-z0-9._:/-]{2,}"))
+        {
+            var token = match.Value.Trim().Trim('.', ',', ':', ';', '/', '\\').ToLowerInvariant();
+            if (token.Length >= 3 && token.Length <= 80 && !stop.Contains(token))
+                anchors.Add(token);
+        }
+
+        if (!string.IsNullOrWhiteSpace(targetName))
+        {
+            foreach (var piece in Regex.Split(targetName, @"[\s\p{P}\p{S}]+"))
+            {
+                var token = piece.Trim().ToLowerInvariant();
+                if (token.Length >= 2 && token.Length <= 24 && !stop.Contains(token))
+                    anchors.Add(token);
+            }
+        }
+
+        return anchors.Take(12).ToArray();
     }
 
     private static bool HasActionSpecificTransitionV3(
