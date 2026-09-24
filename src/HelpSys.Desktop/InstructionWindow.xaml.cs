@@ -23,32 +23,40 @@ public partial class InstructionWindow : Window
         if (!IsVisible) Show();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var dpiScale = MonitorPlacementService.GetDpiScaleForBounds(physicalBounds);
-        var width = Math.Max(1, (int)Math.Round(380 * dpiScale));
-        var height = Math.Max(1, (int)Math.Round(76 * dpiScale));
-        var gap = Math.Max(1, (int)Math.Round(14 * dpiScale));
         var work = MonitorPlacementService.GetWorkAreaForBounds(physicalBounds);
-        var centerX = physicalBounds.Left + physicalBounds.Width / 2d;
-        var x = (int)Math.Round(centerX - width / 2d);
-        x = Math.Clamp(x, work.Left, Math.Max(work.Left, work.Right - width));
 
-        var above = (int)Math.Floor(physicalBounds.Top) - height - gap;
-        var below = (int)Math.Ceiling(physicalBounds.Bottom) + gap;
-        var y = above >= work.Top ? above : below;
-        y = Math.Clamp(y, work.Top, Math.Max(work.Top, work.Bottom - height));
+        static (int X, int Y, int Width, int Height) Geometry(Rect target, MonitorPlacementService.WorkArea workArea, double scale)
+        {
+            var width = Math.Max(1, (int)Math.Round(380 * scale));
+            var height = Math.Max(1, (int)Math.Round(76 * scale));
+            var gap = Math.Max(1, (int)Math.Round(14 * scale));
+            var centerX = target.Left + target.Width / 2d;
+            var x = (int)Math.Round(centerX - width / 2d);
+            x = Math.Clamp(x, workArea.Left, Math.Max(workArea.Left, workArea.Right - width));
+            var above = (int)Math.Floor(target.Top) - height - gap;
+            var below = (int)Math.Ceiling(target.Bottom) + gap;
+            var y = above >= workArea.Top ? above : below;
+            y = Math.Clamp(y, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
+            return (x, y, width, height);
+        }
 
-        var positioned = SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        var initial = Geometry(physicalBounds, work, 1d);
+        var initialPositioned = SetWindowPos(hwnd, HwndTopmost, initial.X, initial.Y, initial.Width, initial.Height, SwpNoActivate | SwpShowWindow);
+        var dpiScale = MonitorPlacementService.GetDpiScaleForWindow(hwnd);
+        var final = Geometry(physicalBounds, work, dpiScale);
+        var positioned = SetWindowPos(hwnd, HwndTopmost, final.X, final.Y, final.Width, final.Height, SwpNoActivate | SwpShowWindow);
+
         if (MonitorPlacementService.TryGetWindowBounds(hwnd, out var actual))
         {
             LocalLogService.Write(
                 "instruction_placement",
-                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual={actual}");
+                $"initialOk={initialPositioned};ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(final.X, final.Y, final.Width, final.Height)};actual={actual}");
         }
         else
         {
             LocalLogService.Write(
                 "instruction_placement",
-                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual=unavailable;win32={Marshal.GetLastWin32Error()}");
+                $"initialOk={initialPositioned};ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(final.X, final.Y, final.Width, final.Height)};actual=unavailable;win32={Marshal.GetLastWin32Error()}");
         }
     }
 
