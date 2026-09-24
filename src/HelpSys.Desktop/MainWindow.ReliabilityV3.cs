@@ -330,6 +330,8 @@ public partial class MainWindow
         var expectation = _currentDecision is not null
             ? ActionExpectation.From(_currentDecision, targetBefore)
             : new ActionExpectation(ActionEffectKind.NavigationOrContentChange, action, targetBefore);
+        var applicationLaunch = OutlawModePolicy.Enabled &&
+                                IsLikelyApplicationLaunchActionV3(action, targetBefore, systemBefore, _activeRequest);
 
         // The watcher is WinEvent-based. Do not poll UIA repeatedly while waiting for the action.
         var changedSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -341,17 +343,43 @@ public partial class MainWindow
             if (HasExpectedSystemTransitionV3(expectation, systemBefore, immediateSystem, _activeRequest))
                 return ActionVerificationResult.Success;
 
-            var initialDelay = action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
-                ? TimeSpan.FromMilliseconds(420)
-                : TimeSpan.FromMilliseconds(220);
+            var initialDelay = applicationLaunch
+                ? TimeSpan.FromMilliseconds(520)
+                : action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
+                    ? TimeSpan.FromMilliseconds(420)
+                    : TimeSpan.FromMilliseconds(220);
             await Task.Delay(initialDelay, cancellationToken);
 
-            var timeout = Task.Delay(TimeSpan.FromMilliseconds(2600), cancellationToken);
-            await Task.WhenAny(changedSignal.Task, timeout);
-            cancellationToken.ThrowIfCancellationRequested();
+            if (applicationLaunch)
+            {
+                // A desktop/Start application launch can emit selection/focus events well before
+                // the new process owns the foreground. Do not let that first transient event end
+                // verification. Poll only cheap foreground metadata, not UIA, for a bounded launch
+                // window and accept immediately when the requested application actually appears.
+                var launchDeadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(6500);
+                while (DateTime.UtcNow < launchDeadline)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var launchSystem = _systemContext.Capture();
+                    if (HasExpectedSystemTransitionV3(expectation, systemBefore, launchSystem, _activeRequest))
+                    {
+                        LocalLogService.Write(
+                            "outlaw_application_launch_verified",
+                            $"target={targetBefore?.Name ?? "unknown"};foreground={launchSystem.ForegroundProcess};title={launchSystem.ForegroundTitle}");
+                        return ActionVerificationResult.Success;
+                    }
+                    await Task.Delay(250, cancellationToken);
+                }
+            }
+            else
+            {
+                var timeout = Task.Delay(TimeSpan.FromMilliseconds(2600), cancellationToken);
+                await Task.WhenAny(changedSignal.Task, timeout);
+                cancellationToken.ThrowIfCancellationRequested();
 
-            if (changedSignal.Task.IsCompleted)
-                await Task.Delay(180, cancellationToken);
+                if (changedSignal.Task.IsCompleted)
+                    await Task.Delay(180, cancellationToken);
+            }
 
             ObservationSnapshot afterSnapshot;
             try
@@ -392,6 +420,24 @@ public partial class MainWindow
         {
             _liveWatcher.Changed -= handler;
         }
+    }
+
+    private static bool IsLikelyApplicationLaunchActionV3(
+        string action,
+        UiElementCandidate? target,
+        SystemContextSnapshot? systemBefore,
+        string? goal)
+    {
+        if (target is null || systemBefore is null || string.IsNullOrWhiteSpace(goal)) return false;
+        if (action is not ("left_click" or "double_click")) return false;
+        if (!IsWindowsShellProcessName(systemBefore.ForegroundProcess)) return false;
+
+        var app = ResolveRequestedApplication(goal);
+        if (app is null) return false;
+
+        var targetText = $"{target.Name} {target.AutomationId} {target.ClassName}";
+        return app.Aliases.Any(alias =>
+            targetText.Contains(alias, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HasExpectedEffectV3(
