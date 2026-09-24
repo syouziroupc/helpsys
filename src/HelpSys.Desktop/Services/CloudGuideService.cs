@@ -250,7 +250,7 @@ public sealed class CloudGuideService : IDisposable
                            ?? throw new JsonException("empty response");
             LocalLogService.SaveJson("outlaw-decision", decision);
             LocalLogService.Write("outlaw_decision",
-                $"status={decision.Status};action={decision.Action};target={decision.TargetId};confidence={decision.Confidence:F3}");
+                $"provider={body.aiProvider};status={decision.Status};action={decision.Action};target={decision.TargetId};confidence={decision.Confidence:F3}");
             return decision;
         }
         catch (JsonException ex)
@@ -343,7 +343,7 @@ public sealed class CloudGuideService : IDisposable
         {
             throw new GuideServiceException(
                 GuideFailureKind.Network,
-                "無法者版GLM APIへの通信に失敗しました。",
+                "無法者版案内APIへの通信に失敗しました。",
                 ex);
         }
 
