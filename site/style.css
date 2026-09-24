@@ -154,6 +154,8 @@ kbd { padding: 2px 6px; border: 1px solid rgba(255,255,255,.17); border-bottom-c
   background: linear-gradient(160deg, rgba(117,167,255,.08), rgba(255,255,255,.018));
 }
 .download-card h3 { margin: 0 0 12px; font-size: 27px; }
+.download-card h3 small { font-size: .52em; color: var(--muted); font-weight: 650; white-space: nowrap; }
+
 .download-card > p:not(.eyebrow) { flex: 1; margin: 0 0 28px; color: var(--muted); font-size: 14px; }
 
 .split-section { display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; align-items: start; }
