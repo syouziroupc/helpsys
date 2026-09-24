@@ -66,6 +66,10 @@ need(watcher, 'public DateTime? LastChangeUtc',
   'planner must be able to reject vision coordinates after same-window WinEvent changes');
 need(quality, '"outlaw_visual_capture_changed"',
   'visual evidence must be discarded when the observed UI changes during screenshot capture');
+need(quality, '_reuseLastOutlawObservationOnce',
+  'Outlaw must support one bounded same-observation alternate plan after a verified no-effect action');
+need(quality, '"outlaw_observation_reused"',
+  'Outlaw must log when it reuses the immutable observation instead of recapturing the same screen');
 need(quality, '"outlaw_stale_vision_target"',
   'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
 need(quality, 'OutlawModePolicy.Enabled || quality.Confidence >= MinimumStructuredFallbackConfidence',
