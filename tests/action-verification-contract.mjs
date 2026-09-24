@@ -1,5 +1,6 @@
-const deepAudit = fs.readFileSync('src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs', 'utf8');
 import fs from 'node:fs';
+
+const deepAudit = fs.readFileSync('src/HelpSys.Desktop/MainWindow.DeepAuditGuards.cs', 'utf8');
 
 const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs', 'utf8');
 const normalized = reliability.replace(/\s+/g, ' ').trim();
