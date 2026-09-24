@@ -20,6 +20,17 @@ public partial class MainWindow
         var searchText = ResolveBeginnerWebSearchText(_activeRequest);
         if (string.IsNullOrWhiteSpace(searchText)) return false;
 
+        // The fast path is only for the first natural-language search on a fresh/home page.
+        // Once we already instructed this query to be typed, the next screen must be judged
+        // normally (e.g. search results, YouTube home, consent page) instead of typing it again.
+        if (_history.Any(h =>
+                h.Action.Equals("type_text", StringComparison.OrdinalIgnoreCase) &&
+                h.Instruction.Contains(searchText, StringComparison.OrdinalIgnoreCase)))
+        {
+            LocalLogService.Write("outlaw_local_browser_search_skipped", $"reason=query_already_submitted;query={searchText}");
+            return false;
+        }
+
         var searchField = candidates
             .Where(x =>
                 x.ProcessId == context.ForegroundProcessId &&
