@@ -97,7 +97,11 @@ public sealed class ObservationBroker
     }
 
     public bool IsCurrent(ObservationSnapshot snapshot)
-        => HasSameIdentity(snapshot.System, _systemContext.Capture());
+    {
+        var current = _systemContext.Capture();
+        return HasSameIdentity(snapshot.System, current) ||
+               (OutlawModePolicy.Enabled && HasSameShellSurface(snapshot.System, current));
+    }
 
     private static IReadOnlyList<UiElementCandidate> KeepForegroundProcessEvidence(
         IReadOnlyList<UiElementCandidate> elements,
