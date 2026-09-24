@@ -59,6 +59,37 @@ public partial class MainWindow : Window
         Closing += OnClosing;
         _actionObserver.LeftClick += OnObservedLeftClickV3;
         _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
+        ApplyAiProviderSelection(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER") ?? "auto");
+    }
+
+    private void AiProviderBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (AiProviderBox?.SelectedItem is not System.Windows.Controls.ComboBoxItem item) return;
+        ApplyAiProviderSelection(item.Tag?.ToString() ?? "auto");
+    }
+
+    private void ApplyAiProviderSelection(string provider)
+    {
+        provider = provider.ToLowerInvariant() switch
+        {
+            "gemini" => "gemini",
+            "glm" => "glm",
+            _ => "auto"
+        };
+
+        Environment.SetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER", provider, EnvironmentVariableTarget.Process);
+
+        if (AiProviderBox is not null)
+        {
+            foreach (var value in AiProviderBox.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+                if (string.Equals(value.Tag?.ToString(), provider, StringComparison.OrdinalIgnoreCase))
+                {
+                    AiProviderBox.SelectedItem = value;
+                    break;
+                }
+        }
+
+        LocalLogService.Write("ai_provider", provider);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
