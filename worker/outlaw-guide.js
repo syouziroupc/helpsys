@@ -48,6 +48,8 @@ EVIDENCE RULES:
 - status=not_found is a last resort. clarify is only for a genuine USER choice with materially different outcomes.
 - If the user is on the wrong screen, guide the smallest grounded correction toward the goal.
 - A desktop shortcut normally needs double_click. Standard buttons/menu items/taskbar buttons normally need one left click.
+- If the requested goal needs a browser and that browser is already running, prefer bringing its visible taskbar/window surface forward over launching a generic browser shortcut, when that action is grounded in current evidence.
+- If a browser/profile/account chooser exposes two or more distinct identities, never infer the user's identity from shortcut names, history, or likely usage. Return clarify so the desktop can present the visible choices directly.
 - Keep the Japanese instruction concrete and short.
 
 OUTPUT:
