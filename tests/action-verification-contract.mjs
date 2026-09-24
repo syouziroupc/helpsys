@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 
 const reliability = fs.readFileSync('src/HelpSys.Desktop/MainWindow.ReliabilityV3.cs', 'utf8');
+const normalized = reliability.replace(/\s+/g, ' ').trim();
 
 function need(fragment, message) {
-  if (!reliability.includes(fragment)) throw new Error(message);
+  if (!normalized.includes(String(fragment).replace(/\s+/g, ' ').trim())) throw new Error(message);
 }
 
 for (const state of ['Success', 'NoEffect', 'Inconclusive'])
@@ -19,7 +20,7 @@ need('"action_verification_inconclusive"',
   'inconclusive verification must be logged explicitly');
 need('HandleTechnicalPlanningUncertainty("操作結果の検証が不確定", generation);',
   'inconclusive verification must request one bounded fresh observation');
-need('changedSignal.Task.IsCompleted\n                ? ActionVerificationResult.Inconclusive\n                : ActionVerificationResult.NoEffect',
+need('changedSignal.Task.IsCompleted ? ActionVerificationResult.Inconclusive : ActionVerificationResult.NoEffect',
   'an observed UI event without a provable expected effect must not be mislabeled as no-effect');
 
 const inconclusiveStart = reliability.indexOf('else\n            {\n                LocalLogService.Write(\n                    "action_verification_inconclusive"');

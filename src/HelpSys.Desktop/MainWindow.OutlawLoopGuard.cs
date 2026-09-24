@@ -74,10 +74,15 @@ public partial class MainWindow
 
         if (changed)
         {
-            ResetOutlawLoopGuard();
+            // Keep failed state-action keys for the lifetime of this guidance session.
+            // Their keys already include the semantic UI state, so progress naturally moves to
+            // different keys while returning to a previously failed state remains protected.
+            _outlawLastPresentedGuidanceKey = string.Empty;
             ResetCurrentStateReplanBudget();
             ResetResilienceRecovery();
-            LocalLogService.Write("outlaw_progress_verified", $"action={decision.Action};key={key}");
+            LocalLogService.Write(
+                "outlaw_progress_verified",
+                $"action={decision.Action};key={key};retainedFailedKeys={_outlawFailedGuidanceKeys.Count}");
             return;
         }
 

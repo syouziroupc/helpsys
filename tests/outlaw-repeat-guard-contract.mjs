@@ -44,8 +44,10 @@ need(guard,
   'outlaw_repeat_blocked',
   'Outlaw repeat guard must write an explicit local history/log event');
 need(guard,
-  'ResetCurrentStateReplanBudget(); ResetResilienceRecovery();',
-  'Outlaw recovery budgets must reset only after verified progress');
+  '_outlawLastPresentedGuidanceKey = string.Empty; ResetCurrentStateReplanBudget(); ResetResilienceRecovery();',
+  'verified progress must reset transient recovery budgets without clearing failed state-action memory');
+if (normalize(guard).includes(normalize('if (changed) { ResetOutlawLoopGuard();')))
+  throw new Error('verified progress must not erase failed state-action keys from earlier states in the same session');
 
 console.log('HelpSys Outlaw repeat-guard contract passed.');
 
