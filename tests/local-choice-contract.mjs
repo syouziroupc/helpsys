@@ -73,3 +73,8 @@ const directChoice = quality.indexOf('TryPresentOutlawVisibleChoiceButtons(candi
 const technicalFallback = quality.indexOf('モデルが選択を要求したが現在画面から直接選択肢を構成できない', directChoice);
 if (outlawClarify < 0 || directChoice < 0 || technicalFallback < 0)
   throw new Error('Outlaw clarification must prefer direct visible-choice UI and avoid open-ended questioning');
+
+if (!quality.includes('高速構造判断が選択を要求したが現在画面から直接選択肢を構成できない'))
+  throw new Error('Outlaw fast structured fallback must not drop into free-text clarification');
+if (!quality.includes('(!OutlawModePolicy.Enabled && quick.Confidence < 0.93)'))
+  throw new Error('Outlaw fast structured fallback must not apply the normal confidence veto');
