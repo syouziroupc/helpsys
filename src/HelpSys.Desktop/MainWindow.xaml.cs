@@ -59,7 +59,7 @@ public partial class MainWindow : Window
         Closing += OnClosing;
         _actionObserver.LeftClick += OnObservedLeftClickV3;
         _actionObserver.KeyReleased += OnObservedKeyReleasedV3;
-        ApplyAiProviderSelection(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER") ?? "auto");
+        ApplyAiProviderSelection(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER") ?? "glm");
     }
 
     private void AiProviderBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
