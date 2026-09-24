@@ -23,10 +23,12 @@ const PRODUCTION_BASE = 'https://helpsys.syouziroupc.workers.dev';
 const DOWNLOAD_ROUTE = '/download';
 const LEGACY_SAFE_ROUTE = '/download/safe';
 const EDUCATION_ROUTE = '/download/education';
+const OUTLAW_ROUTE = '/download/outlaw';
 const STABLE_ALIAS = 'HelpSys-latest-win-x64.zip';
 const EDUCATION_ALIAS = 'HelpSys-Education-latest-win-x64.zip';
 const DEST = `https://github.com/syouziroupc/helpsys/releases/download/preview-latest/${STABLE_ALIAS}`;
 const EDUCATION_DEST = `https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/${EDUCATION_ALIAS}`;
+const OUTLAW_DEST = 'https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-latest-win-x64.zip';
 
 function redirectMap(text) {
   const map = new Map();
@@ -46,6 +48,7 @@ assert(routeMap.get(DOWNLOAD_ROUTE)?.destination === DEST, '/download must resol
 assert(routeMap.get(DOWNLOAD_ROUTE)?.code === '302', '/download redirect must stay temporary so the stable asset can be replaced.');
 assert(routeMap.get(LEGACY_SAFE_ROUTE)?.destination === DEST, 'Legacy /download/safe must resolve to the same unified asset.');
 assert(routeMap.get(EDUCATION_ROUTE)?.destination === EDUCATION_DEST, 'Education route must keep its stable asset.');
+assert(routeMap.get(OUTLAW_ROUTE)?.destination === OUTLAW_DEST, 'Outlaw route must remain isolated on outlaw-latest.');
 
 assert(index.includes(`href="${DOWNLOAD_ROUTE}"`), 'Public site must expose the unified stable download route.');
 assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site must expose Education.');
@@ -57,7 +60,8 @@ assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL 
 assert(release.includes('branches: [main]'), 'Unified release must publish from main.');
 assert(!release.includes('paths:'), 'Unified latest release must not silently skip main updates because of a path filter.');
 assert(release.includes(STABLE_ALIAS), 'Release workflow must publish the stable HelpSys alias.');
-assert(release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Release workflow must also publish a traceable commit-specific asset.');
+assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'Stable release must publish a traceable Stable-specific asset.');
+assert(!release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Stable release must not expose the old unified migration package.');
 assert(release.includes('--clobber'), 'Stable latest asset must be replaced in-place on every release run.');
 assert(release.includes('cancel-in-progress: true'), 'Concurrent main updates must not race when replacing preview-latest.');
 assert(release.includes('-p:PublishReadyToRun=true'), 'Unified distribution should use ReadyToRun for faster startup.');
