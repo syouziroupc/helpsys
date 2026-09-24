@@ -69,6 +69,9 @@ jobs:
       - name: Verify Outlaw 3.2.1 Windows shell surface contract
         run: node tests/outlaw-3.2.1-shell-surface-contract.mjs
 
+      - name: Verify Outlaw 3.2.2 application launch and stale-planner contract
+        run: node tests/outlaw-3.2.2-launch-replan-contract.mjs
+
       - name: Check deployed Outlaw API generation
         shell: bash
         run: |
@@ -163,7 +166,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.2.1'
+          $version = '3.2.2'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -181,7 +184,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.2.1
+          Version: 3.2.2
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -220,7 +223,10 @@ jobs:
           - Dedicated Outlaw cloud planner with bounded client deadlines and Auto / GLM reasoning with Gemini disabled until configured
           - Windows 11 Start/Search UIA evidence is fused across explorer, StartMenuExperienceHost, SearchHost, ShellExperienceHost and TextInputHost
           - Shell host handoffs are re-scanned once instead of discarding the current Start/Search surface
-          - Version 3.2.1 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Known desktop application goals can enter Start locally instead of waiting for visual geometry
+          - Slow app activation waits for the requested foreground process before replanning
+          - Stale planner results trigger one bounded fresh observation
+          - Version 3.2.2 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
@@ -260,6 +266,10 @@ jobs:
           $stable320 = 'HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip'
           if ($assets -notcontains $stable320) {
             throw "Stable Outlaw 3.2.0 fallback asset was removed unexpectedly: $stable320"
+          }
+          $previous321 = @($assets | Where-Object { $_ -like 'HelpSys-Outlaw-3.2.1-*-win-x64.zip' })
+          if ($previous321.Count -lt 1) {
+            throw 'Previous Outlaw 3.2.1 asset was removed unexpectedly.'
           }
           Write-Host "Published $tag -> $($release.targetCommitish)"
           Write-Host "Release URL: $($release.url)"
