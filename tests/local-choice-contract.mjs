@@ -84,3 +84,10 @@ if (!main.includes('HELPSYS_OUTLAW_AI_PROVIDER") ?? "glm"'))
 const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
 if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
   throw new Error('Pilot Outlaw provider selector must visibly default to GLM');
+
+if (!local.includes('TryPresentOutlawIdentityChoiceButtons'))
+  throw new Error('Outlaw must locally intercept visible identity/profile choices before cloud planning');
+if (!local.includes('profileCardButton') || !local.includes('outlaw_identity_choice'))
+  throw new Error('Outlaw identity-choice fast path must specifically recognize profile-card choices and log them');
+if (!quality.includes('TryPresentOutlawIdentityChoiceButtons(candidates, systemContext, generation)'))
+  throw new Error('Outlaw must run identity-choice exception handling before screenshot/cloud planning');
