@@ -1,7 +1,7 @@
 import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTask } from './windows-knowledge.js';
 
 const DEFAULT_MODEL = '@cf/zai-org/glm-5.3-flash';
-const MAX_UI_ELEMENTS = 96;
+const MAX_UI_ELEMENTS = 160;
 const MAX_HISTORY = 8;
 const MAX_IMAGE_CHARS = 6_500_000;
 const MIN_TARGET_CONFIDENCE = 0.80;
@@ -107,13 +107,16 @@ export default {
     if (!goal || goal.length > 1600) return json({ error: 'invalid_request' }, 400);
     if (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_IMAGE_CHARS) return json({ error: 'invalid_image' }, 400);
 
+    const systemContext = compactSystemContext(body?.systemContext);
     const elements = Array.isArray(body?.elements)
-      ? body.elements.slice(0, MAX_UI_ELEMENTS).map(compactElement).filter(Boolean)
+      ? rankElementsForGoal(goal, body.elements, systemContext)
+          .slice(0, MAX_UI_ELEMENTS)
+          .map(compactElement)
+          .filter(Boolean)
       : [];
     const history = Array.isArray(body?.history)
       ? body.history.slice(-MAX_HISTORY).map(compactHistory).filter(Boolean)
       : [];
-    const systemContext = compactSystemContext(body?.systemContext);
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
     const recoveryMode = body?.recoveryMode === true;
     const routeIssue = text(body?.routeIssue, 180);
@@ -464,6 +467,62 @@ function extractToolArguments(result, toolName) {
     }
   }
   return null;
+}
+
+function rankElementsForGoal(goal, rawElements, systemContext) {
+  const goalText = normalizeRankText(goal);
+  const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
+
+  return rawElements
+    .map((value, index) => ({ value, index, score: scoreElementForGoal(value, goalText, foreground) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(x => x.value);
+}
+
+function scoreElementForGoal(value, goalText, foreground) {
+  if (!value || typeof value !== 'object') return -10000;
+
+  let score = 0;
+  const process = String(value.processName ?? value.ProcessName ?? '').toLowerCase();
+  const name = normalizeRankText(value.name ?? value.Name);
+  const automationId = normalizeRankText(value.automationId ?? value.AutomationId);
+  const className = normalizeRankText(value.className ?? value.ClassName);
+  const controlType = String(value.controlType ?? value.ControlType ?? '').toLowerCase();
+  const interactable = (value.interactable ?? value.Interactable) !== false;
+  const enabled = (value.enabled ?? value.Enabled) !== false;
+  const focused = (value.focused ?? value.Focused) === true;
+
+  if (foreground && process === foreground) score += 120;
+  if (focused) score += 100;
+  if (interactable) score += 45;
+  if (enabled) score += 15;
+  if (/button|menuitem|hyperlink|edit|combobox|listitem|tabitem|treeitem/.test(controlType)) score += 15;
+
+  for (const candidate of [name, automationId, className]) {
+    if (!candidate || candidate.length < 2) continue;
+    if (goalText.includes(candidate)) score += 180;
+    else if (candidate.includes(goalText) && goalText.length >= 2) score += 100;
+    else score += sharedRankSubstring(goalText, candidate);
+  }
+
+  return score;
+}
+
+function sharedRankSubstring(goal, candidate) {
+  const max = Math.min(12, goal.length, candidate.length);
+  for (let len = max; len >= 2; len--) {
+    for (let i = 0; i + len <= candidate.length; i++) {
+      if (goal.includes(candidate.slice(i, i + len))) return Math.min(90, len * 9);
+    }
+  }
+  return 0;
+}
+
+function normalizeRankText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
 }
 
 function compactElement(value) {

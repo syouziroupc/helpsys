@@ -39,6 +39,35 @@ function payload() {
   return JSON.parse(lastInvocation?.args?.messages?.[1]?.content || '{}');
 }
 
+
+// Candidate ranking regression: a task-relevant control must survive even when it appears
+// after a large amount of unrelated full-desktop UIA noise.
+const noisyElements = Array.from({ length: 220 }, (_, i) => ({
+  id: `noise-${i}`, name: `unrelated control ${i}`, controlType: 'Button',
+  processName: 'background', interactable: true, enabled: true
+}));
+noisyElements.push({
+  id: 'late-settings', name: '設定', automationId: 'Settings', controlType: 'Button',
+  processName: 'SearchHost', interactable: true, enabled: true
+});
+nextDecision = {
+  status: 'target', targetId: 'late-settings', action: 'left_click',
+  instruction: '設定を1回押してください。', question: null, key: null,
+  confidence: 0.98, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: true, visualEvidence: '設定が見える', observedDomain: null, sponsored: false
+};
+value = await ask({
+  request: '設定を開いて',
+  systemContext: { foregroundProcess: 'SearchHost', foregroundProcessId: 30, runningApps: [] },
+  elements: noisyElements
+});
+assert(value.status === 'target' && value.targetId === 'late-settings',
+  'goal-ranked compaction must retain a relevant control even when it occurs after the old positional cutoff');
+assert(payload().uiElements.some(x => x.id === 'late-settings'),
+  'task-relevant late UIA target must reach the multimodal planner');
+assert(payload().uiElements.length <= 160,
+  'goal-ranked UIA payload must remain bounded after ranking');
+
 const baseDone = {
   status: 'done', targetId: null, action: 'none', instruction: '目的の画面です。', question: null, key: null,
   confidence: 0.97, x: 0, y: 0, width: 0, height: 0,
