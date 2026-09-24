@@ -69,7 +69,7 @@ need(watcher, 'if (unchecked((int)pid) != scope) return;',
   'Background object/property churn must remain scoped to the current foreground process');
 need(watcher, 'public DateTime? LastChangeUtc',
   'planner must be able to reject vision coordinates after same-window WinEvent changes');
-need(quality, '"outlaw_visual_capture_changed"',
+need(quality, '"outlaw_visual_capture_stale"',
   'visual evidence must be discarded when the observed UI changes during screenshot capture');
 need(quality, '_reuseLastOutlawObservationOnce',
   'Outlaw must support one bounded same-observation alternate plan after a verified no-effect action');
@@ -77,6 +77,10 @@ need(quality, '"outlaw_observation_reused"',
   'Outlaw must log when it reuses the immutable observation instead of recapturing the same screen');
 need(quality, '"outlaw_stale_vision_target"',
   'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
+need(quality, 'SnapToAccessibleCandidateAsync',
+  'vision-only targets should hit-test UI Automation at the proposed location when possible');
+need(quality, 'IsVisualTargetOnCurrentSurface',
+  'vision-only targets must remain inside the current foreground surface');
 need(quality, 'OutlawModePolicy.Enabled || quality.Confidence >= MinimumStructuredFallbackConfidence',
   'Outlaw structured targets must not be rejected solely by the normal confidence threshold');
 need(quality, '(!OutlawModePolicy.Enabled && quality.Confidence < MinimumQualityTargetConfidence)',
