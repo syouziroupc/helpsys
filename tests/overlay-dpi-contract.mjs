@@ -29,7 +29,7 @@ if (!manifest.includes('PerMonitorV2'))
 
 console.log('HelpSys per-monitor overlay DPI contract passed.');
 
-if (!project.includes('<Version>3.1.9</Version>') || !project.includes('<FileVersion>3.1.9.0</FileVersion>'))
-  throw new Error('Outlaw executable version metadata must identify the 3.1.9 build line');
-if (!release.includes("$version = '3.1.9'") || !release.includes('Version: 3.1.9'))
+if (!project.includes('<Version>3.2.0</Version>') || !project.includes('<FileVersion>3.2.0.0</FileVersion>'))
+  throw new Error('Outlaw executable version metadata must identify the 3.2.0 build line');
+if (!release.includes("$version = '3.2.0'") || !release.includes('Version: 3.2.0'))
   throw new Error('Outlaw release ZIP and VERSION.txt must stay synchronized with executable version metadata');
