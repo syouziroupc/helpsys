@@ -78,3 +78,8 @@ if (!quality.includes('高速構造判断が選択を要求したが現在画面
   throw new Error('Outlaw fast structured fallback must not drop into free-text clarification');
 if (!quality.includes('(!OutlawModePolicy.Enabled && quick.Confidence < 0.93)'))
   throw new Error('Outlaw fast structured fallback must not apply the normal confidence veto');
+
+if (!mainWindow.includes('HELPSYS_OUTLAW_AI_PROVIDER") ?? "glm"'))
+  throw new Error('Pilot Outlaw build must default to GLM unless the user explicitly selects another provider');
+if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
+  throw new Error('Pilot Outlaw provider selector must visibly default to GLM');
