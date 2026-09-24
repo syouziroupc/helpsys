@@ -20,6 +20,14 @@ need('verification == ActionVerificationResult.Success',
   'confirmed expected effects must advance the session');
 need('"action_verification_inconclusive"',
   'inconclusive verification must be logged explicitly');
+need('HasExpectedSystemTransitionV3(',
+  'screen changes must be checked against the expected destination rather than accepted generically');
+need('HasExpectedSemanticEvidenceV3(',
+  'navigation/content verification must require destination semantic evidence');
+need('substantialContentChange && (semanticEvidence || targetDisappeared)',
+  'generic content churn alone must not count as successful progress');
+need('"outlaw_progress_verified"',
+  'accepted expected progress must be logged explicitly');
 need('HandleTechnicalPlanningUncertainty("操作結果の検証が不確定", generation);',
   'inconclusive verification must request one bounded fresh observation');
 need('changedSignal.Task.IsCompleted ? ActionVerificationResult.Inconclusive : ActionVerificationResult.NoEffect',
