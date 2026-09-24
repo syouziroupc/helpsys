@@ -151,14 +151,14 @@ jobs:
                 const sj=await sr.json();
                 if(sj?.ok===true &&
                    sj?.service==='helpsys-site' &&
-                   sj?.revision==='a3.0001-outlaw-3.2.2-4905f758'){
+                   sj?.revision==='a3.0001-outlaw-3.2.3-ad3ee9b6'){
                   siteHealth=sj; break;
                 }
               }
             }catch{}
             await sleep(3000);
           }
-          if(!siteHealth) throw new Error('HelpSys site deployment did not reach 3.2.2 revision.');
+          if(!siteHealth) throw new Error('HelpSys site deployment did not reach 3.2.3 revision.');
           console.log('site_health',JSON.stringify(siteHealth));
 
           const tr=await fetch(base+'/v1/transcribe',{
