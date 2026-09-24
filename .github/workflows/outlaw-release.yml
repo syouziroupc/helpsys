@@ -85,6 +85,7 @@ jobs:
                    j?.independentVisionReview===true &&
                    j?.visualCoordinateSpace==='image_px' &&
                    j?.geometryConsensus===true &&
+                   j?.visualConsensusField===true &&
                    j?.aiConfigured===true &&
                    Array.isArray(j?.providers) &&
                    ['auto','gemini','glm'].every(x=>j.providers.includes(x))){
