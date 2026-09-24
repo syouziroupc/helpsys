@@ -110,6 +110,82 @@ public partial class MainWindow
         return true;
     }
 
+    private bool TryAutoSelectOutlawVisibleChoice(
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot context,
+        long generation)
+    {
+        if (!OutlawModePolicy.Enabled ||
+            !_sessionState.IsCurrent(generation) ||
+            !HasUsableForeground(context))
+            return false;
+
+        var choices = candidates
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty && !string.IsNullOrWhiteSpace(x.Name))
+            .Where(x => context.ForegroundProcessId <= 0 || x.ProcessId <= 0 || x.ProcessId == context.ForegroundProcessId)
+            .Where(x => !Regex.IsMatch(
+                x.Name,
+                @"^(閉じる|戻る|キャンセル|設定|メニュー|その他|close|back|cancel|settings?|menu|more)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .GroupBy(x => NormalizeLocalChoiceText(x.Name), StringComparer.Ordinal)
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key))
+            .Select(g => g.First())
+            .OrderBy(x => x.Y)
+            .ThenBy(x => x.X)
+            .Take(9)
+            .ToArray();
+
+        if (choices.Length < 2) return false;
+
+        var combined = string.Join(" ", choices.Select(x => x.Name));
+        if (Regex.IsMatch(
+            combined,
+            @"(?:上書|置き換|削除|消去|支払|購入|送信|公開|投稿|確定|契約|振込|overwrite|replace|delete|remove|pay|purchase|send|submit|publish|confirm)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return false;
+
+        var goal = _activeRequest ?? string.Empty;
+        static int Score(UiElementCandidate choice, string goalText)
+        {
+            var name = choice.Name ?? string.Empty;
+            var score = 0;
+            if (!string.IsNullOrWhiteSpace(name) &&
+                goalText.Contains(name, StringComparison.OrdinalIgnoreCase)) score += 1000;
+            if (choice.Focused) score += 150;
+            if (choice.ControlType is "Button" or "Hyperlink" or "ListItem" or "MenuItem") score += 60;
+            if (!string.IsNullOrWhiteSpace(choice.AutomationId)) score += 30;
+            score -= (int)Math.Round(choice.Y / 80d);
+            score -= (int)Math.Round(choice.X / 120d);
+            return score;
+        }
+
+        var selected = choices
+            .OrderByDescending(x => Score(x, goal))
+            .ThenBy(x => x.Y)
+            .ThenBy(x => x.X)
+            .First();
+
+        if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return false;
+
+        var label = DisplayName(selected.Name, selected.ControlType);
+        var instruction = $"候補が{choices.Length}つあります。今回は「{label}」を選びます。青い枠の項目を1回押してください。";
+        var decision = new GuideDecision(
+            "target",
+            selected.Id,
+            "left_click",
+            instruction,
+            null,
+            null,
+            0.96);
+
+        LocalLogService.Write(
+            "outlaw_visible_choice_auto_selected",
+            $"choices={choices.Length};selected={selected.Id};name={label};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+
+        ShowStructuredTarget(decision, selected, candidates, context, generation);
+        return true;
+    }
+
     private bool PresentOutlawChoiceButtons(
         IReadOnlyList<UiElementCandidate> choices,
         SystemContextSnapshot context,
