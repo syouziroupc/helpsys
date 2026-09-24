@@ -178,13 +178,14 @@ public partial class MainWindow
                 duringCapture <= visualCaptureCompletedUtc)
             {
                 LocalLogService.Write(
-                    OutlawModePolicy.Enabled ? "outlaw_visual_capture_changed_ignored" : "visual_capture_changed",
+                    OutlawModePolicy.Enabled ? "outlaw_visual_capture_stale" : "visual_capture_changed",
                     $"changed={duringCapture:O};start={visualCaptureStartedUtc:O};end={visualCaptureCompletedUtc:O}");
-                if (!OutlawModePolicy.Enabled)
-                {
-                    HandleTechnicalPlanningUncertainty("画面画像取得中に内容が変化した", generation);
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("画像取得中に画面内容が変化したため、古い画像を破棄する", generation))
                     return;
-                }
+
+                HandleTechnicalPlanningUncertainty("画面画像取得中に内容が変化した", generation);
+                return;
             }
 
             if (!_observationBroker.IsCurrent(snapshot))
@@ -306,13 +307,14 @@ public partial class MainWindow
                 if (lastVisualChangeUtc is { } afterCapture && afterCapture > visualCaptureCompletedUtc)
                 {
                     LocalLogService.Write(
-                        OutlawModePolicy.Enabled ? "outlaw_post_capture_change_ignored" : "stale_vision_target",
-                        $"changed={afterCapture:O};capture={visualCaptureCompletedUtc:O}");
-                    if (!OutlawModePolicy.Enabled)
-                    {
-                        HandleTechnicalPlanningUncertainty("画像判断後に画面内容が変化した", generation);
+                        OutlawModePolicy.Enabled ? "outlaw_stale_vision_target" : "stale_vision_target",
+                        $"changed={afterCapture:O};capture={visualCaptureCompletedUtc:O};reason=post_capture_change");
+                    if (OutlawModePolicy.Enabled &&
+                        TryQueueCurrentStateReplan("画像判断中に画面が変化したため、古い座標を破棄して再取得する", generation))
                         return;
-                    }
+
+                    HandleTechnicalPlanningUncertainty("画像判断後に画面内容が変化した", generation);
+                    return;
                 }
             }
 
@@ -324,7 +326,7 @@ public partial class MainWindow
 
             if (string.Equals(decision.TargetId, "vision-target", StringComparison.Ordinal))
             {
-                await ShowQualityVisualTargetAsync(quality, decision, frame, candidates, systemContext, generation, cancellationToken);
+                await ShowQualityVisualTargetAsync(quality, decision, frame, candidates, systemContext, visualCaptureCompletedUtc, generation, cancellationToken);
                 return;
             }
 
@@ -535,24 +537,88 @@ public partial class MainWindow
         ScreenCaptureFrame frame,
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot systemContext,
+        DateTime visualCaptureCompletedUtc,
         long generation,
         CancellationToken cancellationToken)
     {
-        var bounds = frame.MapNormalizedBounds(quality.X, quality.Y, quality.Width, quality.Height);
+        if (OutlawModePolicy.Enabled &&
+            _liveWatcher.LastChangeUtc is { } staleChange &&
+            staleChange > visualCaptureCompletedUtc)
+        {
+            LocalLogService.Write(
+                "outlaw_stale_vision_target",
+                $"changed={staleChange:O};capture={visualCaptureCompletedUtc:O};reason=pre_present_change");
+            if (TryQueueCurrentStateReplan("青枠表示直前に画面が変化したため、古い画像座標を破棄する", generation))
+                return;
+            HandleTechnicalPlanningUncertainty("画像座標を表示する直前に画面が変化した", generation);
+            return;
+        }
+
+        Rect bounds;
+        if (OutlawModePolicy.Enabled)
+        {
+            if (!string.Equals(quality.CoordinateSpace, "image_px", StringComparison.OrdinalIgnoreCase) ||
+                quality.CoordinateImageWidth != frame.ImageWidth ||
+                quality.CoordinateImageHeight != frame.ImageHeight)
+            {
+                LocalLogService.Write(
+                    "outlaw_visual_coordinate_contract_rejected",
+                    $"space={quality.CoordinateSpace ?? "null"};declared={quality.CoordinateImageWidth}x{quality.CoordinateImageHeight};actual={frame.ImageWidth}x{frame.ImageHeight}");
+                HandleTechnicalPlanningUncertainty("画像座標系が現在のスクリーンショットと一致しない", generation);
+                return;
+            }
+
+            bounds = frame.MapImagePixelBounds(
+                quality.X,
+                quality.Y,
+                quality.Width,
+                quality.Height,
+                quality.CoordinateImageWidth,
+                quality.CoordinateImageHeight);
+        }
+        else
+        {
+            bounds = frame.MapNormalizedBounds(quality.X, quality.Y, quality.Width, quality.Height);
+        }
+
         if (bounds.IsEmpty || bounds.Width < 8 || bounds.Height < 8)
         {
             HandleTechnicalPlanningUncertainty("画像上の候補位置が有効な操作領域にならない", generation);
             return;
         }
 
-        // Snap when Windows exposes a useful accessibility node, but never require it in Outlaw.
         Rect? snapped = null;
         try { snapped = await _scanner.SnapToAccessibleBoundsAsync(bounds, cancellationToken); }
         catch (OperationCanceledException) { throw; }
         catch { }
 
         if (!_sessionState.IsCurrent(generation)) return;
-        if (snapped is { } accessible && !accessible.IsEmpty) bounds = accessible;
+        if (snapped is { } accessible && !accessible.IsEmpty)
+        {
+            if (!IsCompatibleVisualSnap(bounds, accessible))
+            {
+                LocalLogService.Write(
+                    "outlaw_visual_snap_rejected",
+                    $"requested={bounds};accessible={accessible};reason=geometry_disagreement");
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("画像座標とWindowsの押下候補が一致しないため再取得する", generation))
+                    return;
+                HandleTechnicalPlanningUncertainty("画像座標と実際の操作候補が一致しない", generation);
+                return;
+            }
+            bounds = accessible;
+        }
+        else if (OutlawModePolicy.Enabled &&
+                 (!quality.ScreenConfirmed ||
+                  quality.Confidence < 0.72 ||
+                  string.IsNullOrWhiteSpace(quality.VisualEvidence)))
+        {
+            LocalLogService.Write(
+                "outlaw_visual_target_rejected",
+                $"confidence={quality.Confidence:F3};screenConfirmed={quality.ScreenConfirmed};reason=no_accessible_confirmation");
+            HandleTechnicalPlanningUncertainty("画像だけの操作位置を二重確認できない", generation);
+            return;
+        }
 
         var visualAction = decision.Action.Equals("double_click", StringComparison.OrdinalIgnoreCase)
             ? "double_click"
@@ -565,7 +631,7 @@ public partial class MainWindow
 
         LocalLogService.Write(
             "outlaw_visual_target",
-            $"confidence={quality.Confidence:F2} bounds={bounds} evidence={quality.VisualEvidence}");
+            $"confidence={quality.Confidence:F2} bounds={bounds} coordinateSpace={quality.CoordinateSpace ?? "legacy"} image={quality.CoordinateImageWidth}x{quality.CoordinateImageHeight} evidence={quality.VisualEvidence}");
 
         var visualDecision = new GuideDecision(
             "target",
@@ -595,6 +661,38 @@ public partial class MainWindow
             return;
         }
         ShowInstruction(instruction);
+    }
+
+
+    private static bool IsCompatibleVisualSnap(Rect requested, Rect accessible)
+    {
+        if (requested.IsEmpty || accessible.IsEmpty) return false;
+
+        var requestedCenter = new Point(
+            requested.Left + requested.Width / 2d,
+            requested.Top + requested.Height / 2d);
+        var accessibleCenter = new Point(
+            accessible.Left + accessible.Width / 2d,
+            accessible.Top + accessible.Height / 2d);
+
+        var distance = Math.Sqrt(
+            Math.Pow(requestedCenter.X - accessibleCenter.X, 2) +
+            Math.Pow(requestedCenter.Y - accessibleCenter.Y, 2));
+        var requestedScale = Math.Max(24d, Math.Max(requested.Width, requested.Height));
+        var widthRatio = Math.Max(requested.Width, accessible.Width) /
+                         Math.Max(1d, Math.Min(requested.Width, accessible.Width));
+        var heightRatio = Math.Max(requested.Height, accessible.Height) /
+                          Math.Max(1d, Math.Min(requested.Height, accessible.Height));
+
+        var intersection = Rect.Intersect(requested, accessible);
+        var overlap = intersection.IsEmpty
+            ? 0d
+            : intersection.Width * intersection.Height /
+              Math.Max(1d, requested.Width * requested.Height);
+
+        return (overlap >= 0.18 || distance <= Math.Max(48d, requestedScale * 0.9)) &&
+               widthRatio <= 4.0 &&
+               heightRatio <= 4.0;
     }
 
 }
