@@ -242,6 +242,7 @@ public partial class MainWindow
                 if (OutlawModePolicy.Enabled)
                 {
                     if (TryAutoSelectOutlawVisibleChoice(candidates, systemContext, generation)) return;
+                    if (TryPresentOutlawVisibleChoiceButtons(candidates, systemContext, generation)) return;
                     HandleTechnicalPlanningUncertainty("モデルが選択を要求したが現在画面から直接選択肢を構成できない", generation);
                     return;
                 }
@@ -404,6 +405,7 @@ public partial class MainWindow
             if (OutlawModePolicy.Enabled)
             {
                 if (TryAutoSelectOutlawVisibleChoice(candidates, expectedContext, generation)) return true;
+                if (TryPresentOutlawVisibleChoiceButtons(candidates, expectedContext, generation)) return true;
                 HandleTechnicalPlanningUncertainty("高速構造判断が選択を要求したが現在画面から直接選択肢を構成できない", generation);
                 return true;
             }
