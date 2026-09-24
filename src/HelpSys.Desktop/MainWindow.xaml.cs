@@ -677,10 +677,17 @@ public partial class MainWindow : Window
         SetState("案内を消しました。次にやりたいことを入力してください。", speak: false);
     }
 
-    private void ExitButton_Click(object sender, RoutedEventArgs e) => Close();
+    private void ExitButton_Click(object sender, RoutedEventArgs e)
+    {
+        ProcessDiagnostics.MarkExitReason("user_close_button", overwrite: true);
+        Close();
+    }
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        ProcessDiagnostics.MarkExitReasonIfUnset("window_closing");
+        ProcessDiagnostics.Log("main_window_closing", new { exitReason = ProcessDiagnostics.ExitReason });
+
         _voiceCts?.Cancel();
         _voiceCts?.Dispose();
         _voiceCts = null;
