@@ -355,3 +355,41 @@ assert(value.status === 'target' && value.targetId === 'unsafe-route',
 assert(lastInvocation?.args?.messages?.[0]?.content?.includes('operation-first planning component of HelpSys Outlaw'),
   'Outlaw inference must use its dedicated operation-first system prompt');
 
+
+nextDecision = {
+  status: 'target', targetId: 'other-monitor', action: 'left_click',
+  instruction: '別画面の項目を押してください。', question: null, key: null,
+  confidence: 0.99, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlaw({
+  request: '設定を開いて',
+  capture: { screenX: 0, screenY: 0, screenWidth: 1920, screenHeight: 1080, imageWidth: 1920, imageHeight: 1080 },
+  systemContext: { foregroundProcess: 'app', foregroundProcessId: 99, runningApps: [] },
+  elements: [
+    { id: 'current-monitor', name: '設定', controlType: 'Button', processName: 'app', interactable: true, enabled: true, x: 200, y: 200, width: 120, height: 40 },
+    { id: 'other-monitor', name: '設定', controlType: 'Button', processName: 'app', interactable: true, enabled: true, x: 2200, y: 200, width: 120, height: 40 }
+  ]
+});
+assert(value.status === 'not_found',
+  'Outlaw multimodal planner must reject a structured target outside the captured monitor');
+
+nextDecision = {
+  status: 'target', targetId: 'current-monitor', action: 'left_click',
+  instruction: '設定を押してください。', question: null, key: null,
+  confidence: 0.60, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlaw({
+  request: '設定を開いて',
+  capture: { screenX: 0, screenY: 0, screenWidth: 1920, screenHeight: 1080, imageWidth: 1920, imageHeight: 1080 },
+  systemContext: { foregroundProcess: 'app', foregroundProcessId: 99, runningApps: [] },
+  elements: [
+    { id: 'current-monitor', name: '設定', controlType: 'Button', processName: 'app', interactable: true, enabled: true, x: 200, y: 200, width: 120, height: 40 },
+    { id: 'other-monitor', name: '設定', controlType: 'Button', processName: 'app', interactable: true, enabled: true, x: 2200, y: 200, width: 120, height: 40 }
+  ]
+});
+assert(value.status === 'target' && value.targetId === 'current-monitor',
+  'Outlaw multimodal planner must keep a mechanically valid target inside the captured monitor');
+assert(payload().uiElements.find(x => x.id === 'current-monitor')?.inCapture === true,
+  'planner payload must mark current-monitor UIA targets as inside the screenshot');

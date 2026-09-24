@@ -121,8 +121,9 @@ export default {
     if (!/^data:image\/(?:png|jpeg);base64,/i.test(image) || image.length > MAX_IMAGE_CHARS) return json({ error: 'invalid_image' }, 400);
 
     const systemContext = compactSystemContext(body?.systemContext);
+    const capture = compactCapture(body?.capture);
     const elements = Array.isArray(body?.elements)
-      ? rankElementsForGoal(goal, body.elements, systemContext)
+      ? rankElementsForGoal(goal, body.elements, systemContext, capture)
           .slice(0, MAX_UI_ELEMENTS)
           .map(compactElement)
           .filter(Boolean)
@@ -363,6 +364,8 @@ export function validateQualityDecision(raw, elements, task, recoveryMode = fals
   if (!targetId || !ids.has(targetId)) return notFound('Windowsの操作対象と一致させられませんでした。');
   const target = elements.find(x => x.id === targetId);
   if (!target || target.interactable === false || target.enabled === false) return notFound('現在操作できる対象ではありません。');
+  if (outlawMode && target.inCapture === false)
+    return notFound('現在のスクリーンショット領域外の対象は、この画像判断では案内しません。');
   if (!outlawMode && task?.kind === 'site' && task?.forceVision === true && task?.allowedTargetIds instanceof Set && task.allowedTargetIds.size === 0)
     return notFound('検索結果では公式ドメインを確認できる候補だけを案内します。');
   if (action === 'type_text' && !isEditableControl(target))
@@ -486,17 +489,24 @@ function extractToolArguments(result, toolName) {
   return null;
 }
 
-function rankElementsForGoal(goal, rawElements, systemContext) {
+function rankElementsForGoal(goal, rawElements, systemContext, capture) {
   const goalText = normalizeRankText(goal);
   const foreground = String(systemContext?.foregroundProcess || '').toLowerCase();
 
   return rawElements
-    .map((value, index) => ({ value, index, score: scoreElementForGoal(value, goalText, foreground) }))
+    .map((value, index) => {
+      const inCapture = elementIntersectsCapture(value, capture);
+      return {
+        value: value && typeof value === 'object' ? { ...value, inCapture } : value,
+        index,
+        score: scoreElementForGoal(value, goalText, foreground, inCapture)
+      };
+    })
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map(x => x.value);
 }
 
-function scoreElementForGoal(value, goalText, foreground) {
+function scoreElementForGoal(value, goalText, foreground, inCapture = null) {
   if (!value || typeof value !== 'object') return -10000;
 
   let score = 0;
@@ -510,6 +520,8 @@ function scoreElementForGoal(value, goalText, foreground) {
   const focused = (value.focused ?? value.Focused) === true;
 
   if (foreground && process === foreground) score += 120;
+  if (inCapture === true) score += 160;
+  else if (inCapture === false) score -= 120;
   if (focused) score += 100;
   if (interactable) score += 45;
   if (enabled) score += 15;
@@ -556,8 +568,33 @@ function compactElement(value) {
     toggleState: nullableText(value.toggleState, 60),
     selected: typeof value.selected === 'boolean' ? value.selected : null,
     expandCollapseState: nullableText(value.expandCollapseState, 60),
+    inCapture: typeof value.inCapture === 'boolean' ? value.inCapture : null,
     x: finite(value.x), y: finite(value.y), width: finite(value.width), height: finite(value.height)
   };
+}
+
+function compactCapture(value) {
+  if (!value || typeof value !== 'object') return null;
+  const x = finite(value.screenX ?? value.ScreenX);
+  const y = finite(value.screenY ?? value.ScreenY);
+  const width = finite(value.screenWidth ?? value.ScreenWidth);
+  const height = finite(value.screenHeight ?? value.ScreenHeight);
+  return width > 0 && height > 0 ? { x, y, width, height } : null;
+}
+
+function elementIntersectsCapture(value, capture) {
+  if (!capture || !value || typeof value !== 'object') return null;
+  const x = finite(value.x ?? value.X);
+  const y = finite(value.y ?? value.Y);
+  const width = finite(value.width ?? value.Width);
+  const height = finite(value.height ?? value.Height);
+  if (width <= 0 || height <= 0) return false;
+
+  const right = x + width;
+  const bottom = y + height;
+  const captureRight = capture.x + capture.width;
+  const captureBottom = capture.y + capture.height;
+  return right > capture.x && x < captureRight && bottom > capture.y && y < captureBottom;
 }
 
 function compactHistory(value) {
