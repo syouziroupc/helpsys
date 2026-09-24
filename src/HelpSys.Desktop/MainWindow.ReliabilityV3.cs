@@ -484,13 +484,14 @@ public partial class MainWindow
 
         var beforeKeys = StableContentKeysV3(before, foreground);
         var afterKeys = StableContentKeysV3(after, foreground);
-        if (beforeKeys.Count == 0 || afterKeys.Count == 0) return beforeKeys.Count != afterKeys.Count;
+        if (beforeKeys.Count == 0 || afterKeys.Count == 0)
+            return beforeKeys.Count != afterKeys.Count && (semanticEvidence || targetDisappeared);
 
         var countThreshold = strong ? 12 : 10;
-        if (Math.Abs(beforeKeys.Count - afterKeys.Count) >= countThreshold) return true;
+        var countChanged = Math.Abs(beforeKeys.Count - afterKeys.Count) >= countThreshold;
         var overlap = beforeKeys.Count(x => afterKeys.Contains(x));
         var similarity = overlap / (double)Math.Max(beforeKeys.Count, afterKeys.Count);
-        var substantialContentChange = similarity < (strong ? 0.72 : 0.82);
+        var substantialContentChange = countChanged || similarity < (strong ? 0.72 : 0.82);
         return substantialContentChange && (semanticEvidence || targetDisappeared);
     }
 
