@@ -28,12 +28,13 @@ const tool = {
       width: { type: 'number', minimum: 0, maximum: 16384 },
       height: { type: 'number', minimum: 0, maximum: 16384 },
       screenConfirmed: { type: 'boolean' },
+      visualConsensus: { type: 'boolean' },
       visualEvidence: { type: 'string' }
     },
     required: [
       'status','targetId','action','instruction','question','key','confidence',
       'coordinateSpace','coordinateImageWidth','coordinateImageHeight',
-      'x','y','width','height','screenConfirmed','visualEvidence'
+      'x','y','width','height','screenConfirmed','visualConsensus','visualEvidence'
     ],
     additionalProperties: false
   }
@@ -65,6 +66,7 @@ OUTPUT:
 - For a purely visual mouse target, targetId must be "vision-target", coordinateSpace must be "image_px", coordinateImageWidth/coordinateImageHeight must exactly equal capture.imageWidth/capture.imageHeight, and x/y/width/height must be screenshot pixel coordinates with origin at the screenshot's top-left.
 - For UIA targets, key-only actions, clarify/done/not_found, set coordinateSpace="none", coordinateImageWidth=0, coordinateImageHeight=0 and x=y=width=height=0.
 - screenConfirmed means the screenshot itself supports the chosen step.
+- visualConsensus is advisory in model output; the server will recompute it and only set it true after two independent visual passes agree.
 - visualEvidence briefly states what visible evidence supports the decision.
 - confidence is confidence in this exact next step.`;
 
@@ -88,6 +90,7 @@ RULES:
 - not_found is a last resort when neither structured evidence nor the screenshot grounds a next step.
 - Current evidence beats stale history or an imagined canonical route.
 - Keep the Japanese instruction concrete and short.
+- visualConsensus is advisory in model output; the server will recompute it.
 - Call return_outlaw_guidance exactly once.`;
 
 export default {
@@ -113,6 +116,7 @@ export default {
         independentVisionReview: true,
         visualCoordinateSpace: 'image_px',
         geometryConsensus: true,
+        visualConsensusField: true,
         fastStructuredReturn: true
       });
     }
@@ -345,6 +349,7 @@ function preferBeginnerSearchField(decision, elements, goal, systemContext) {
     coordinateImageWidth: 0,
     coordinateImageHeight: 0,
     screenConfirmed: true,
+    visualConsensus: false,
     visualEvidence: 'ブラウザのURL欄より、画面中央に大きな自然言語検索欄が見えているため、初心者向けにそちらを優先します。'
   };
 }
@@ -383,6 +388,7 @@ function detectIdentityChoice(elements, systemContext, goal) {
     coordinateImageWidth: 0,
     coordinateImageHeight: 0,
     screenConfirmed: true,
+    visualConsensus: false,
     visualEvidence: `複数のプロフィール候補が表示されているため、${named ? '利用者の目的文に一致する候補' : '現在画面で最初の候補'}を選択します。`
   };
 }
@@ -436,6 +442,7 @@ function guardUserChoice(decision, goal, elements) {
       coordinateImageHeight: 0,
       x: 0, y: 0, width: 0, height: 0,
       screenConfirmed: decision.screenConfirmed === true,
+      visualConsensus: false,
       visualEvidence: decision.visualEvidence || '置き換えと別の選択肢が同じ画面にあります。'
     };
   }
@@ -451,6 +458,7 @@ function reconcileVisionDecision(finalDecision, preliminary, capture) {
     return {
       ...finalDecision,
       screenConfirmed: finalDecision?.screenConfirmed === true,
+      visualConsensus: false,
       visualEvidence: finalDecision.visualEvidence || preliminary?.visualEvidence || ''
     };
   }
@@ -465,6 +473,7 @@ function reconcileVisionDecision(finalDecision, preliminary, capture) {
   return {
     ...finalDecision,
     screenConfirmed: screenshotConfirmed,
+    visualConsensus: true,
     visualEvidence: finalDecision.visualEvidence || preliminary.visualEvidence || ''
   };
 }
@@ -483,6 +492,7 @@ function visualDisagreement(preliminary) {
     coordinateImageHeight: 0,
     x: 0, y: 0, width: 0, height: 0,
     screenConfirmed: false,
+    visualConsensus: false,
     visualEvidence: preliminary?.visualEvidence || 'independent visual grounding disagreed'
   };
 }
@@ -532,6 +542,7 @@ function validate(raw, elements, capture) {
   const x = finite(raw?.x), y = finite(raw?.y);
   const width = finite(raw?.width), height = finite(raw?.height);
   const screenConfirmed = raw?.screenConfirmed === true;
+  const visualConsensus = false;
   const visualEvidence = text(raw?.visualEvidence, 900);
   const imageWidth = positiveInt(capture?.imageWidth ?? capture?.ImageWidth);
   const imageHeight = positiveInt(capture?.imageHeight ?? capture?.ImageHeight);
@@ -548,11 +559,11 @@ function validate(raw, elements, capture) {
 
   if (status === 'clarify')
     return question
-      ? { ok: true, value: { status, targetId: null, action: 'none', instruction, question, key: null, confidence, ...noGeometry, screenConfirmed, visualEvidence } }
+      ? { ok: true, value: { status, targetId: null, action: 'none', instruction, question, key: null, confidence, ...noGeometry, screenConfirmed, visualConsensus, visualEvidence } }
       : { ok: false, error: 'empty_question' };
 
   if (status === 'done' || status === 'not_found')
-    return { ok: true, value: { status, targetId: null, action:'none', instruction, question:null, key:null, confidence, ...noGeometry, screenConfirmed, visualEvidence } };
+    return { ok: true, value: { status, targetId: null, action:'none', instruction, question:null, key:null, confidence, ...noGeometry, screenConfirmed, visualConsensus, visualEvidence } };
 
   if (action === 'none') return { ok:false, error:'target_without_action' };
 
@@ -590,7 +601,7 @@ function validate(raw, elements, capture) {
     ok:true,
     value:{
       status:'target', targetId, action, instruction, question:null, key,
-      confidence, ...geometry, screenConfirmed, visualEvidence
+      confidence, ...geometry, screenConfirmed, visualConsensus, visualEvidence
     }
   };
 }
