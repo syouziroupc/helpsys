@@ -29,6 +29,10 @@ internal sealed partial class UpdateService : IDisposable
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var tag = document.RootElement.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
+        if (!string.Equals(tag, "preview-latest", StringComparison.Ordinal))
+            throw new PlannerException("通常版とは異なる更新チャネルを検出したため更新を中止しました。");
+
         if (!document.RootElement.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             throw new PlannerException("更新情報の形式が不正です。");
 
@@ -101,7 +105,14 @@ internal sealed partial class UpdateService : IDisposable
             ZipFile.ExtractToDirectory(zip, extracted, overwriteFiles: true);
             var newExe = Path.Combine(extracted, "HelpSys.Stable.exe");
             if (!File.Exists(newExe))
-                throw new PlannerException("更新パッケージにHelpSys本体がありません。");
+                throw new PlannerException("更新パッケージにHelpSys Stable本体がありません。");
+
+            var versionFile = Path.Combine(extracted, "VERSION.txt");
+            if (!File.Exists(versionFile))
+                throw new PlannerException("通常版の更新チャネル情報がないため更新を中止しました。");
+            var versionText = await File.ReadAllTextAsync(versionFile, cancellationToken);
+            if (!versionText.Contains("Channel: preview-latest", StringComparison.Ordinal))
+                throw new PlannerException("通常版以外の更新パッケージを検出したため更新を中止しました。");
 
             var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
             var script = Path.Combine(root, "apply-update.ps1");
