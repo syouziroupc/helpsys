@@ -47,8 +47,8 @@ need(live, 'outlaw_vision_target_kept',
   'Outlaw must keep grounded vision-only targets even without a UIA snap target');
 need(cloud, '"/v1/outlaw-plan"',
   'Outlaw must use the dedicated planner endpoint');
-need(cloud, 'TimeSpan.FromSeconds(120)',
-  'Outlaw must retain the extended 120-second multimodal reasoning deadline');
+need(cloud, 'TimeSpan.FromSeconds(18)',
+  'Outlaw must retain the bounded 18-second multimodal reasoning deadline');
 need(context, 'if (HelpSys.Services.OutlawModePolicy.Enabled)',
   'Outlaw must preserve full observed browser URL context');
 
