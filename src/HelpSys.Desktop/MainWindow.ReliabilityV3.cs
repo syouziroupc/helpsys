@@ -218,6 +218,8 @@ public partial class MainWindow
                 var historyLimit = OutlawModePolicy.Enabled ? 64 : 12;
                 if (_history.Count > historyLimit) _history.RemoveAt(0);
                 ClearCurrentGuidanceV3();
+                ResetCurrentStateReplanBudget();
+                ResetResilienceRecovery();
                 _rejectedVisionTargets = 0;
                 advance = true;
             }
