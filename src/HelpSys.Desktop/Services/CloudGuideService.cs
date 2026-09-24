@@ -212,7 +212,7 @@ public sealed class CloudGuideService : IDisposable
                 () => _adapter.PostJsonAsync(
                     "/v1/outlaw-plan",
                     body,
-                    TimeSpan.FromSeconds(18),
+                    TimeSpan.FromSeconds(30),
                     cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -223,7 +223,7 @@ public sealed class CloudGuideService : IDisposable
         {
             throw new GuideServiceException(
                 GuideFailureKind.ServiceUnavailable,
-                "無法者版AIの判断が18秒以内に完了しませんでした。",
+                "無法者版AIの判断が30秒以内に完了しませんでした。",
                 ex);
         }
         catch (HttpRequestException ex)
