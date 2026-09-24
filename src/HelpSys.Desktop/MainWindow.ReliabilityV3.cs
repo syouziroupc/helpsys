@@ -541,7 +541,7 @@ public partial class MainWindow
         var visibleText = string.Join(
             " ",
             after
-                .Where(x => !x.Password && x.ControlType is not ("Edit" or "ComboBox"))
+                .Where(x => !x.Password && x.ControlType is not "Edit" and not "ComboBox")
                 .Select(x => x.Name)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Take(120));
@@ -567,6 +567,26 @@ public partial class MainWindow
             var token = match.Value.Trim().Trim('.', ',', ':', ';', '/', '\\').ToLowerInvariant();
             if (token.Length >= 3 && token.Length <= 80 && !stop.Contains(token))
                 anchors.Add(token);
+        }
+
+        if (!string.IsNullOrWhiteSpace(goal))
+        {
+            foreach (Match match in Regex.Matches(
+                         goal,
+                         @"(?<target>[ぁ-んァ-ヶ一-龯]{2,24}?)(?:を|に|で)?(?:開く|開いて|起動|表示|検索|探す|見る|選ぶ|押す)"))
+            {
+                var token = match.Groups["target"].Value.Trim().ToLowerInvariant();
+                token = Regex.Replace(token, @"^(?:次に|まず|今|この|その|あの)+", string.Empty);
+                if (token.Length >= 2 && token.Length <= 24 && !stop.Contains(token))
+                    anchors.Add(token);
+            }
+
+            foreach (Match match in Regex.Matches(goal, @"[「『](?<target>[^」』]{2,40})[」』]"))
+            {
+                var token = match.Groups["target"].Value.Trim().ToLowerInvariant();
+                if (token.Length >= 2 && !stop.Contains(token))
+                    anchors.Add(token);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(targetName))
