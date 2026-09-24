@@ -69,8 +69,11 @@ jobs:
       - name: Verify Outlaw 3.2.1 Windows shell surface contract
         run: node tests/outlaw-3.2.1-shell-surface-contract.mjs
 
-      - name: Verify Outlaw 3.2.2 application launch and stale-planner contract
-        run: node tests/outlaw-3.2.2-launch-replan-contract.mjs
+      - name: Verify Outlaw 3.2.3 application launch and stale-planner contract
+        run: node tests/outlaw-3.2.3-launch-replan-contract.mjs
+
+      - name: Verify Outlaw 3.2.3 crash/update contract
+        run: node tests/outlaw-3.2.3-crash-update-contract.mjs
 
       - name: Check deployed Outlaw API generation
         shell: bash
@@ -166,7 +169,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.2.2'
+          $version = '3.2.3'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -184,7 +187,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.2.2
+          Version: 3.2.3
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -226,7 +229,9 @@ jobs:
           - Known desktop application goals can enter Start locally instead of waiting for visual geometry
           - Slow app activation waits for the requested foreground process before replanning
           - Stale planner results trigger one bounded fresh observation
-          - Version 3.2.2 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Active guidance blocks self-update instead of terminating the session
+          - Exit reason and unhandled exceptions are written to the local HelpSys log
+          - Version 3.2.3 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 
