@@ -55,6 +55,35 @@ public static class MonitorPlacementService
         return GetWorkAreaForPoint(x, y);
     }
 
+    public static double GetDpiScaleForBounds(Rect bounds)
+    {
+        var x = bounds.IsEmpty ? 0 : (int)Math.Round(bounds.Left + bounds.Width / 2d);
+        var y = bounds.IsEmpty ? 0 : (int)Math.Round(bounds.Top + bounds.Height / 2d);
+        var monitor = MonitorFromPoint(new PointNative { X = x, Y = y }, MonitorDefaultToNearest);
+        if (monitor == nint.Zero) return 1d;
+
+        try
+        {
+            var hr = GetDpiForMonitor(monitor, MonitorDpiType.EffectiveDpi, out var dpiX, out _);
+            if (hr == 0 && dpiX > 0) return Math.Max(1d, dpiX / 96d);
+        }
+        catch (DllNotFoundException) { }
+        catch (EntryPointNotFoundException) { }
+
+        return 1d;
+    }
+
+    public static bool TryGetWindowBounds(nint hwnd, out Rect bounds)
+    {
+        bounds = Rect.Empty;
+        if (hwnd == nint.Zero || !GetWindowRect(hwnd, out var rect)) return false;
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        if (width <= 0 || height <= 0) return false;
+        bounds = new Rect(rect.Left, rect.Top, width, height);
+        return true;
+    }
+
     private static WorkArea GetWorkAreaForPoint(int x, int y)
     {
         var monitor = MonitorFromPoint(new PointNative { X = x, Y = y }, MonitorDefaultToNearest);
@@ -90,6 +119,11 @@ public static class MonitorPlacementService
         public uint Flags;
     }
 
+    private enum MonitorDpiType
+    {
+        EffectiveDpi = 0
+    }
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out PointNative point);
@@ -100,6 +134,9 @@ public static class MonitorPlacementService
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(nint monitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
