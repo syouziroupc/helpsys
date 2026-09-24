@@ -16,6 +16,7 @@ const need = (source, fragment, message) => {
 need(decision, 'string? CoordinateSpace = null', 'planner response must carry an explicit visual coordinate space');
 need(decision, 'int CoordinateImageWidth = 0', 'planner response must carry source image width');
 need(decision, 'int CoordinateImageHeight = 0', 'planner response must carry source image height');
+need(decision, 'bool VisualConsensus = false', 'planner response must carry server dual-pass visual consensus');
 
 need(frame, 'public Rect MapImagePixelBounds(', 'visual targets must map from screenshot pixel coordinates');
 need(frame, 'coordinateImageWidth != ImageWidth', 'pixel mapping must reject image-width contract mismatch');
@@ -26,6 +27,9 @@ need(quality, '"outlaw_visual_capture_stale"', 'desktop must reject UI changes d
 need(quality, '"outlaw_stale_vision_target"', 'desktop must reject post-capture stale visual targets');
 need(quality, 'TryQueueCurrentStateReplan("画像判断中に画面が変化したため、古い座標を破棄して再取得する"', 'stale visual targets must request one fresh observation');
 need(quality, 'IsCompatibleVisualSnap(', 'visual coordinates must be cross-checked against accessible geometry when available');
+need(quality, 'SnapToAccessibleCandidateAsync(', 'visual target center must be UIA-hit-tested when possible');
+need(quality, 'IsVisualTargetOnCurrentSurface(', 'visual targets must remain on the current foreground surface');
+need(quality, '!quality.VisualConsensus', 'desktop must reject visual coordinates without server dual-pass consensus');
 if (quality.includes('outlaw_visual_capture_changed_ignored') || quality.includes('outlaw_post_capture_change_ignored'))
   throw new Error('3.2.0 must not ignore screenshot freshness changes');
 
