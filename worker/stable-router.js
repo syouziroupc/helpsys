@@ -1,6 +1,7 @@
 import planner from './stable-gemini.js';
 import education from './education-gemini.js';
 import outlaw from './outlaw-guide.js';
+import transcribe from './transcribe.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -14,6 +15,9 @@ export default {
 
     if (url.pathname === '/v1/outlaw-plan' || url.pathname === '/health/outlaw')
       return outlaw.fetch(request, env, ctx);
+
+    if (url.pathname === '/v1/transcribe')
+      return transcribe.fetch(request, env, ctx);
 
     if (['/v1/guide', '/v1/quality-guide', '/v1/vision-guide'].includes(url.pathname)) {
       return new Response(JSON.stringify({
