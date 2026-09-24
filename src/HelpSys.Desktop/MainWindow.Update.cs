@@ -37,7 +37,7 @@ public partial class MainWindow
         {
             try
             {
-                await Task.Delay(1800);
+                await Task.Delay(OutlawModePolicy.Enabled ? 250 : 1800);
                 await CheckForUpdatesAsync(announceWhenCurrent: false);
             }
             catch { }
