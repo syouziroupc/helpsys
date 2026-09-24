@@ -46,6 +46,13 @@ public partial class MainWindow
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeRequest is not null || _planning || _verifyingAction || _awaitingClarification)
+        {
+            LocalLogService.Write("update_blocked_during_guidance", $"planning={_planning};verifying={_verifyingAction};clarifying={_awaitingClarification}");
+            SetState("案内中はHelpSysを更新できません。「消す」で案内を終了してから更新してください。", speak: false);
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref _updateBusy, 0, 0) != 0)
         {
             SetState("更新情報を確認中です。確認完了後にボタン表示が切り替わります。", speak: false);
@@ -69,6 +76,8 @@ public partial class MainWindow
             var prepared = await _updateService.PrepareAsync(update);
             SetState("更新を検証しました。HelpSysを再起動して入れ替えます…", speak: false);
             UpdateService.LaunchPreparedUpdate(prepared);
+            LocalLogService.MarkExitReason("update_handoff", $"build={update.BuildId}", overwrite: true);
+            LocalLogService.Write("update_launcher_started", $"build={update.BuildId};script={prepared.ScriptPath}");
             Application.Current.Shutdown();
         }
         catch (Exception ex)
