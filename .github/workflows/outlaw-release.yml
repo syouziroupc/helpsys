@@ -69,8 +69,8 @@ jobs:
       - name: Verify Outlaw 3.2.1 Windows shell surface contract
         run: node tests/outlaw-3.2.1-shell-surface-contract.mjs
 
-      - name: Verify Outlaw 3.2.3 application launch and stale-planner contract
-        run: node tests/outlaw-3.2.3-launch-replan-contract.mjs
+      - name: Verify Outlaw 3.2.2 application launch and stale-planner contract
+        run: node tests/outlaw-3.2.2-launch-replan-contract.mjs
 
       - name: Verify Outlaw 3.2.3 crash/update contract
         run: node tests/outlaw-3.2.3-crash-update-contract.mjs
