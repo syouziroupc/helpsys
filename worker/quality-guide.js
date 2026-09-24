@@ -3,6 +3,7 @@ import { buildWindowsTaskContext, guardDecisionForTask, guardVisionDecisionForTa
 const DEFAULT_MODEL = '@cf/zai-org/glm-5.3-flash';
 const MAX_UI_ELEMENTS = 160;
 const MAX_HISTORY = 8;
+const MAX_OUTLAW_HISTORY = 24;
 const MAX_IMAGE_CHARS = 6_500_000;
 const MIN_TARGET_CONFIDENCE = 0.80;
 const MIN_STRUCTURED_TARGET_CONFIDENCE = 0.93;
@@ -129,7 +130,7 @@ export default {
           .filter(Boolean)
       : [];
     const history = Array.isArray(body?.history)
-      ? body.history.slice(-MAX_HISTORY).map(compactHistory).filter(Boolean)
+      ? selectPlannerHistory(body.history, body?.outlawMode === true)
       : [];
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
     const recoveryMode = body?.recoveryMode === true;
@@ -595,6 +596,35 @@ function elementIntersectsCapture(value, capture) {
   const captureRight = capture.x + capture.width;
   const captureBottom = capture.y + capture.height;
   return right > capture.x && x < captureRight && bottom > capture.y && y < captureBottom;
+}
+
+function selectPlannerHistory(rawHistory, outlawMode) {
+  const compacted = rawHistory.map(compactHistory).filter(Boolean);
+  if (!outlawMode) return compacted.slice(-MAX_HISTORY);
+  if (compacted.length <= MAX_OUTLAW_HISTORY) return compacted;
+
+  const recent = compacted.slice(-12);
+  const recentKeys = new Set(recent.map(historyIdentity));
+  const failureLike = compacted
+    .slice(0, -12)
+    .filter(x => /(?:no_effect|failed|repeat|stale|verification_inconclusive|rejected|error|timeout)/i.test(x.action || ''))
+    .reverse();
+
+  const selectedFailures = [];
+  const seen = new Set(recentKeys);
+  for (const item of failureLike) {
+    const key = historyIdentity(item);
+    if (seen.has(key)) continue;
+    selectedFailures.push(item);
+    seen.add(key);
+    if (selectedFailures.length >= MAX_OUTLAW_HISTORY - recent.length) break;
+  }
+
+  return [...selectedFailures.reverse(), ...recent].slice(-MAX_OUTLAW_HISTORY);
+}
+
+function historyIdentity(item) {
+  return `${item.step}|${item.action}|${item.targetName}|${item.instruction}`;
 }
 
 function compactHistory(value) {

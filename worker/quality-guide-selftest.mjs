@@ -393,3 +393,30 @@ assert(value.status === 'target' && value.targetId === 'current-monitor',
   'Outlaw multimodal planner must keep a mechanically valid target inside the captured monitor');
 assert(payload().uiElements.find(x => x.id === 'current-monitor')?.inCapture === true,
   'planner payload must mark current-monitor UIA targets as inside the screenshot');
+
+const longHistory = Array.from({ length: 40 }, (_, i) => ({
+  step: i,
+  action: i === 3 ? 'no_effect_left_click' : i === 6 ? 'outlaw_repeat_blocked' : 'left_click',
+  targetName: `target-${i}`,
+  instruction: `history-${i}`
+}));
+nextDecision = {
+  status: 'target', targetId: 'hist-target', action: 'left_click',
+  instruction: '項目を押してください。', question: null, key: null,
+  confidence: 0.7, x: 0, y: 0, width: 0, height: 0,
+  screenConfirmed: false, visualEvidence: '', observedDomain: null, sponsored: false
+};
+value = await askOutlaw({
+  request: '続けて',
+  history: longHistory,
+  systemContext: { foregroundProcess: 'app', foregroundProcessId: 7, runningApps: [] },
+  elements: [{ id: 'hist-target', name: '続ける', controlType: 'Button', processName: 'app', interactable: true, enabled: true }]
+});
+assert(payload().completedSteps.length <= 24,
+  'Outlaw planner history must stay bounded even when desktop history contains 64 entries');
+assert(payload().completedSteps.some(x => x.action === 'no_effect_left_click'),
+  'Outlaw planner must retain older confirmed no-effect history beyond the recent tail');
+assert(payload().completedSteps.some(x => x.action === 'outlaw_repeat_blocked'),
+  'Outlaw planner must retain older repeat-block evidence beyond the recent tail');
+assert(payload().completedSteps.some(x => x.instruction === 'history-39'),
+  'Outlaw planner must still retain the most recent operational context');
