@@ -52,15 +52,18 @@ assert(routeMap.get(OUTLAW_ROUTE)?.destination === OUTLAW_DEST, 'Outlaw route mu
 
 assert(index.includes(`href="${DOWNLOAD_ROUTE}"`), 'Public site must expose the unified stable download route.');
 assert(index.includes(`href="${EDUCATION_ROUTE}"`), 'Public site must expose Education.');
-assert(index.includes('通常版と安全版を統合'), 'Public site must explain that normal and Safe editions are unified.');
+assert(index.includes('通常版 A3 と無法者版を分離'), 'Public site must explain the separated Standard A3 and Outlaw lines.');
 assert(index.includes('/download は常に最新版'), 'Public site must disclose the stable latest-download behavior.');
+assert(index.includes('A3.0001'), 'Public site must identify the current Standard A3 version.');
+assert(!index.includes('3.0.1') && !index.includes('3.0.2'), 'Retired Stable 3.x labels must not appear on the public site.');
 assert(!/releases\/download\/[^"']+\.zip/i.test(index), 'Public HTML must use local stable routes, not a direct versioned ZIP URL.');
 assert(index.includes(`${PRODUCTION_BASE}/`), 'Canonical production HelpSys URL is missing.');
 
 assert(release.includes('branches: [main]'), 'Unified release must publish from main.');
 assert(!release.includes('paths:'), 'Unified latest release must not silently skip main updates because of a path filter.');
 assert(release.includes(STABLE_ALIAS), 'Release workflow must publish the stable HelpSys alias.');
-assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'Stable release must publish a traceable Stable-specific asset.');
+assert(release.includes('HelpSys-Stable-$version-$shortSha-win-x64.zip'), 'Stable release must publish a traceable A3-specific asset.');
+assert(release.includes('HelpSysDisplayVersion'), 'Stable release must derive its public version from HelpSysDisplayVersion.');
 assert(!release.includes('HelpSys-Unified-$shortSha-win-x64.zip'), 'Stable release must not expose the old unified migration package.');
 assert(release.includes('--clobber'), 'Stable latest asset must be replaced in-place on every release run.');
 assert(release.includes('cancel-in-progress: true'), 'Concurrent main updates must not race when replacing preview-latest.');
