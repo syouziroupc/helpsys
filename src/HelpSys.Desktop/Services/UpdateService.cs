@@ -118,7 +118,10 @@ public sealed class UpdateService : IDisposable
         if (latest is null)
             throw new InvalidOperationException("SHA-256付きHelpSys更新ファイルが見つかりませんでした。");
 
-        return string.Equals(latest.BuildId, CurrentBuildId, StringComparison.OrdinalIgnoreCase)
+        return string.Equals(
+                NormalizeBuildId(latest.BuildId),
+                NormalizeBuildId(CurrentBuildId),
+                StringComparison.OrdinalIgnoreCase)
             ? null
             : latest;
     }
@@ -357,6 +360,15 @@ public sealed class UpdateService : IDisposable
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(attribute => attribute.Key.Equals("HelpSysBuildId", StringComparison.Ordinal));
         return string.IsNullOrWhiteSpace(metadata?.Value) ? "dev" : metadata.Value.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeBuildId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var normalized = value.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("outlaw-", StringComparison.Ordinal))
+            normalized = normalized["outlaw-".Length..];
+        return normalized;
     }
 
     private static string EscapeBatchPath(string value) => value.Replace("%", "%%", StringComparison.Ordinal);
