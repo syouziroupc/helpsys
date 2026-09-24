@@ -20,6 +20,10 @@ public sealed class ScreenCaptureService
     private const uint Blackness = 0x00000042;
     private const uint GwHwndPrev = 3;
     private const uint MonitorDefaultToNearest = 0x00000002;
+    private const int SmXVirtualScreen = 76;
+    private const int SmYVirtualScreen = 77;
+    private const int SmCxVirtualScreen = 78;
+    private const int SmCyVirtualScreen = 79;
     private const int MaxImageWidth = 2560;
     private const int MaxImageHeight = 1440;
 
@@ -156,6 +160,20 @@ public sealed class ScreenCaptureService
         var shellSurface = IsShellSurface(hwnd);
         if (!shellSurface && !IsWindowVisible(hwnd))
             throw new InvalidOperationException("検証済み操作対象ウィンドウが現在利用できないため、画面画像を送信しません。");
+
+        if (OutlawModePolicy.Enabled && shellSurface)
+        {
+            var virtualArea = new CaptureArea(
+                GetSystemMetrics(SmXVirtualScreen),
+                GetSystemMetrics(SmYVirtualScreen),
+                GetSystemMetrics(SmCxVirtualScreen),
+                GetSystemMetrics(SmCyVirtualScreen),
+                hwnd,
+                targetPid,
+                true);
+            if (virtualArea.Width > 0 && virtualArea.Height > 0)
+                return virtualArea;
+        }
 
         var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
         if (monitor == IntPtr.Zero)
@@ -319,6 +337,8 @@ public sealed class ScreenCaptureService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RectNative rect);
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
