@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using HelpSys.Services;
 
 namespace HelpSys;
 
@@ -27,14 +28,26 @@ public partial class OverlayWindow : Window
         if (!IsVisible) Show();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var dpiScale = Math.Max(1d, GetDpiForWindow(hwnd) / 96d);
+        var dpiScale = MonitorPlacementService.GetDpiScaleForBounds(physicalBounds);
         var padding = Math.Max(7, (int)Math.Round(7 * dpiScale));
         var x = (int)Math.Floor(physicalBounds.Left) - padding;
         var y = (int)Math.Floor(physicalBounds.Top) - padding;
         var width = Math.Max(18, (int)Math.Ceiling(physicalBounds.Width) + padding * 2);
         var height = Math.Max(18, (int)Math.Ceiling(physicalBounds.Height) + padding * 2);
 
-        SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        var positioned = SetWindowPos(hwnd, HwndTopmost, x, y, width, height, SwpNoActivate | SwpShowWindow);
+        if (MonitorPlacementService.TryGetWindowBounds(hwnd, out var actual))
+        {
+            LocalLogService.Write(
+                "overlay_placement",
+                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual={actual}");
+        }
+        else
+        {
+            LocalLogService.Write(
+                "overlay_placement",
+                $"ok={positioned};dpiScale={dpiScale:F3};target={physicalBounds};requested={new Rect(x, y, width, height)};actual=unavailable;win32={Marshal.GetLastWin32Error()}");
+        }
         _instruction.ShowNear(physicalBounds, instruction);
     }
 
