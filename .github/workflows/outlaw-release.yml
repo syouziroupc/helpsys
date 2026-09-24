@@ -15,6 +15,7 @@ concurrency:
 jobs:
   publish:
     runs-on: windows-latest
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
 
@@ -218,6 +219,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Unable to read outlaw-latest after publish.' }
           $release = $json | ConvertFrom-Json
           $assets = @($release.assets | ForEach-Object { $_.name })
+          if (-not [string]::Equals([string]$release.targetCommitish, [string]$env:GITHUB_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "outlaw-latest points to $($release.targetCommitish), expected $env:GITHUB_SHA"
+          }
           if ($assets -notcontains $env:HELPSYS_STABLE_ASSET) {
             throw "Stable pilot asset missing: $env:HELPSYS_STABLE_ASSET"
           }
