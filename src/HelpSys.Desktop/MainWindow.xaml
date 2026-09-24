@@ -43,7 +43,7 @@
                   SelectionChanged="AiProviderBox_SelectionChanged"
                   ToolTip="無法者版の判断モデルを切り替えます">
           <ComboBoxItem Content="AI: Auto" Tag="auto" />
-          <ComboBoxItem Content="AI: Gemini" Tag="gemini" />
+          <ComboBoxItem Content="AI: Gemini (未設定)" Tag="gemini" IsEnabled="False" />
           <ComboBoxItem Content="AI: GLM" Tag="glm" IsSelected="True" />
         </ComboBox>
         <Button Grid.Column="3" x:Name="UpdateButton" Content="更新確認"
