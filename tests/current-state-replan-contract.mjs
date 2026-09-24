@@ -23,8 +23,8 @@ if (policy.includes('QueueResilientRecovery(reason, generation)'))
 if (policy.includes('WaitForClarification('))
   throw new Error('technical observer uncertainty must not become a user clarification question');
 
-if (!quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(42))'))
-  throw new Error('one interactive planning attempt must have a bounded 42 second hard deadline');
+if (!quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(75))'))
+  throw new Error('one interactive planning attempt must have a bounded 75 second hard deadline');
 if (quality.includes('planningCts.CancelAfter(TimeSpan.FromSeconds(180))'))
   throw new Error('legacy 180 second interactive planning window must stay removed');
 
@@ -54,3 +54,16 @@ if (!quality.includes('outlaw_visual_capture_changed_ignored') || !quality.inclu
   throw new Error('Outlaw must not discard a first-pass decision for soft same-window WinEvent churn');
 if (!quality.includes('outlaw_target_revalidation_fallback'))
   throw new Error('Outlaw must retain immutable first-observation target bounds when same-window revalidation is transiently unavailable');
+
+const captureService = fs.readFileSync('src/HelpSys.Desktop/ScreenCaptureService.cs', 'utf8');
+const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
+const cloud = fs.readFileSync('src/HelpSys.Desktop/Services/CloudGuideService.cs', 'utf8');
+const xaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
+if (!captureService.includes('SmCxVirtualScreen') || !captureService.includes('GetSystemMetrics(SmCxVirtualScreen)'))
+  throw new Error('Outlaw shell capture must cover the full Windows virtual desktop across monitors');
+if (!scanner.includes('IntersectsVirtualDesktop(rect)'))
+  throw new Error('Outlaw UIA candidates must exclude minimized/off-virtual-desktop controls');
+if (!cloud.includes('TimeSpan.FromSeconds(60)') || !cloud.includes('outlaw_api_timeout') || !cloud.includes('outlaw_api_error'))
+  throw new Error('Outlaw one-shot planner must allow long reasoning and persist exact API failures');
+if (!xaml.includes('AI: Gemini (未設定)') || !xaml.includes('Tag="gemini" IsEnabled="False"'))
+  throw new Error('Pilot UI must not expose the unconfigured Gemini provider as selectable');
