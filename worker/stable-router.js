@@ -3,7 +3,7 @@ import education from './education-gemini.js';
 import outlaw from './outlaw-guide.js';
 import transcribe from './transcribe.js';
 
-const SITE_REVISION = 'a3.0001-outlaw-3.2.0-05078b0e';
+const SITE_REVISION = 'a3.0001-outlaw-3.2.1-85956ddd';
 
 export default {
   async fetch(request, env, ctx) {
