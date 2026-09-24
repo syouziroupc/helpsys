@@ -117,6 +117,7 @@ export default {
     const evidence = compactEvidence(body?.evidence, elements, history, systemContext);
     const recoveryMode = body?.recoveryMode === true;
     const routeIssue = text(body?.routeIssue, 180);
+    const aiProvider = normalizeAiProvider(body?.aiProvider);
     const task = buildWindowsTaskContext(goal, elements, history, systemContext);
     if (task?.kind === 'choice' && task?.deterministic) {
       return json(validateQualityDecision(
@@ -144,7 +145,7 @@ export default {
     });
 
     try {
-      const result = await runQualityInference(env, model, userPayload, image);
+      const result = await runQualityInference(env, model, userPayload, image, aiProvider);
 
       const raw = result.__geminiStructured === true
         ? result.value
@@ -160,8 +161,11 @@ export default {
 };
 
 
-async function runQualityInference(env, model, userPayload, image) {
-  if (env.GEMINI_API_KEY) {
+async function runQualityInference(env, model, userPayload, image, provider = 'auto') {
+  const useGemini = provider !== 'glm';
+  const allowGlmFallback = provider === 'auto';
+
+  if (useGemini && env.GEMINI_API_KEY) {
     const modelName = String(env.HELPSYS_OUTLAW_GEMINI_MODEL || 'gemini-3.8-flash').trim();
     const match = /^data:image\/(png|jpeg);base64,(.+)$/i.exec(image || '');
     if (!match) throw new Error('invalid_gemini_image');
@@ -203,11 +207,15 @@ async function runQualityInference(env, model, userPayload, image) {
       if (!rawText) throw new Error('gemini_empty_output');
       return { __geminiStructured: true, value: JSON.parse(rawText) };
     } catch {
-      console.error('gemini_quality_fallback');
+      console.error(allowGlmFallback ? 'gemini_quality_fallback' : 'gemini_quality_failed');
+      if (!allowGlmFallback) throw new Error('gemini_quality_failed');
     } finally {
       clearTimeout(timer);
     }
   }
+
+  if (provider === 'gemini' && !env.GEMINI_API_KEY)
+    throw new Error('gemini_not_configured');
 
   return env.AI.run(model, {
     messages: [
@@ -532,6 +540,11 @@ function compactEvidence(value, elements, history, systemContext) {
     historyCount: finite(value?.historyCount ?? value?.HistoryCount ?? history.length),
     recentTargets: Array.isArray(recentValues) ? recentValues.slice(0, 5).map(x => text(x, 180)).filter(Boolean) : []
   };
+}
+
+function normalizeAiProvider(value) {
+  const provider = String(value || '').trim().toLowerCase();
+  return provider === 'gemini' || provider === 'glm' ? provider : 'auto';
 }
 
 function normalizeKey(value) { return String(value || '').replace(/\s+/g, '').toLowerCase(); }
