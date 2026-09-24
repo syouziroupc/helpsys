@@ -2,4 +2,6 @@
 /download https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-latest-win-x64.zip 302
 /download/safe https://github.com/syouziroupc/helpsys/releases/download/preview-latest/HelpSys-latest-win-x64.zip 302
 /download/education https://github.com/syouziroupc/helpsys/releases/download/education-preview-latest/HelpSys-Education-latest-win-x64.zip 302
-/download/outlaw https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip 302
+/download/outlaw https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-3.2.1-85956ddd-win-x64.zip 302
+/download/outlaw/stable https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip 302
+/download/outlaw/3.2.0 https://github.com/syouziroupc/helpsys/releases/download/outlaw-latest/HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip 302
