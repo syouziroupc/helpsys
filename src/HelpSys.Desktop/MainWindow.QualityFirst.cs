@@ -114,6 +114,14 @@ public partial class MainWindow
             }
 
             if (OutlawModePolicy.Enabled &&
+                TryOutlawApplicationLaunchFastPath(candidates, systemContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", "reason=application_launch_via_start");
+                LogOutlawPhase("local_application_launch");
+                return;
+            }
+
+            if (OutlawModePolicy.Enabled &&
                 TryOutlawBrowserSearchFastPath(candidates, systemContext, generation))
             {
                 LocalLogService.Write("outlaw_local_fast_path", "reason=browser_search");
@@ -193,6 +201,9 @@ public partial class MainWindow
                 LocalLogService.Write(
                     OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
                     "phase=after_screenshot;discarding planner observation because foreground identity changed");
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("スクリーンショット取得後に前面画面が変わったため、現在状態を再取得する", generation))
+                    return;
                 HandleTechnicalPlanningUncertainty("確認中に画面切替が続いている", generation);
                 return;
             }
@@ -242,6 +253,9 @@ public partial class MainWindow
                 LocalLogService.Write(
                     OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
                     "phase=after_planner;discarding planner result because foreground identity changed");
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("AI判断中に前面画面が変わったため、古い判断を破棄して現在状態を再取得する", generation))
+                    return;
                 HandleTechnicalPlanningUncertainty("判断中の画面変化が続いている", generation);
                 return;
             }
@@ -353,6 +367,9 @@ public partial class MainWindow
                 LocalLogService.Write(
                     OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
                     "phase=before_structured_overlay;discarding target because foreground identity changed");
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("案内表示直前に前面画面が変わったため、対象を破棄して現在状態を再取得する", generation))
+                    return;
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
@@ -470,6 +487,76 @@ public partial class MainWindow
         ShowStructuredTarget(quick, fresh, candidates, expectedContext, generation);
         return true;
     }
+
+    private bool TryOutlawApplicationLaunchFastPath(
+        IReadOnlyList<UiElementCandidate> candidates,
+        SystemContextSnapshot systemContext,
+        long generation)
+    {
+        if (!OutlawModePolicy.Enabled || string.IsNullOrWhiteSpace(_activeRequest)) return false;
+        if (!IsWindowsShellProcessName(systemContext.ForegroundProcess)) return false;
+
+        var app = ResolveRequestedApplication(_activeRequest);
+        if (app is null) return false;
+
+        // If the requested app is already represented on the current surface, keep the normal
+        // structured/vision planner path so a real visible icon/result can be selected directly.
+        var targetVisible = candidates.Any(x =>
+            x.Interactable &&
+            app.Aliases.Any(alias =>
+                (!string.IsNullOrWhiteSpace(x.Name) && x.Name.Contains(alias, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(x.AutomationId) && x.AutomationId.Contains(alias, StringComparison.OrdinalIgnoreCase))));
+        if (targetVisible) return false;
+
+        // Do not keep asking for Win once Start/Search is already open. At that point the fused
+        // shell observation should contain Start/Search/TextInputHost evidence and the planner can
+        // select the search field or result.
+        var startOrSearchOpen = candidates.Any(x =>
+            x.ProcessName.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+            x.ProcessName.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+            x.ProcessName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase) ||
+            x.AutomationId.Contains("windows_search", StringComparison.OrdinalIgnoreCase));
+        if (startOrSearchOpen) return false;
+
+        var decision = new GuideDecision(
+            "target",
+            null,
+            "press_key",
+            $"キーボードのWindowsキーを押してスタートメニューを開いてください。開いたら「{app.SearchText}」を検索します。",
+            null,
+            "win",
+            0.99);
+
+        ShowKeyboardGuide(decision, candidates, systemContext, generation);
+        return true;
+    }
+
+    private static bool IsWindowsShellProcessName(string? processName)
+        => processName is not null &&
+           (processName.Equals("explorer", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase));
+
+    private static RequestedApplication? ResolveRequestedApplication(string request)
+    {
+        var value = request.Trim();
+        var known = new[]
+        {
+            new RequestedApplication("Excel", ["Excel", "エクセル"]),
+            new RequestedApplication("Word", ["Word", "ワード"]),
+            new RequestedApplication("PowerPoint", ["PowerPoint", "パワーポイント", "パワポ"]),
+            new RequestedApplication("LINE", ["LINE", "ライン"]),
+            new RequestedApplication("Google Chrome", ["Google Chrome", "Chrome", "クローム"]),
+            new RequestedApplication("Microsoft Edge", ["Microsoft Edge", "Edge", "エッジ"])
+        };
+
+        return known.FirstOrDefault(app => app.Aliases.Any(alias =>
+            value.Contains(alias, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private sealed record RequestedApplication(string SearchText, string[] Aliases);
 
     private static bool IsSimpleForegroundGoalSatisfied(string request, SystemContextSnapshot context)
     {
