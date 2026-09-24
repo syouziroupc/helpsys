@@ -1,7 +1,7 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const VERSION = 'outlaw-2026.09.24-r3.4';
+const VERSION = 'outlaw-2026.09.24-r3.5';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 4000;
 const MAX_HISTORY = 64;
@@ -99,7 +99,8 @@ export default {
         maxHistory: MAX_HISTORY,
         reasoningEffort: 'high',
         maxCompletionTokens: MAX_COMPLETION_TOKENS,
-        dualStageVisionReview: true
+        dualStageVisionReview: true,
+        fastStructuredReturn: true
       });
     }
 
@@ -134,6 +135,9 @@ export default {
       uiElements: elements
     };
 
+    const identityChoice = detectIdentityChoice(elements, payload.systemContext, goal);
+    if (identityChoice) return json(identityChoice);
+
     try {
       if (aiProvider !== 'glm') {
         if (!env?.GEMINI_API_KEY) {
@@ -162,6 +166,10 @@ export default {
       const visionChecked = validate(visionRaw, elements);
       if (!visionChecked.ok) return json({ error: visionChecked.error }, 502);
       const preliminary = visionChecked.value;
+
+      if (canReturnFastStructured(preliminary, elements, payload.systemContext)) {
+        return json(guardUserChoice(preliminary, goal, elements));
+      }
 
       try {
         const reviewPayload = {
@@ -260,6 +268,58 @@ async function runGuidance(env, model, system, payload, image) {
   return raw;
 }
 
+
+function detectIdentityChoice(elements, systemContext, goal) {
+  const foregroundPid = Number(systemContext?.foregroundProcessId ?? systemContext?.ForegroundProcessId ?? 0);
+  const choices = elements.filter(e =>
+    e &&
+    e.enabled !== false &&
+    e.interactable !== false &&
+    (!foregroundPid || !e.processId || e.processId === foregroundPid) &&
+    (
+      String(e.automationId || '').toLowerCase() === 'profilecardbutton' ||
+      /(?:プロフィール|profile).*(?:開く|open)/i.test(String(e.name || ''))
+    )
+  );
+  if (choices.length < 2) return null;
+
+  const normalizedGoal = String(goal || '').toLowerCase();
+  const named = choices.find(e => {
+    const label = String(e.name || '').replace(/(?:のプロフィールを開く|プロフィール.*|profile.*)$/i, '').trim().toLowerCase();
+    return label.length >= 2 && normalizedGoal.includes(label);
+  });
+  if (named) return null;
+
+  return {
+    status: 'clarify',
+    targetId: null,
+    action: 'none',
+    instruction: '複数の利用者プロフィールが表示されています。',
+    question: 'どのプロフィールを使いますか？',
+    key: null,
+    confidence: 1,
+    x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: true,
+    visualEvidence: '複数の利用者プロフィール候補が現在画面にあります。'
+  };
+}
+
+function canReturnFastStructured(decision, elements, systemContext) {
+  if (!decision || decision.status !== 'target' || !decision.targetId || decision.targetId === 'vision-target')
+    return false;
+  if (Number(decision.confidence || 0) < 0.88) return false;
+
+  const target = elements.find(e => e.id === decision.targetId);
+  if (!target || target.enabled === false || target.interactable === false) return false;
+
+  const foregroundPid = Number(systemContext?.foregroundProcessId ?? systemContext?.ForegroundProcessId ?? 0);
+  if (foregroundPid > 0 && target.processId > 0 && target.processId !== foregroundPid) return false;
+
+  if (decision.action === 'type_text' && !(target.focused === true && target.keyboardFocusable === true))
+    return false;
+
+  return true;
+}
 
 function guardUserChoice(decision, goal, elements) {
   if (!decision || decision.status !== 'target' || !decision.targetId) return decision;
