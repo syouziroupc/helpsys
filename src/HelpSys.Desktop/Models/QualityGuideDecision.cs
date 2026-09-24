@@ -13,4 +13,7 @@ public sealed record QualityGuideDecision(
     double Width,
     double Height,
     bool ScreenConfirmed,
-    string VisualEvidence);
+    string VisualEvidence,
+    string? CoordinateSpace = null,
+    int CoordinateImageWidth = 0,
+    int CoordinateImageHeight = 0);
