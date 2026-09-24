@@ -26,6 +26,10 @@ jobs:
         with:
           node-version: 24
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Verify Outlaw observation contract
         run: node tests/outlaw-observation-contract.mjs
 
@@ -56,6 +60,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore
+
+      - name: Build Outlaw real-click smoke edition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'smoke-bin/normal' | Out-Null
+          dotnet build src/HelpSys.Desktop/HelpSys.Desktop.csproj -c Release --no-restore -p:TestBuild=true -o smoke-bin/normal
+          if (-not (Test-Path 'smoke-bin/normal/HelpSys.exe')) { throw 'Outlaw smoke executable was not produced.' }
+
+      - name: Verify Outlaw real mouse guidance
+        shell: pwsh
+        run: ./tests/real_click_guidance_smoke.ps1
 
       - name: Publish outlaw Windows build
         shell: pwsh

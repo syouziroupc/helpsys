@@ -98,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "invalid_json"}, 400)
             return
 
-        if self.path in ("/v2/plan", "/v1/guide", "/v1/quality-guide"):
+        if self.path in ("/v2/plan", "/v1/outlaw-plan", "/v1/guide", "/v1/quality-guide"):
             system_context = field(payload, "systemContext", {}) or {}
             foreground = str(field(system_context, "foregroundProcess", "") or "").lower()
             request = str(field(payload, "request", "") or "")
@@ -176,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
                     eligible[0] if eligible else None,
                 )
 
-            quality_shape = self.path == "/v1/quality-guide" or (self.path == "/v2/plan" and has_image)
+            quality_shape = self.path in ("/v1/quality-guide", "/v1/outlaw-plan") or (self.path == "/v2/plan" and has_image)
 
             if target is None:
                 if quality_shape:

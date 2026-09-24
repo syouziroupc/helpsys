@@ -50,7 +50,7 @@ function Get-ForegroundPid {
 }
 
 function Focus-Process([System.Diagnostics.Process]$process, [string]$label) {
-  $deadline = [DateTime]::UtcNow.AddSeconds(8)
+  $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
     if ($process.HasExited) { throw "$label exited before foreground focus could be established." }
     $window = Find-TopLevelWindow $process
@@ -144,14 +144,15 @@ try {
     $stateText = Find-Element $helpSys 'StateText'
     $stateValue = if ($null -eq $stateText) { '<missing>' } else { $stateText.Current.Name }
     Save-Screenshot 'helpsys-real-click-planner-failure.png'
-    throw "A real mouse click on Guide did not reach the local planner within 8 seconds. State=$stateValue"
+    throw "A real mouse click on Guide did not reach the local planner within 12 seconds. State=$stateValue"
   }
 
   $diagnostics = Get-Content 'artifacts/mock-last-request.json' -Raw -Encoding UTF8 | ConvertFrom-Json
   $unifiedRoute = $diagnostics.path -eq '/v2/plan'
+  $outlawRoute = $diagnostics.path -eq '/v1/outlaw-plan' -and $diagnostics.hasScreenshot -eq $true
   $legacyQualityRoute = $diagnostics.path -eq '/v1/quality-guide' -and $diagnostics.hasScreenshot -eq $true
   $legacyStructuredRoute = $diagnostics.path -eq '/v1/guide' -and $diagnostics.hasScreenshot -ne $true
-  if (-not ($unifiedRoute -or $legacyQualityRoute -or $legacyStructuredRoute)) {
+  if (-not ($unifiedRoute -or $outlawRoute -or $legacyQualityRoute -or $legacyStructuredRoute)) {
     throw "Real-click smoke reached an unexpected planner route. path=$($diagnostics.path) screenshot=$($diagnostics.hasScreenshot)"
   }
   if ([int]$diagnostics.foregroundProcessId -ne $target.Id) {
