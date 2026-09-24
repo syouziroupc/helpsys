@@ -240,8 +240,11 @@ public partial class MainWindow
                 OutlawModePolicy.Enabled ? target.ProcessId : systemContext.ForegroundProcessId,
                 cancellationToken);
             if (!_sessionState.IsCurrent(generation)) return;
-            if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))
+            if (!_observationBroker.IsCurrent(snapshot))
             {
+                LocalLogService.Write(
+                    OutlawModePolicy.Enabled ? "outlaw_stale_observation" : "stale_observation",
+                    "phase=before_structured_overlay;discarding target because foreground identity changed");
                 HandleTechnicalPlanningUncertainty("案内表示直前の画面変化が続いている", generation);
                 return;
             }
