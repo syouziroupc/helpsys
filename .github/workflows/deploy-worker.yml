@@ -143,6 +143,24 @@ jobs:
           console.log('outlaw_glm_smoke',JSON.stringify(parsed));
           console.log('outlaw_gemini_smoke',JSON.stringify(geminiSmoke));
 
+          let siteHealth=null;
+          for(let i=0;i<20;i++){
+            try{
+              const sr=await fetch(base+'/health/site',{cache:'no-store'});
+              if(sr.ok){
+                const sj=await sr.json();
+                if(sj?.ok===true &&
+                   sj?.service==='helpsys-site' &&
+                   sj?.revision==='a3.0001-outlaw-3.2.0-05078b0e'){
+                  siteHealth=sj; break;
+                }
+              }
+            }catch{}
+            await sleep(3000);
+          }
+          if(!siteHealth) throw new Error('HelpSys site deployment did not reach 3.2.0 revision.');
+          console.log('site_health',JSON.stringify(siteHealth));
+
           const tr=await fetch(base+'/v1/transcribe',{
             method:'POST',
             headers:{'content-type':'application/json'},
