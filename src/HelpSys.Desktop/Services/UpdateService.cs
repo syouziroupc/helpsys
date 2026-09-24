@@ -29,13 +29,13 @@ public sealed record PreparedUpdate(
 /// </summary>
 public sealed class UpdateService : IDisposable
 {
-    private const string LatestReleaseApi = "https://api.github.com/repos/syouziroupc/helpsys/releases/latest";
-    private const string RequiredTag = "preview-latest";
+    private const string LatestReleaseApi = "https://api.github.com/repos/syouziroupc/helpsys/releases/tags/outlaw-latest";
+    private const string RequiredTag = "outlaw-latest";
     private const long MaximumPackageBytes = 180L * 1024 * 1024;
     private const int MaximumRedirects = 5;
 
     private static readonly Regex VersionedAssetRegex = new(
-        @"^HelpSys-Unified-(?<build>[0-9a-f]{8})-win-x64\.zip$",
+        @"^HelpSys-Outlaw-(?<build>[0-9a-f]{8})-win-x64\.zip$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static readonly HashSet<string> AllowedDownloadHosts = new(StringComparer.OrdinalIgnoreCase)
