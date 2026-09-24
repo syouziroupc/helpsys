@@ -57,6 +57,12 @@ need(watcher, 'if (eventType == EventSystemForeground)',
   'Foreground ownership changes must bypass the scoped object-event filter');
 need(watcher, 'if (unchecked((int)pid) != scope) return;',
   'Background object/property churn must remain scoped to the current foreground process');
+need(watcher, 'public DateTime? LastChangeUtc',
+  'planner must be able to reject vision coordinates after same-window WinEvent changes');
+need(quality, '"outlaw_visual_capture_changed"',
+  'visual evidence must be discarded when the observed UI changes during screenshot capture');
+need(quality, '"outlaw_stale_vision_target"',
+  'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
 need(live, 'outlaw_vision_target_kept',
   'Outlaw must keep grounded vision-only targets even without a UIA snap target');
 need(cloud, '"/v1/outlaw-plan"',

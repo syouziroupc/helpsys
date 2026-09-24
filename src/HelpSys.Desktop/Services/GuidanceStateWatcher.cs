@@ -27,6 +27,15 @@ public sealed class GuidanceStateWatcher : IDisposable
     public event EventHandler? Pulse;
     public event EventHandler? Changed;
 
+    public DateTime? LastChangeUtc
+    {
+        get
+        {
+            var ticks = Volatile.Read(ref _lastSignalTicks);
+            return ticks > 0 ? new DateTime(ticks, DateTimeKind.Utc) : null;
+        }
+    }
+
     public GuidanceStateWatcher()
     {
         _eventDelegate = OnWinEvent;

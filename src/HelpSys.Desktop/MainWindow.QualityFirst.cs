@@ -76,9 +76,12 @@ public partial class MainWindow
 
             var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
+            var visualCaptureStartedUtc = DateTime.UtcNow;
+            DateTime visualCaptureCompletedUtc;
             try
             {
                 frame = await CaptureQualityFrameAsync(candidates, systemContext, cancellationToken);
+                visualCaptureCompletedUtc = DateTime.UtcNow;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -103,6 +106,18 @@ public partial class MainWindow
             if (!IsPrivacyEgressEpochCurrent(imagePrivacyEpoch))
             {
                 HandleTechnicalPlanningUncertainty("画面画像の取得中に安全状態が更新された", generation);
+                return;
+            }
+
+            var captureChangeUtc = _liveWatcher.LastChangeUtc;
+            if (captureChangeUtc is { } duringCapture &&
+                duringCapture >= visualCaptureStartedUtc &&
+                duringCapture <= visualCaptureCompletedUtc)
+            {
+                LocalLogService.Write(
+                    OutlawModePolicy.Enabled ? "outlaw_visual_capture_changed" : "visual_capture_changed",
+                    $"changed={duringCapture:O};start={visualCaptureStartedUtc:O};end={visualCaptureCompletedUtc:O}");
+                HandleTechnicalPlanningUncertainty("画面画像取得中に内容が変化した", generation);
                 return;
             }
 
@@ -209,6 +224,19 @@ public partial class MainWindow
                 quality.Question,
                 quality.Key,
                 quality.Confidence);
+
+            if (string.Equals(decision.TargetId, "vision-target", StringComparison.Ordinal))
+            {
+                var lastVisualChangeUtc = _liveWatcher.LastChangeUtc;
+                if (lastVisualChangeUtc is { } afterCapture && afterCapture > visualCaptureCompletedUtc)
+                {
+                    LocalLogService.Write(
+                        "outlaw_stale_vision_target",
+                        $"changed={afterCapture:O};capture={visualCaptureCompletedUtc:O};rejecting planner coordinates");
+                    HandleTechnicalPlanningUncertainty("画像判断後に画面内容が変化した", generation);
+                    return;
+                }
+            }
 
             if (decision.Action.Equals("press_key", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(decision.TargetId))
             {
