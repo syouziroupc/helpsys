@@ -9,8 +9,13 @@
     <AssemblyName>HelpSys</AssemblyName>
     <RootNamespace>HelpSys</RootNamespace>
     <DefineConstants>$(DefineConstants);HELPSYS_OUTLAW_BUILD</DefineConstants>
+    <Version>3.1.0</Version>
+    <AssemblyVersion>3.1.0.0</AssemblyVersion>
+    <FileVersion>3.1.0.0</FileVersion>
+    <Product>HelpSys Outlaw</Product>
+    <Description>HelpSys Outlaw operation-first Windows guidance</Description>
     <HelpSysBuildId Condition="'$(HelpSysBuildId)' == ''">dev</HelpSysBuildId>
-    <InformationalVersion>0.1.0+$(HelpSysBuildId)</InformationalVersion>
+    <InformationalVersion>3.1.0-outlaw+$(HelpSysBuildId)</InformationalVersion>
     <TieredCompilation>true</TieredCompilation>
     <TieredPGO>true</TieredPGO>
     <OptimizationPreference>Speed</OptimizationPreference>
