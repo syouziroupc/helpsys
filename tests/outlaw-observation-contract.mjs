@@ -7,6 +7,7 @@ const facade = fs.readFileSync('src/HelpSys.Desktop/UiAutomationScanner.cs', 'ut
 const capture = fs.readFileSync('src/HelpSys.Desktop/ScreenCaptureService.cs', 'utf8');
 const watcher = fs.readFileSync('src/HelpSys.Desktop/Services/GuidanceStateWatcher.cs', 'utf8');
 const live = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LiveGuidance.cs', 'utf8');
+const main = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml.cs', 'utf8');
 const cloud = fs.readFileSync('src/HelpSys.Desktop/Services/CloudGuideService.cs', 'utf8');
 const context = fs.readFileSync('src/HelpSys.Desktop/Models/SystemContextSnapshot.cs', 'utf8');
 
@@ -35,6 +36,10 @@ if (quality.includes('if (freshTarget is null) freshTarget = target'))
   throw new Error('failed target revalidation must never fall back to stale pre-plan bounds');
 need(quality, '"outlaw_target_revalidation_failed"',
   'Outlaw must log and reject a stale structured target when pre-display revalidation fails');
+need(main, '"outlaw_structured_target_present"',
+  'Outlaw must log the exact structured target handed from planning into presentation');
+need(main, '"outlaw_present_transition_rejected"',
+  'Outlaw must log when a valid target cannot enter the presentation state');
 need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 18000 : 4500',
   'Outlaw UIA traversal must remain broad but bounded to reduce observation staleness');
 need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 4500 : 1400',
