@@ -6,7 +6,7 @@ const need = (fragment, message) => {
   if (!worker.includes(fragment)) throw new Error(message);
 };
 
-need("const VERSION = 'outlaw-2026.09.24-r3.7'", 'Outlaw worker generation must be r3.7');
+need("const VERSION = 'outlaw-2026.09.27-r3.8'", 'Outlaw worker generation must be r3.8');
 need("coordinateSpace: { type: 'string', enum: ['image_px', 'none'] }",
   'planner schema must declare explicit screenshot-pixel coordinates');
 need('coordinateImageWidth', 'planner schema must bind geometry to screenshot width');
