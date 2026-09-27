@@ -8,6 +8,8 @@ on:
       - "worker/stable-gemini.js"
       - "worker/education-gemini.js"
       - "worker/stable-router.js"
+      - "worker/outlaw-guide.js"
+      - "tests/outlaw-worker-grounding-contract.mjs"
       - "wrangler.jsonc"
       - "wrangler.stable.jsonc"
       - "wrangler.education.jsonc"
@@ -45,6 +47,8 @@ jobs:
           node --check worker/stable-gemini.js
           node --check worker/education-gemini.js
           node --check worker/stable-router.js
+          node --check worker/outlaw-guide.js
+          node --check tests/outlaw-worker-grounding-contract.mjs
           node --check tests/stable-worker-selftest.mjs
           node --check tests/stable-education-selftest.mjs
           node --check tests/stable-rebuild-contract.mjs
@@ -58,6 +62,7 @@ jobs:
           node tests/stable-worker-selftest.mjs
           node tests/stable-education-selftest.mjs
           node tests/stable-rebuild-contract.mjs
+          node tests/outlaw-worker-grounding-contract.mjs
           node tests/stable-adversarial-selftest.mjs
 
       - name: Restore Stable project and tests
