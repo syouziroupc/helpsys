@@ -36,4 +36,13 @@ need('visualConsensusField: true',
 need('visualConsensus: true',
   'reconciled visual targets must be explicitly attested by the server');
 
+need('recoverInvalidTargetToStructured',
+  'invalid or stale model targets must attempt current-UIA recovery before surfacing an API failure');
+need('recoverVisionToStructured',
+  'visual-only targets should be converted to current UIA targets when a distinctive visible label matches');
+need("return json(recovered ? guardUserChoice(recovered, goal, elements) : visualDisagreement(preliminary))",
+  'failed second-pass visual review must never return an unattested first-pass visual coordinate');
+need("visualConsensus:false",
+  'UIA recovery must not forge server visual-consensus attestation');
+
 console.log('HelpSys Outlaw worker grounding contract passed.');
