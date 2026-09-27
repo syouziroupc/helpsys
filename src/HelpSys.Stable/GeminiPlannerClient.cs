@@ -49,6 +49,9 @@ internal sealed class GeminiPlannerClient : IDisposable
             image = observation.ImageDataUri
         };
 
+        SafetyGate.EnsureSafeToEgress(observation);
+        SafetyAudit.Record("egress_allowed", "privacy_gate", null);
+
         HttpResponseMessage response;
         try
         {
