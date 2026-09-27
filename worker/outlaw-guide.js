@@ -1,7 +1,7 @@
 const VISION_MODEL = '@cf/zai-org/glm-5.3-flash';
 const REASONING_MODEL = '@cf/zai-org/glm-5.3';
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const VERSION = 'outlaw-2026.09.24-r3.7';
+const VERSION = 'outlaw-2026.09.27-r3.8';
 const MAX_BODY_BYTES = 50_000_000;
 const MAX_UI_ELEMENTS = 4000;
 const MAX_HISTORY = 64;
@@ -117,6 +117,8 @@ export default {
         visualCoordinateSpace: 'image_px',
         geometryConsensus: true,
         visualConsensusField: true,
+        contractFailureFailClosed: true,
+        visualMetadataRepair: true,
         fastStructuredReturn: true
       });
     }
@@ -163,7 +165,7 @@ export default {
           try {
             const geminiRaw = await runGeminiGuidance(env, visionPrompt, payload, image || null);
             const geminiChecked = validate(geminiRaw, elements, payload.capture);
-            if (!geminiChecked.ok) return json({ error: geminiChecked.error }, 502);
+            if (!geminiChecked.ok) return json(validationFailureDecision(geminiChecked.error));
             let geminiDecision = preferBeginnerSearchField(geminiChecked.value, elements, goal, payload.systemContext);
             if (image && geminiDecision.targetId === 'vision-target') {
               const geminiReviewPayload = {
@@ -173,7 +175,7 @@ export default {
               };
               const geminiReviewRaw = await runGeminiGuidance(env, reviewPrompt, geminiReviewPayload, image);
               const geminiReviewChecked = validate(geminiReviewRaw, elements, payload.capture);
-              if (!geminiReviewChecked.ok) return json({ error: geminiReviewChecked.error }, 502);
+              if (!geminiReviewChecked.ok) return json(visualDisagreement(geminiDecision, geminiReviewChecked.error));
               const reconciled = reconcileVisionDecision(geminiReviewChecked.value, geminiDecision, payload.capture);
               if (!reconciled) return json(visualDisagreement(geminiDecision));
               geminiDecision = reconciled;
@@ -189,13 +191,13 @@ export default {
       if (!image) {
         const structuredRaw = await runGuidance(env, REASONING_MODEL, visionPrompt, payload, null);
         const structuredChecked = validate(structuredRaw, elements, payload.capture);
-        if (!structuredChecked.ok) return json({ error: structuredChecked.error }, 502);
+        if (!structuredChecked.ok) return json(validationFailureDecision(structuredChecked.error));
         return json(guardUserChoice(structuredChecked.value, goal, elements));
       }
 
       const visionRaw = await runGuidance(env, VISION_MODEL, visionPrompt, payload, image);
       const visionChecked = validate(visionRaw, elements, payload.capture);
-      if (!visionChecked.ok) return json({ error: visionChecked.error }, 502);
+      if (!visionChecked.ok) return json(validationFailureDecision(visionChecked.error));
       let preliminary = visionChecked.value;
       preliminary = preferBeginnerSearchField(preliminary, elements, goal, payload.systemContext);
 
@@ -213,7 +215,7 @@ export default {
         const reviewChecked = validate(reviewRaw, elements, payload.capture);
         if (!reviewChecked.ok) {
           console.warn('outlaw_reasoning_review_invalid', reviewChecked.error);
-          return json(guardUserChoice(preliminary, goal, elements));
+          return json(visualDisagreement(preliminary, reviewChecked.error));
         }
 
         const finalDecision = reconcileVisionDecision(reviewChecked.value, preliminary, payload.capture);
@@ -224,7 +226,7 @@ export default {
         return json(guardUserChoice(finalDecision, goal, elements));
       } catch (reviewError) {
         console.error('outlaw_reasoning_review_failed', reviewError);
-        return json(guardUserChoice(preliminary, goal, elements));
+        return json(visualDisagreement(preliminary, 'review_failed'));
       }
     } catch (error) {
       console.error('outlaw_inference_failed', error);
@@ -478,7 +480,7 @@ function reconcileVisionDecision(finalDecision, preliminary, capture) {
   };
 }
 
-function visualDisagreement(preliminary) {
+function visualDisagreement(preliminary, reason = 'independent_visual_grounding_disagreed') {
   return {
     status: 'not_found',
     targetId: null,
@@ -493,7 +495,27 @@ function visualDisagreement(preliminary) {
     x: 0, y: 0, width: 0, height: 0,
     screenConfirmed: false,
     visualConsensus: false,
-    visualEvidence: preliminary?.visualEvidence || 'independent visual grounding disagreed'
+    visualEvidence: `${reason}: ${preliminary?.visualEvidence || 'independent visual grounding disagreed'}`.slice(0, 900)
+  };
+}
+
+function validationFailureDecision(error) {
+  const reason = text(error, 160) || 'invalid_planner_contract';
+  return {
+    status: 'not_found',
+    targetId: null,
+    action: 'none',
+    instruction: '現在画面の操作対象を安全に確定できなかったため、この案内は破棄しました。',
+    question: null,
+    key: null,
+    confidence: 0,
+    coordinateSpace: 'none',
+    coordinateImageWidth: 0,
+    coordinateImageHeight: 0,
+    x: 0, y: 0, width: 0, height: 0,
+    screenConfirmed: false,
+    visualConsensus: false,
+    visualEvidence: `planner_contract_rejected:${reason}`
   };
 }
 
@@ -546,9 +568,9 @@ function validate(raw, elements, capture) {
   const visualEvidence = text(raw?.visualEvidence, 900);
   const imageWidth = positiveInt(capture?.imageWidth ?? capture?.ImageWidth);
   const imageHeight = positiveInt(capture?.imageHeight ?? capture?.ImageHeight);
-  const rawSpace = String(raw?.coordinateSpace || 'none').toLowerCase();
-  const rawCoordinateWidth = positiveInt(raw?.coordinateImageWidth);
-  const rawCoordinateHeight = positiveInt(raw?.coordinateImageHeight);
+  let rawSpace = String(raw?.coordinateSpace || 'none').toLowerCase();
+  let rawCoordinateWidth = positiveInt(raw?.coordinateImageWidth);
+  let rawCoordinateHeight = positiveInt(raw?.coordinateImageHeight);
 
   const noGeometry = {
     coordinateSpace:'none',
@@ -572,8 +594,20 @@ function validate(raw, elements, capture) {
 
   if (targetId === 'vision-target') {
     if (!visualMouse) return { ok:false, error:'missing_visual_geometry' };
-    if (rawSpace !== 'image_px') return { ok:false, error:'visual_coordinate_space_must_be_image_px' };
     if (imageWidth <= 0 || imageHeight <= 0) return { ok:false, error:'missing_capture_dimensions' };
+
+    // Geometry itself is authoritative; repair only missing/legacy metadata when the
+    // rectangle is already a valid screenshot-pixel rectangle. Never invent a rectangle.
+    const geometryFitsImage = x >= 0 && y >= 0 && x + width <= imageWidth && y + height <= imageHeight;
+    const coordinateSizeRepairable =
+      (rawCoordinateWidth === 0 || rawCoordinateWidth === imageWidth) &&
+      (rawCoordinateHeight === 0 || rawCoordinateHeight === imageHeight);
+    if (rawSpace !== 'image_px' && geometryFitsImage && coordinateSizeRepairable) {
+      rawSpace = 'image_px';
+      rawCoordinateWidth = imageWidth;
+      rawCoordinateHeight = imageHeight;
+    }
+    if (rawSpace !== 'image_px') return { ok:false, error:'visual_coordinate_space_must_be_image_px' };
     if (rawCoordinateWidth !== imageWidth || rawCoordinateHeight !== imageHeight)
       return { ok:false, error:'visual_coordinate_image_size_mismatch' };
     if (x < 0 || y < 0 || x + width > imageWidth || y + height > imageHeight)

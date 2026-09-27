@@ -51,10 +51,12 @@ internal sealed class ObservationService
         }
 
         SafetyGate.EnsureSafeToCapture(processName, title, scan.Controls);
+        SafetyGate.EnsureNoForeignOverlay(hwnd, pid, rect);
         EnsureSameWindow(hwnd, pid);
 
         var image = CaptureWindow(rect);
         EnsureSameWindow(hwnd, pid);
+        SafetyGate.EnsureNoForeignOverlay(hwnd, pid, rect);
 
         return new ScreenObservation(
             hwnd,

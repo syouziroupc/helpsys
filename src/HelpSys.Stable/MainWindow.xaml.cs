@@ -37,17 +37,25 @@ public partial class MainWindow : Window
 
         var guideRegistered = NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyGuideId, NativeMethods.ModNoRepeat, NativeMethods.VkF8);
         var voiceRegistered = NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyVoiceId, NativeMethods.ModNoRepeat, NativeMethods.VkF9);
+        var emergencyRegistered = NativeMethods.RegisterHotKey(_windowHandle, NativeMethods.HotKeyEmergencyId, NativeMethods.ModNoRepeat, NativeMethods.VkF12);
         if (!guideRegistered)
             SetStatus("F8ショートカットを登録できませんでした。ボタンからは案内できます。");
         else if (!voiceRegistered && _speech.RecognitionAvailable)
             SetStatus("F9音声ショートカットを登録できませんでした。音声入力ボタンは利用できます。");
+        else if (!emergencyRegistered)
+            SetStatus("F12緊急停止ショートカットを登録できませんでした。画面の中止ボタンは利用できます。");
     }
 
     private nint WindowProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
         if (msg != NativeMethods.WmHotKey) return nint.Zero;
 
-        if (wParam.ToInt32() == NativeMethods.HotKeyGuideId)
+        if (wParam.ToInt32() == NativeMethods.HotKeyEmergencyId)
+        {
+            handled = true;
+            EmergencyStop();
+        }
+        else if (wParam.ToInt32() == NativeMethods.HotKeyGuideId)
         {
             handled = true;
             _ = RunGuidanceAsync();
@@ -76,6 +84,16 @@ public partial class MainWindow : Window
             _phase = AppPhase.Idle;
             SetStatus("中止しました。HelpSysは操作を実行していません。");
         }
+    }
+
+    private void EmergencyStop()
+    {
+        try { _runCts?.Cancel(); } catch { }
+        _speech.StopSpeaking();
+        CloseOverlay();
+        _phase = AppPhase.Idle;
+        SafetyAudit.Record("emergency_stop", "kill_switch", null);
+        SetStatus("緊急停止しました。進行中の案内を破棄し、オーバーレイと読み上げを停止しました。");
     }
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
@@ -225,6 +243,37 @@ public partial class MainWindow : Window
             if (!await _observation.IsPlanStillApplicableAsync(observation, plan, token))
                 throw new ObservationChangedException("Geminiが選んだ操作対象が応答待ち中に変化したため、古い案内を破棄しました。");
 
+            var safetyDecision = SafetyPolicy.Evaluate(observation, plan);
+            if (safetyDecision.Disposition == SafetyDisposition.Block)
+            {
+                SafetyAudit.Record("action_blocked", safetyDecision.Category, plan);
+                throw new PrivacyBlockedException(safetyDecision.Message);
+            }
+
+            if (safetyDecision.Disposition == SafetyDisposition.RequireHumanConfirmation)
+            {
+                SafetyAudit.Record("confirmation_required", safetyDecision.Category, plan);
+                var answer = MessageBox.Show(
+                    safetyDecision.Message + "\n\nこの案内を表示しますか？ HelpSys自身は操作を実行しません。",
+                    VersionInfo.ProductName + " — 重要操作の確認",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (answer != MessageBoxResult.Yes)
+                {
+                    SafetyAudit.Record("confirmation_declined", safetyDecision.Category, plan);
+                    RestoreMainWindow();
+                    SetStatus("重要操作の案内を中止しました。");
+                    return;
+                }
+
+                await Task.Delay(150, token);
+                if (!_observation.IsStillCurrent(observation) ||
+                    !await _observation.IsPlanStillApplicableAsync(observation, plan, token))
+                    throw new ObservationChangedException("確認中に画面または操作対象が変化したため、確認済み案内を破棄しました。");
+
+                SafetyAudit.Record("confirmation_accepted", safetyDecision.Category, plan);
+            }
+
             token.ThrowIfCancellationRequested();
             _phase = AppPhase.ShowingResult;
 
@@ -353,6 +402,8 @@ public partial class MainWindow : Window
             _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyGuideId);
         if (_windowHandle != nint.Zero)
             _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyVoiceId);
+        if (_windowHandle != nint.Zero)
+            _ = NativeMethods.UnregisterHotKey(_windowHandle, NativeMethods.HotKeyEmergencyId);
         _source?.RemoveHook(WindowProc);
         try { _speech.Dispose(); } catch { }
         try { _planner.Dispose(); } catch { }

@@ -6,7 +6,7 @@ const need = (fragment, message) => {
   if (!worker.includes(fragment)) throw new Error(message);
 };
 
-need("const VERSION = 'outlaw-2026.09.24-r3.7'", 'Outlaw worker generation must be r3.7');
+need("const VERSION = 'outlaw-2026.09.27-r3.8'", 'Outlaw worker generation must be r3.8');
 need("coordinateSpace: { type: 'string', enum: ['image_px', 'none'] }",
   'planner schema must declare explicit screenshot-pixel coordinates');
 need('coordinateImageWidth', 'planner schema must bind geometry to screenshot width');
@@ -35,5 +35,17 @@ need('visualConsensusField: true',
   'health endpoint must expose dual-pass visual consensus attestation');
 need('visualConsensus: true',
   'reconciled visual targets must be explicitly attested by the server');
+need('contractFailureFailClosed: true',
+  'health contract must advertise fail-closed planner contract handling');
+need('visualMetadataRepair: true',
+  'health contract must advertise bounded visual metadata repair');
+need('validationFailureDecision(',
+  'planner schema faults must degrade to a safe not_found decision instead of HTTP 502');
+need("return json(visualDisagreement(preliminary, reviewChecked.error))",
+  'an invalid second visual pass must not return an unattested preliminary rectangle');
+need("return json(visualDisagreement(preliminary, 'review_failed'))",
+  'a failed second visual pass must fail closed');
+need('const geometryFitsImage =',
+  'legacy coordinate metadata may only be repaired when the existing rectangle already fits the current image');
 
 console.log('HelpSys Outlaw worker grounding contract passed.');

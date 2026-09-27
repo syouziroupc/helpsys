@@ -73,11 +73,13 @@ jobs:
                 const j=await r.json();
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
-                   j?.version==='outlaw-2026.09.24-r3.7' &&
+                   j?.version==='outlaw-2026.09.27-r3.8' &&
                    j?.independentVisionReview===true &&
                    j?.visualCoordinateSpace==='image_px' &&
                    j?.geometryConsensus===true &&
                    j?.visualConsensusField===true &&
+                   j?.contractFailureFailClosed===true &&
+                   j?.visualMetadataRepair===true &&
                    j?.aiConfigured===true &&
                    Array.isArray(j?.providers) &&
                    ['auto','gemini','glm'].every(x=>j.providers.includes(x))){

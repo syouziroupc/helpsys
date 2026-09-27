@@ -8,6 +8,10 @@ const project = fs.readFileSync('src/HelpSys.Stable/HelpSys.Stable.csproj', 'utf
 const main = fs.readFileSync('src/HelpSys.Stable/MainWindow.xaml.cs', 'utf8');
 const observation = fs.readFileSync('src/HelpSys.Stable/ObservationService.cs', 'utf8');
 const safety = fs.readFileSync('src/HelpSys.Stable/SafetyGate.cs', 'utf8');
+const safetyPolicy = fs.readFileSync('src/HelpSys.Stable/SafetyPolicy.cs', 'utf8');
+const safetyAudit = fs.readFileSync('src/HelpSys.Stable/SafetyAudit.cs', 'utf8');
+const nativeMethods = fs.readFileSync('src/HelpSys.Stable/NativeMethods.cs', 'utf8');
+const xaml = fs.readFileSync('src/HelpSys.Stable/MainWindow.xaml', 'utf8');
 const client = fs.readFileSync('src/HelpSys.Stable/GeminiPlannerClient.cs', 'utf8');
 const speech = fs.readFileSync('src/HelpSys.Stable/SpeechService.cs', 'utf8');
 const updater = fs.readFileSync('src/HelpSys.Stable/UpdateService.cs', 'utf8');
@@ -27,6 +31,8 @@ assert((main.match(/_planner\.PlanAsync\(/g) || []).length === 1, 'one guidance 
 assert(!main.includes('System.Threading.Timer') && !main.includes('DispatcherTimer'), 'Stable shell must not use background timers');
 assert(!main.includes('while (') && !main.includes('while('), 'Stable controller must not contain retry loops');
 assert(main.includes('HotKeyGuideId') && main.includes('HotKeyVoiceId'), 'F8 guidance and F9 voice shortcuts must be retained');
+assert(main.includes('HotKeyEmergencyId') && main.includes('EmergencyStop()'), 'F12 emergency stop must be wired into the controller');
+assert(nativeMethods.includes('VkF12') && xaml.includes('F12 = 緊急停止'), 'F12 emergency stop must be explicit in native bindings and UI');
 assert(main.includes('IsPlanStillApplicableAsync'), 'model target must be locally revalidated before display');
 
 const safetyIndex = observation.indexOf('SafetyGate.EnsureSafeToCapture');
@@ -36,6 +42,14 @@ assert(safety.includes('controls.Any(x => x.Password)'), 'password controls must
 assert(safety.includes('SecurityWarningTerms'), 'security warnings must be blocked locally');
 assert(safety.includes('SecretContextTerms'), 'secret/authentication contexts must be blocked locally');
 assert(safety.includes('SensitiveStorageTerms'), 'cookie/storage secret surfaces must be blocked locally');
+assert(observation.includes('SafetyGate.EnsureNoForeignOverlay'), 'foreign overlay privacy check must surround screenshot capture');
+assert(safety.includes('EnsureSafeToEgress(ScreenObservation observation)'), 'a separate pre-egress gate must revalidate the current observation');
+assert(client.includes('SafetyGate.EnsureSafeToEgress(observation)'), 'all planner screen/UIA egress must pass the last-moment privacy gate');
+assert(safetyPolicy.includes('RequireHumanConfirmation'), 'high-impact operations must have an explicit human confirmation gate');
+assert(safetyPolicy.includes('authentication') && safetyPolicy.includes('administrative_privilege'), 'authentication and privilege operations must have hard-block categories');
+assert(safetyPolicy.includes('payment') && safetyPolicy.includes('destructive_delete') && safetyPolicy.includes('external_send'), 'payment/delete/send must be separately classified');
+assert(main.includes('SafetyPolicy.Evaluate(observation, plan)'), 'planner output must pass independent action safety policy before display');
+assert(safetyAudit.includes('safety-audit.jsonl') && safetyAudit.includes('targetPresent'), 'safety audit must be local and content-minimized');
 
 assert(client.includes('helpsys.syouziroupc.workers.dev/v1/plan'), 'Stable desktop must preserve the public HelpSys origin');
 assert(client.includes('allowedActions'), 'desktop must independently reject unknown planner actions');

@@ -7,9 +7,12 @@ internal static class NativeMethods
 {
     public const int HotKeyGuideId = 0x4853;
     public const int HotKeyVoiceId = 0x4854;
+    public const int HotKeyEmergencyId = 0x4855;
     public const uint ModNoRepeat = 0x4000;
     public const uint VkF8 = 0x77;
     public const uint VkF9 = 0x78;
+    public const uint VkF12 = 0x7B;
+    public const uint GwHwndPrev = 3;
     public const int WmHotKey = 0x0312;
     public const int GwlExStyle = -20;
     public const nint WsExTransparent = 0x00000020;
@@ -18,6 +21,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
