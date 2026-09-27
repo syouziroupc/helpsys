@@ -73,7 +73,7 @@ jobs:
                 const j=await r.json();
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
-                   j?.version==='outlaw-2026.09.24-r3.7' &&
+                   j?.version==='outlaw-2026.09.27-r3.8' &&
                    j?.independentVisionReview===true &&
                    j?.visualCoordinateSpace==='image_px' &&
                    j?.geometryConsensus===true &&
