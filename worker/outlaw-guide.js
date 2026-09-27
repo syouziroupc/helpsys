@@ -163,8 +163,13 @@ export default {
           try {
             const geminiRaw = await runGeminiGuidance(env, visionPrompt, payload, image || null);
             const geminiChecked = validate(geminiRaw, elements, payload.capture);
-            if (!geminiChecked.ok) return json({ error: geminiChecked.error }, 502);
+            if (!geminiChecked.ok) {
+              const recovered = recoverInvalidTargetToStructured(geminiRaw, elements, goal);
+              if (recovered) return json(guardUserChoice(recovered, goal, elements));
+              return json({ error: geminiChecked.error }, 502);
+            }
             let geminiDecision = preferBeginnerSearchField(geminiChecked.value, elements, goal, payload.systemContext);
+            geminiDecision = recoverVisionToStructured(geminiDecision, elements, goal) || geminiDecision;
             if (image && geminiDecision.targetId === 'vision-target') {
               const geminiReviewPayload = {
                 ...payload,
@@ -173,8 +178,14 @@ export default {
               };
               const geminiReviewRaw = await runGeminiGuidance(env, reviewPrompt, geminiReviewPayload, image);
               const geminiReviewChecked = validate(geminiReviewRaw, elements, payload.capture);
-              if (!geminiReviewChecked.ok) return json({ error: geminiReviewChecked.error }, 502);
-              const reconciled = reconcileVisionDecision(geminiReviewChecked.value, geminiDecision, payload.capture);
+              if (!geminiReviewChecked.ok) {
+                const recovered = recoverInvalidTargetToStructured(geminiReviewRaw, elements, goal) ||
+                                  recoverVisionToStructured(geminiDecision, elements, goal);
+                if (recovered) return json(guardUserChoice(recovered, goal, elements));
+                return json(visualDisagreement(geminiDecision));
+              }
+              const reviewed = recoverVisionToStructured(geminiReviewChecked.value, elements, goal) || geminiReviewChecked.value;
+              const reconciled = reconcileVisionDecision(reviewed, geminiDecision, payload.capture);
               if (!reconciled) return json(visualDisagreement(geminiDecision));
               geminiDecision = reconciled;
             }
@@ -195,9 +206,14 @@ export default {
 
       const visionRaw = await runGuidance(env, VISION_MODEL, visionPrompt, payload, image);
       const visionChecked = validate(visionRaw, elements, payload.capture);
-      if (!visionChecked.ok) return json({ error: visionChecked.error }, 502);
+      if (!visionChecked.ok) {
+        const recovered = recoverInvalidTargetToStructured(visionRaw, elements, goal);
+        if (recovered) return json(guardUserChoice(recovered, goal, elements));
+        return json({ error: visionChecked.error }, 502);
+      }
       let preliminary = visionChecked.value;
       preliminary = preferBeginnerSearchField(preliminary, elements, goal, payload.systemContext);
+      preliminary = recoverVisionToStructured(preliminary, elements, goal) || preliminary;
 
       if (canReturnFastStructured(preliminary, elements, payload.systemContext)) {
         return json(guardUserChoice(preliminary, goal, elements));
@@ -213,10 +229,13 @@ export default {
         const reviewChecked = validate(reviewRaw, elements, payload.capture);
         if (!reviewChecked.ok) {
           console.warn('outlaw_reasoning_review_invalid', reviewChecked.error);
-          return json(guardUserChoice(preliminary, goal, elements));
+          const recovered = recoverInvalidTargetToStructured(reviewRaw, elements, goal) ||
+                            recoverVisionToStructured(preliminary, elements, goal);
+          return json(recovered ? guardUserChoice(recovered, goal, elements) : visualDisagreement(preliminary));
         }
 
-        const finalDecision = reconcileVisionDecision(reviewChecked.value, preliminary, payload.capture);
+        const reviewed = recoverVisionToStructured(reviewChecked.value, elements, goal) || reviewChecked.value;
+        const finalDecision = reconcileVisionDecision(reviewed, preliminary, payload.capture);
         if (!finalDecision) {
           console.warn('outlaw_vision_review_geometry_disagreement');
           return json(visualDisagreement(preliminary));
@@ -224,7 +243,8 @@ export default {
         return json(guardUserChoice(finalDecision, goal, elements));
       } catch (reviewError) {
         console.error('outlaw_reasoning_review_failed', reviewError);
-        return json(guardUserChoice(preliminary, goal, elements));
+        const recovered = recoverVisionToStructured(preliminary, elements, goal);
+        return json(recovered ? guardUserChoice(recovered, goal, elements) : visualDisagreement(preliminary));
       }
     } catch (error) {
       console.error('outlaw_inference_failed', error);
@@ -301,6 +321,69 @@ async function runGuidance(env, model, system, payload, image) {
   return raw;
 }
 
+
+function recoverInvalidTargetToStructured(raw, elements, goal) {
+  if (!raw || String(raw.status || '') !== 'target') return null;
+  const targetId = String(raw.targetId || '');
+  const existing = elements.find(e => e?.id === targetId && e.enabled !== false && e.interactable !== false);
+  if (existing && targetId !== 'vision-target') return null;
+  return recoverByVisibleLabel(raw, elements, goal);
+}
+
+function recoverVisionToStructured(decision, elements, goal) {
+  if (!decision || decision.status !== 'target' || decision.targetId !== 'vision-target') return null;
+  return recoverByVisibleLabel(decision, elements, goal);
+}
+
+function recoverByVisibleLabel(decision, elements, goal) {
+  const action = String(decision?.action || '');
+  if (!['left_click','double_click'].includes(action)) return null;
+
+  const context = [goal, decision?.instruction, decision?.visualEvidence]
+    .filter(Boolean).join(' ').toLowerCase();
+  if (!context) return null;
+
+  const asciiTerms = [...new Set((context.match(/[a-z0-9][a-z0-9._-]{1,}/g) || [])
+    .filter(term => term.length >= 3 && !['http','https','www','com','click','button','left','right'].includes(term)))];
+
+  const candidates = elements
+    .filter(e => e && e.id && e.enabled !== false && e.interactable !== false)
+    .filter(e => ['button','hyperlink','listitem','menuitem','tabitem','treeitem'].includes(String(e.controlType || '').toLowerCase()))
+    .map(e => {
+      const label = String(e.name || '').trim().toLowerCase();
+      if (!label) return null;
+      let score = 0;
+      const compactLabel = label.replace(/https?:\/\/\S+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (compactLabel.length >= 3 && compactLabel.length <= 80 && context.includes(compactLabel)) score += 20;
+      for (const term of asciiTerms) {
+        if (label.includes(term)) score += term.length >= 6 ? 12 : 7;
+      }
+      if (/hyperlink|button/i.test(String(e.controlType || ''))) score += 1;
+      return score > 0 ? { element:e, score } : null;
+    })
+    .filter(Boolean)
+    .sort((a,b) => b.score - a.score);
+
+  if (!candidates.length || candidates[0].score < 8) return null;
+  if (candidates.length > 1 && candidates[1].score === candidates[0].score &&
+      candidates[1].element.id !== candidates[0].element.id) return null;
+
+  const target = candidates[0].element;
+  return {
+    ...decision,
+    status:'target',
+    targetId:target.id,
+    action,
+    question:null,
+    key:null,
+    coordinateSpace:'none',
+    coordinateImageWidth:0,
+    coordinateImageHeight:0,
+    x:0,y:0,width:0,height:0,
+    visualConsensus:false,
+    visualEvidence: decision?.visualEvidence || 'current UI Automation target matched visible label'
+  };
+}
 
 function preferBeginnerSearchField(decision, elements, goal, systemContext) {
   if (!decision || decision.status !== 'target') return decision;
