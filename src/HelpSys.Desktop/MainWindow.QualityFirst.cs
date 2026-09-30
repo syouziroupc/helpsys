@@ -45,6 +45,41 @@ public partial class MainWindow
                 (string.IsNullOrWhiteSpace(detail) ? string.Empty : $";{detail}"));
         }
 
+        bool TryOutlawLocalFastPaths(
+            IReadOnlyList<UiElementCandidate> localCandidates,
+            SystemContextSnapshot localContext,
+            string observationMode,
+            bool allowAbsenceBasedPaths)
+        {
+            if (!OutlawModePolicy.Enabled) return false;
+
+            if (TryAutoSelectOutlawIdentityChoice(localCandidates, localContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=identity_auto_select;observation={observationMode}");
+                LogOutlawPhase("local_identity", $"observation={observationMode}");
+                return true;
+            }
+
+            // Application launch infers that a requested icon/result is absent. A bounded Quick
+            // observation is intentionally incomplete, so absence-based routing is Deep-only.
+            if (allowAbsenceBasedPaths &&
+                TryOutlawApplicationLaunchFastPath(localCandidates, localContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=application_launch_via_start;observation={observationMode}");
+                LogOutlawPhase("local_application_launch", $"observation={observationMode}");
+                return true;
+            }
+
+            if (TryOutlawBrowserSearchFastPath(localCandidates, localContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=browser_search;observation={observationMode}");
+                LogOutlawPhase("local_browser_search", $"observation={observationMode}");
+                return true;
+            }
+
+            return false;
+        }
+
         try
         {
             SetState("今の画面と操作できる場所を確認しています…", speak: false);
@@ -65,12 +100,63 @@ public partial class MainWindow
             }
             else
             {
+                if (OutlawModePolicy.Enabled)
+                {
+                    ObservationSnapshot quickSnapshot;
+                    try
+                    {
+                        quickSnapshot = await _observationBroker.CaptureQuickAsync(cancellationToken);
+                    }
+                    catch (ObservationChangedException)
+                    {
+                        if (TryQueueCurrentStateReplan("Quick観測中に前面画面が切り替わったため、現在状態を取り直す", generation))
+                            return;
+                        HandleTechnicalPlanningUncertainty("Quick観測中の画面切替が続いている", generation);
+                        return;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        HandleTechnicalPlanningUncertainty("Quick観測で前面ウィンドウを特定できない", generation);
+                        return;
+                    }
+
+                    if (!_sessionState.IsCurrent(generation)) return;
+                    _lastObservationFingerprint = quickSnapshot.Fingerprint;
+                    var quickContext = quickSnapshot.System;
+                    var quickCandidates = quickSnapshot.Elements;
+                    LogOutlawPhase(
+                        "observation_quick",
+                        $"candidates={quickCandidates.Count};sequence={quickSnapshot.Sequence}");
+                    await _liveWatcher.SetForegroundProcessAsync(
+                        quickContext.ForegroundProcessId,
+                        cancellationToken);
+
+                    var quickEvidence = GuidanceEvidenceService.Build(
+                        false,
+                        quickCandidates,
+                        _history,
+                        quickContext);
+                    SetState(GuidanceEvidenceService.BuildProgressText(quickEvidence), speak: false);
+
+                    if (TryOutlawLocalFastPaths(
+                            quickCandidates,
+                            quickContext,
+                            "quick",
+                            allowAbsenceBasedPaths: false))
+                        return;
+
+                    SetState("詳細な画面情報を確認しています…", speak: false);
+                }
+
                 try
                 {
                     snapshot = await _observationBroker.CaptureAsync(4000, cancellationToken);
                 }
                 catch (ObservationChangedException)
                 {
+                    if (OutlawModePolicy.Enabled &&
+                        TryQueueCurrentStateReplan("詳細観測中に前面画面が切り替わったため、現在状態を取り直す", generation))
+                        return;
                     HandleTechnicalPlanningUncertainty("観測中に前面画面が切り替わった", generation);
                     return;
                 }
@@ -85,7 +171,9 @@ public partial class MainWindow
             _lastObservationFingerprint = snapshot.Fingerprint;
             var systemContext = snapshot.System;
             var candidates = snapshot.Elements;
-            LogOutlawPhase("observation", $"candidates={candidates.Count};sequence={snapshot.Sequence}");
+            LogOutlawPhase(
+                reuseOutlawObservation ? "observation_reused" : "observation_deep",
+                $"candidates={candidates.Count};sequence={snapshot.Sequence}");
             await _liveWatcher.SetForegroundProcessAsync(systemContext.ForegroundProcessId, cancellationToken);
 
             if (_diagnosticMode.Enabled && systemContext.Browser is not null && systemContext.ForegroundWindowHandle != nint.Zero)
@@ -105,29 +193,12 @@ public partial class MainWindow
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
-            if (OutlawModePolicy.Enabled &&
-                TryAutoSelectOutlawIdentityChoice(candidates, systemContext, generation))
-            {
-                LocalLogService.Write("outlaw_local_fast_path", "reason=identity_auto_select");
-                LogOutlawPhase("local_identity");
+            if (TryOutlawLocalFastPaths(
+                    candidates,
+                    systemContext,
+                    reuseOutlawObservation ? "reused" : "deep",
+                    allowAbsenceBasedPaths: true))
                 return;
-            }
-
-            if (OutlawModePolicy.Enabled &&
-                TryOutlawApplicationLaunchFastPath(candidates, systemContext, generation))
-            {
-                LocalLogService.Write("outlaw_local_fast_path", "reason=application_launch_via_start");
-                LogOutlawPhase("local_application_launch");
-                return;
-            }
-
-            if (OutlawModePolicy.Enabled &&
-                TryOutlawBrowserSearchFastPath(candidates, systemContext, generation))
-            {
-                LocalLogService.Write("outlaw_local_fast_path", "reason=browser_search");
-                LogOutlawPhase("local_browser_search");
-                return;
-            }
 
             var imagePrivacyEpoch = CurrentPrivacyEgressEpoch;
             ScreenCaptureFrame frame;
@@ -357,10 +428,14 @@ public partial class MainWindow
                 return;
             }
 
+            var revalidateStartedMs = operationStopwatch.ElapsedMilliseconds;
             var freshTarget = await _scanner.RevalidateCandidateAsync(
                 target,
                 OutlawModePolicy.Enabled ? target.ProcessId : systemContext.ForegroundProcessId,
                 cancellationToken);
+            LogOutlawPhase(
+                "target_revalidate",
+                $"durationMs={operationStopwatch.ElapsedMilliseconds - revalidateStartedMs};result={(freshTarget is null ? "miss" : "hit")};target={target.Id}");
             if (!_sessionState.IsCurrent(generation)) return;
             if (!_observationBroker.IsCurrent(snapshot))
             {
@@ -376,15 +451,15 @@ public partial class MainWindow
             if (freshTarget is null)
             {
                 LocalLogService.Write(
-                    OutlawModePolicy.Enabled ? "outlaw_target_revalidation_fallback" : "target_revalidation_failed",
+                    OutlawModePolicy.Enabled ? "outlaw_target_revalidation_failed" : "target_revalidation_failed",
                     $"target={target.Id};action={decision.Action};sameForeground={_observationBroker.IsCurrent(snapshot)}");
-                if (!OutlawModePolicy.Enabled || !_observationBroker.IsCurrent(snapshot))
-                {
-                    HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
-                    return;
-                }
 
-                freshTarget = target;
+                if (OutlawModePolicy.Enabled &&
+                    TryQueueCurrentStateReplan("案内表示直前に対象が消えたため、古い座標を使わず現在画面から再探索する", generation))
+                    return;
+
+                HandleTechnicalPlanningUncertainty("案内対象を表示直前に再確認できない", generation);
+                return;
             }
 
             LogOutlawPhase("present", $"target={freshTarget.Id};action={decision.Action}");
