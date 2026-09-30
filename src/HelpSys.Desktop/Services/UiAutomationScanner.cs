@@ -425,18 +425,26 @@ public sealed class UiAutomationScanner
         if (rootProcessId is > 0) EnqueueProcessSurfaceRoots(rootProcessId.Value, queue);
         else EnqueueChildrenCached(walker, root, 0, queue, cacheRequest);
 
-        var interactivePoolLimit = OutlawModePolicy.Enabled ? Math.Max(3600, maxCandidates * 3) : Math.Max(360, maxCandidates * 2);
-        var contextPoolLimit = OutlawModePolicy.Enabled ? Math.Max(1800, maxCandidates * 2) : Math.Max(90, maxCandidates / 3);
+        // A small process-scoped Outlaw request is the deterministic Fast Path probe.
+        // Keep it cheap: it only needs visible control metadata. If it cannot prove a local
+        // action, QualityFirst immediately escalates to the normal deep Outlaw observation.
+        var quickOutlaw = OutlawModePolicy.Enabled && rootProcessId is > 0 && maxCandidates <= 180;
+        var interactivePoolLimit = quickOutlaw
+            ? Math.Max(360, maxCandidates * 2)
+            : OutlawModePolicy.Enabled ? Math.Max(3600, maxCandidates * 3) : Math.Max(360, maxCandidates * 2);
+        var contextPoolLimit = quickOutlaw
+            ? Math.Max(90, maxCandidates / 2)
+            : OutlawModePolicy.Enabled ? Math.Max(1800, maxCandidates * 2) : Math.Max(90, maxCandidates / 3);
         var interactive = new List<UiElementCandidate>(interactivePoolLimit);
         var context = new List<UiElementCandidate>(contextPoolLimit);
         var processNames = new Dictionary<int, string>();
         var visited = 0;
         var stopwatch = Stopwatch.StartNew();
 
-        var visitedLimit = OutlawModePolicy.Enabled ? 18000 : 4500;
-        var elapsedLimitMs = OutlawModePolicy.Enabled ? 4500 : 1400;
+        var visitedLimit = quickOutlaw ? 3200 : OutlawModePolicy.Enabled ? 18000 : 4500;
+        var elapsedLimitMs = quickOutlaw ? 900 : OutlawModePolicy.Enabled ? 4500 : 1400;
 
-        var depthLimit = OutlawModePolicy.Enabled ? 18 : 10;
+        var depthLimit = quickOutlaw ? 10 : OutlawModePolicy.Enabled ? 18 : 10;
 
         while (queue.Count > 0 && visited < visitedLimit && stopwatch.ElapsedMilliseconds < elapsedLimitMs)
         {
@@ -459,7 +467,9 @@ public sealed class UiAutomationScanner
                     // expensive cross-process evidence, but it often contains the exact document/page
                     // text that Name alone loses.
                     var name = OutlawModePolicy.Enabled
-                        ? ReadOutlawVisibleText(element, typeName, rawName)
+                        ? quickOutlaw
+                            ? isPassword ? "[password field]" : NormalizeReadableText(rawName, 420)
+                            : ReadOutlawVisibleText(element, typeName, rawName)
                         : isPassword ? "[password field]" : isInput ? "[input field]" : NormalizeReadableText(rawName, 420);
                     var automationId = current.AutomationId ?? string.Empty;
                     var className = current.ClassName ?? string.Empty;
@@ -495,9 +505,11 @@ public sealed class UiAutomationScanner
             if (depth < depthLimit) EnqueueChildrenCached(walker, element, depth + 1, queue, cacheRequest);
         }
 
-        var contextBudget = OutlawModePolicy.Enabled
-            ? Math.Min(context.Count, Math.Max(240, maxCandidates / 2))
-            : Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
+        var contextBudget = quickOutlaw
+            ? Math.Min(context.Count, Math.Max(24, maxCandidates / 4))
+            : OutlawModePolicy.Enabled
+                ? Math.Min(context.Count, Math.Max(240, maxCandidates / 2))
+                : Math.Min(context.Count, Math.Max(30, maxCandidates / 7));
         var interactiveBudget = Math.Max(0, maxCandidates - contextBudget);
         var rankedInteractive = interactive
             .OrderByDescending(CandidatePriority)
