@@ -28,6 +28,7 @@ jobs:
       - name: Verify Outlaw progressive observation
         run: |
           node tests/outlaw-observation-contract.mjs
+          node tests/local-choice-contract.mjs
           node tests/outlaw-repeat-guard-contract.mjs
           node tests/current-state-replan-contract.mjs
           node tests/outlaw-3.2.0-grounding-contract.mjs
