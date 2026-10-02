@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using HelpSys.Models;
 
 namespace HelpSys.Services;
@@ -21,10 +22,23 @@ public sealed class ObservationBroker
         _scanner = scanner;
     }
 
-    public async Task<ObservationSnapshot> CaptureAsync(
+    private const int QuickCandidateBudget = 180;
+
+    public Task<ObservationSnapshot> CaptureQuickAsync(
+        CancellationToken cancellationToken = default)
+        => CaptureCoreAsync(QuickCandidateBudget, quick: true, cancellationToken);
+
+    public Task<ObservationSnapshot> CaptureAsync(
         int maxCandidates = 240,
         CancellationToken cancellationToken = default)
+        => CaptureCoreAsync(maxCandidates, quick: false, cancellationToken);
+
+    private async Task<ObservationSnapshot> CaptureCoreAsync(
+        int maxCandidates,
+        bool quick,
+        CancellationToken cancellationToken)
     {
+        var phaseStopwatch = Stopwatch.StartNew();
         var before = _systemContext.Capture();
         if (!HasUsableForeground(before))
         {
@@ -35,14 +49,13 @@ public sealed class ObservationBroker
         if (!HasUsableForeground(before))
             throw new InvalidOperationException("前面ウィンドウを安全に特定できません。");
 
+        var scanPhase = quick ? "observation.quick.scan" : "observation.deep.scan";
         var elements = await PerformanceTrace.MeasureAsync(
-            "observation.scan",
-            () => OutlawModePolicy.Enabled
-                ? _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)
-                : _scanner.CaptureCandidatesForProcessAsync(
-                    before.ForegroundProcessId,
-                    maxCandidates,
-                    cancellationToken)).ConfigureAwait(false);
+            scanPhase,
+            () => _scanner.CaptureCandidatesForProcessAsync(
+                before.ForegroundProcessId,
+                maxCandidates,
+                cancellationToken)).ConfigureAwait(false);
 
         if (OutlawModePolicy.Enabled)
             elements = KeepForegroundProcessEvidence(elements, before);
@@ -55,16 +68,16 @@ public sealed class ObservationBroker
                 var shellRebound = HasSameShellSurface(before, after);
                 LocalLogService.Write(
                     "outlaw_observation_rebound",
-                    $"reason={(shellRebound ? "windows_shell_host_changed" : "same_process_hwnd_changed")};before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle}");
+                    $"mode={(quick ? "quick" : "deep")};reason={(shellRebound ? "windows_shell_host_changed" : "same_process_hwnd_changed")};before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle}");
 
-                // Maximize/restore can recreate a HWND, while Windows 11 Start/Search can transfer
-                // foreground ownership among explorer/Start/Search host processes without changing
-                // the logical shell surface. Re-scan once after the handoff and only keep evidence
-                // from the now-current logical surface.
                 elements = await PerformanceTrace.MeasureAsync(
-                    "observation.rescan",
-                    () => _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)).ConfigureAwait(false);
+                    $"{scanPhase}.rescan",
+                    () => _scanner.CaptureCandidatesForProcessAsync(
+                        after.ForegroundProcessId,
+                        maxCandidates,
+                        cancellationToken)).ConfigureAwait(false);
                 elements = KeepForegroundProcessEvidence(elements, after);
+
                 var rebound = _systemContext.Capture();
                 var stable = shellRebound
                     ? HasSameShellSurface(after, rebound)
@@ -79,7 +92,7 @@ public sealed class ObservationBroker
                 {
                     LocalLogService.Write(
                         "outlaw_observation_discarded",
-                        $"reason=foreground_changed_during_scan;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle};candidates={elements.Count}");
+                        $"mode={(quick ? "quick" : "deep")};reason=foreground_changed_during_scan;before={before.ForegroundProcess}/{before.ForegroundProcessId}/{before.ForegroundWindowHandle};after={after.ForegroundProcess}/{after.ForegroundProcessId}/{after.ForegroundWindowHandle};candidates={elements.Count}");
                 }
 
                 throw new ObservationChangedException("UIA取得中に前面ウィンドウが変化しました。観測を破棄して現在状態を取り直します。");
@@ -88,12 +101,21 @@ public sealed class ObservationBroker
 
         after = _systemContext.EnrichWithObservedElements(after, elements);
         var sequence = Interlocked.Increment(ref _sequence);
-        return new ObservationSnapshot(
+        var snapshot = new ObservationSnapshot(
             sequence,
             DateTime.UtcNow,
             after,
             elements,
             BuildFingerprint(after, elements));
+
+        if (OutlawModePolicy.Enabled)
+        {
+            LocalLogService.Write(
+                "outlaw_observation_timing",
+                $"mode={(quick ? "quick" : "deep")};elapsedMs={phaseStopwatch.ElapsedMilliseconds};candidates={elements.Count};sequence={sequence};foreground={after.ForegroundProcess}/{after.ForegroundProcessId}");
+        }
+
+        return snapshot;
     }
 
     public bool IsCurrent(ObservationSnapshot snapshot)

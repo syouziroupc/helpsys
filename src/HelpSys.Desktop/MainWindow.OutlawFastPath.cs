@@ -6,10 +6,12 @@ namespace HelpSys;
 
 public partial class MainWindow
 {
-    private bool TryOutlawBrowserSearchFastPath(
+    private async Task<bool> TryOutlawBrowserSearchFastPathAsync(
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot context,
-        long generation)
+        ObservationSnapshot snapshot,
+        long generation,
+        CancellationToken cancellationToken)
     {
         if (!OutlawModePolicy.Enabled ||
             !_sessionState.IsCurrent(generation) ||
@@ -48,12 +50,33 @@ public partial class MainWindow
             .FirstOrDefault();
 
         if (searchField is null) return false;
+
+        UiElementCandidate? fresh;
+        try
+        {
+            fresh = await _scanner.RevalidateCandidateAsync(
+                searchField,
+                searchField.ProcessId > 0 ? searchField.ProcessId : context.ForegroundProcessId,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { fresh = null; }
+
+        if (!_sessionState.IsCurrent(generation)) return true;
+        if (fresh is null || !_observationBroker.IsCurrent(snapshot))
+        {
+            LocalLogService.Write(
+                "outlaw_local_fast_path_revalidation_failed",
+                $"reason=browser_search;target={searchField.Id};fresh={(fresh is null ? "miss" : "hit")};snapshotCurrent={_observationBroker.IsCurrent(snapshot)}");
+            return false;
+        }
+
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return false;
 
-        var decision = searchField.Focused
+        var decision = fresh.Focused
             ? new GuideDecision(
                 "target",
-                searchField.Id,
+                fresh.Id,
                 "type_text",
                 $"中央の検索欄に「{searchText}」と入力して、最後に「Enter」と書かれたキーを1回押してください。",
                 null,
@@ -61,18 +84,18 @@ public partial class MainWindow
                 0.995)
             : new GuideDecision(
                 "target",
-                searchField.Id,
+                fresh.Id,
                 "left_click",
-                $"URLを入力せずに検索します。中央の「{DisplayName(searchField.Name, searchField.ControlType)}」を1回押してください。",
+                $"URLを入力せずに検索します。中央の「{DisplayName(fresh.Name, fresh.ControlType)}」を1回押してください。",
                 null,
                 null,
                 0.995);
 
         LocalLogService.Write(
             "outlaw_local_browser_search",
-            $"target={searchField.Id};focused={searchField.Focused};query={searchText};bounds={searchField.Bounds}");
+            $"target={fresh.Id};focused={fresh.Focused};query={searchText};bounds={fresh.Bounds};revalidated=true");
 
-        ShowStructuredTarget(decision, searchField, candidates, context, generation);
+        ShowStructuredTarget(decision, fresh, candidates, context, generation);
         return true;
     }
 

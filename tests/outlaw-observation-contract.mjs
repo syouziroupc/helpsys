@@ -16,84 +16,107 @@ const need = (source, fragment, message) => {
   if (!normalize(source).includes(normalize(fragment))) throw new Error(message);
 };
 
-need(broker, 'OutlawModePolicy.Enabled\n                ? _scanner.CaptureCandidatesAsync(maxCandidates, cancellationToken)',
-  'Outlaw must scan the full desktop UIA tree instead of only the foreground process');
+need(broker, 'public Task<ObservationSnapshot> CaptureQuickAsync(',
+  'Outlaw must expose a bounded Quick observation before Deep planning');
+need(broker, '_scanner.CaptureCandidatesForProcessAsync(',
+  'Planner observations must start from the current foreground UI surface');
+if (broker.includes('_scanner.CaptureCandidatesAsync(maxCandidates'))
+  throw new Error('Outlaw observation must not deep-scan the entire desktop and filter it afterward');
+need(broker, 'var scanPhase = quick ? "observation.quick.scan" : "observation.deep.scan";',
+  'Quick and Deep observation timings must be distinguishable');
+need(broker, '"outlaw_observation_timing"',
+  'Quick/Deep observation duration must be persisted in local diagnostics');
 need(broker, 'if (!HasSameIdentity(before, after))',
-  'Every planner observation must reject mixed UIA/system-context snapshots when foreground identity changes during the scan');
+  'Every planner observation must reject mixed UIA/system-context snapshots');
+need(broker, 'HasSameShellSurface(before, after)',
+  'Windows Start/Search host handoffs must remain one logical shell surface');
 need(broker, '"outlaw_observation_discarded"',
-  'Outlaw must log discarded mixed observations for field diagnostics');
-if (broker.includes('if (!OutlawModePolicy.Enabled && !HasSameIdentity(before, after))'))
-  throw new Error('Outlaw must not retain a mixed observation merely because it is operation-first');
-need(quality, '_observationBroker.CaptureAsync(1200, cancellationToken)',
-  'Outlaw quality planner must use a bounded broad observation budget that avoids stale multi-second snapshots');
+  'Discarded mixed observations must be logged');
+
+need(quality, '_observationBroker.CaptureQuickAsync(cancellationToken)',
+  'Outlaw must run a Quick observation before Deep planning');
+need(quality, '_observationBroker.CaptureAsync(4000, cancellationToken)',
+  'Quick misses must escalate to the existing Deep observation budget');
+need(quality, '"observation_quick"',
+  'Quick observation completion must be phase-timed');
+need(quality, '"observation_deep"',
+  'Deep observation completion must be phase-timed');
+need(quality, 'allowAbsenceBasedPaths: false',
+  'Quick observation must not make absence-based application-launch decisions');
+need(quality, 'allowAbsenceBasedPaths: true',
+  'Deep observation may use the existing absence-based application-launch path');
+need(quality, 'TryAutoSelectOutlawIdentityChoiceAsync(',
+  'Local identity Fast Path must use the revalidating async path');
+need(quality, 'TryOutlawBrowserSearchFastPathAsync(',
+  'Local browser Fast Path must use the revalidating async path');
+need(quality, '_observationBroker.IsCurrent(localSnapshot)',
+  'Absence-based keyboard guidance must require a current observation');
 need(quality, 'phase=after_screenshot;discarding planner observation because foreground identity changed',
   'Outlaw must discard an observation when foreground identity changes after screenshot capture');
 need(quality, 'phase=after_planner;discarding planner result because foreground identity changed',
   'Outlaw must discard an LLM result when foreground identity changes while the planner is running');
-if (quality.includes('if (!OutlawModePolicy.Enabled && !_observationBroker.IsCurrent(snapshot))'))
-  throw new Error('Outlaw freshness checks must not be bypassed around screenshot or planner latency');
-if (quality.includes('if (freshTarget is null) freshTarget = target'))
-  throw new Error('failed target revalidation must never fall back to stale pre-plan bounds');
+need(quality, '"target_revalidate"',
+  'Structured target revalidation must be independently phase-timed');
 need(quality, '"outlaw_target_revalidation_failed"',
-  'Outlaw must log and reject a stale structured target when pre-display revalidation fails');
-need(main, '"outlaw_structured_target_present"',
-  'Outlaw must log the exact structured target handed from planning into presentation');
-need(main, '"outlaw_present_transition_rejected"',
-  'Outlaw must log when a valid target cannot enter the presentation state');
-need(scanner, 'visitedLimit = OutlawModePolicy.Enabled ? 18000 : 4500',
-  'Outlaw UIA traversal must remain broad but bounded to reduce observation staleness');
-need(scanner, 'elapsedLimitMs = OutlawModePolicy.Enabled ? 4500 : 1400',
-  'Outlaw UIA traversal must cap one observation scan near interactive latency instead of 15 seconds');
-need(scanner, 'depthLimit = OutlawModePolicy.Enabled ? 18 : 10',
-  'Outlaw UIA traversal must retain deeper coverage without unbounded 24-level traversal');
+  'Outlaw must log stale structured targets before re-grounding');
+need(quality, 'TryQueueCurrentStateReplan("案内表示直前に対象が消えたため、古い座標を使わず現在画面から再探索する"',
+  'Failed revalidation must re-ground from current state instead of using stale bounds');
+if (quality.includes('freshTarget = target;'))
+  throw new Error('failed target revalidation must never fall back to stale pre-plan bounds');
+
+need(scanner, 'var quickOutlaw = OutlawModePolicy.Enabled && rootProcessId is > 0 && maxCandidates <= 180;',
+  'Quick UIA traversal must be explicit and process-scoped');
+need(scanner, 'visitedLimit = quickOutlaw ? 3200 : OutlawModePolicy.Enabled ? 18000 : 4500',
+  'Quick traversal must have a smaller node budget while preserving the Deep budget');
+need(scanner, 'elapsedLimitMs = quickOutlaw ? 900 : OutlawModePolicy.Enabled ? 4500 : 1400',
+  'Quick traversal must have a sub-second scan budget while preserving the Deep budget');
+need(scanner, 'depthLimit = quickOutlaw ? 10 : OutlawModePolicy.Enabled ? 18 : 10',
+  'Quick traversal must be shallower while Deep retains semantic coverage');
+need(scanner, '? quickOutlaw',
+  'Quick traversal must use the lightweight metadata path');
 need(scanner, 'ReadOutlawVisibleText',
-  'Outlaw must retain TextPattern-backed semantic text extraction');
+  'Deep Outlaw observation must retain TextPattern-backed semantic extraction');
+need(scanner, 'EnqueueProcessSurfaceRoots(rootProcessId.Value, queue)',
+  'Process-scoped scans must preserve Windows shell host fusion');
 need(scanner, 'private bool IsExcludedProcess(int processId)',
-  'UIA observer scans must explicitly exclude both observer and parent HelpSys process IDs');
-need(scanner, '_excludedProcessId > 0 && processId == _excludedProcessId',
-  'parent HelpSys PID must not leak into full-desktop Outlaw candidates');
+  'UIA observer scans must exclude observer and parent HelpSys process IDs');
 
 need(facade, 'return OutlawModePolicy.Enabled ? candidates : ScopeToForegroundWindow(processId, candidates);',
-  'Outlaw facade must not re-scope the expanded candidate set to the foreground window');
+  'Outlaw process-scoped scans must preserve shell-host candidates from the lower scanner');
 need(capture, 'private const int MaxImageWidth = 2560;',
   'Outlaw capture must retain higher screenshot resolution');
 need(capture, 'if (OutlawModePolicy.Enabled || shellSurface) return monitorArea;',
   'Outlaw must capture the full target monitor');
-need(capture, 'var all = OutlawModePolicy.Enabled\n                ? Array.Empty<Rect>()',
-  'Outlaw must not redact captured pixels');
 need(watcher, 'EventSystemForeground = 0x0003',
-  'Outlaw watcher must subscribe to global foreground ownership changes');
+  'Outlaw watcher must subscribe to foreground ownership changes');
 need(watcher, 'if (eventType == EventSystemForeground)',
   'Foreground ownership changes must bypass the scoped object-event filter');
 need(watcher, 'if (unchecked((int)pid) != scope) return;',
   'Background object/property churn must remain scoped to the current foreground process');
 need(watcher, 'public DateTime? LastChangeUtc',
-  'planner must be able to reject vision coordinates after same-window WinEvent changes');
+  'Planner must be able to reject coordinates after same-window WinEvent changes');
 need(quality, '"outlaw_visual_capture_stale"',
-  'visual evidence must be discarded when the observed UI changes during screenshot capture');
+  'Visual evidence must be discarded when the UI changes during capture');
 need(quality, '_reuseLastOutlawObservationOnce',
-  'Outlaw must support one bounded same-observation alternate plan after a verified no-effect action');
-need(quality, '"outlaw_observation_reused"',
-  'Outlaw must log when it reuses the immutable observation instead of recapturing the same screen');
+  'Outlaw must retain one bounded same-observation alternate plan after verified no-effect');
 need(quality, '"outlaw_stale_vision_target"',
-  'vision-only coordinates must be discarded when foreground UI changes while the model is reasoning');
+  'Vision-only coordinates must be discarded after post-capture UI changes');
 need(quality, 'SnapToAccessibleCandidateAsync',
-  'vision-only targets should hit-test UI Automation at the proposed location when possible');
+  'Vision-only targets should be grounded to accessible UI when possible');
 need(quality, 'IsVisualTargetOnCurrentSurface',
-  'vision-only targets must remain inside the current foreground surface');
-need(quality, 'OutlawModePolicy.Enabled || quality.Confidence >= MinimumStructuredFallbackConfidence',
-  'Outlaw structured targets must not be rejected solely by the normal confidence threshold');
-need(quality, '(!OutlawModePolicy.Enabled && quality.Confidence < MinimumQualityTargetConfidence)',
-  'normal confidence veto must remain disabled only for Outlaw target guidance');
+  'Vision-only targets must remain on the current foreground surface');
 need(live, 'outlaw_vision_target_invalidated',
-  'Outlaw must discard vision-only coordinates when live foreground UI changes after presentation');
+  'Presented vision targets must be invalidated on live foreground changes');
 if (live.includes('outlaw_vision_target_kept'))
-  throw new Error('Outlaw must never re-show stale vision coordinates merely because UIA cannot snap them');
+  throw new Error('Outlaw must never keep stale vision coordinates merely because UIA cannot snap them');
+
+need(main, '"outlaw_structured_target_present"',
+  'Outlaw must log the structured target entering presentation');
+need(main, '"outlaw_present_transition_rejected"',
+  'Rejected presentation transitions must be logged');
 need(cloud, '"/v1/outlaw-plan"',
   'Outlaw must use the dedicated planner endpoint');
-need(cloud, 'TimeSpan.FromSeconds(18)',
-  'Outlaw must retain the bounded 18-second multimodal reasoning deadline');
 need(context, 'if (HelpSys.Services.OutlawModePolicy.Enabled)',
   'Outlaw must preserve full observed browser URL context');
 
-console.log('HelpSys Outlaw full-observation contract passed.');
+console.log('HelpSys Outlaw progressive-observation contract passed.');

@@ -31,8 +31,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Verify Outlaw observation contract
-        continue-on-error: true
+      - name: Verify Outlaw progressive observation contract
         run: node tests/outlaw-observation-contract.mjs
 
       - name: Verify Outlaw repeat guard
@@ -89,7 +88,7 @@ jobs:
                 const j=await r.json();
                 if(j?.ok===true &&
                    j?.service==='helpsys-outlaw' &&
-                   j?.version==='outlaw-2026.09.24-r3.7' &&
+                   j?.version==='outlaw-2026.09.27-r3.8' &&
                    j?.independentVisionReview===true &&
                    j?.visualCoordinateSpace==='image_px' &&
                    j?.geometryConsensus===true &&
@@ -211,7 +210,7 @@ jobs:
 
           - Privacy/Sentinel blocking and screenshot redaction disabled in this edition
           - Full-monitor screenshots up to 2560x1440
-          - Full-desktop UI Automation observation: up to 1200 candidates / 18000 visited nodes / 18 levels / 4.5 seconds, with planner-side goal ranking
+          - Progressive UI Automation observation: a bounded foreground/shell Quick pass handles deterministic local guidance before escalating to the existing deep 18000-node / 18-level / 4.5-second pass
           - UIA TextPattern semantic text extraction enabled
           - Visual-only targets use explicit screenshot-pixel coordinates tied to the exact captured image dimensions
           - Visual coordinates are independently re-grounded by a second screenshot pass; large geometry disagreement is rejected
@@ -224,11 +223,11 @@ jobs:
           - Up to 64 guidance-history entries are retained
           - Screenshots, evidence JSON, decisions, and runtime logs are written under %LOCALAPPDATA%\HelpSys\logs
           - Dedicated Outlaw cloud planner with bounded client deadlines and Auto / GLM reasoning with Gemini disabled until configured
-          - Windows 11 Start/Search UIA evidence is fused across explorer, StartMenuExperienceHost, SearchHost, ShellExperienceHost and TextInputHost
+          - Windows 11 Start/Search UIA evidence remains fused across explorer, StartMenuExperienceHost, SearchHost, ShellExperienceHost and TextInputHost while unrelated desktop processes are no longer scanned first
           - Shell host handoffs are re-scanned once instead of discarding the current Start/Search surface
           - Known desktop application goals can enter Start locally instead of waiting for visual geometry
           - Slow app activation waits for the requested foreground process before replanning
-          - Stale planner results trigger one bounded fresh observation
+          - Stale planner results and failed target revalidation trigger one bounded fresh observation instead of reusing stale coordinates
           - Active guidance blocks self-update instead of terminating the session
           - Exit reason and unhandled exceptions are written to the local HelpSys log
           - Version 3.2.3 / build $($env:GITHUB_SHA.Substring(0, 8))

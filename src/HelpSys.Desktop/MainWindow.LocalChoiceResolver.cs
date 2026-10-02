@@ -56,10 +56,12 @@ public partial class MainWindow
             "outlaw_direct_choice");
     }
 
-    private bool TryAutoSelectOutlawIdentityChoice(
+    private async Task<bool> TryAutoSelectOutlawIdentityChoiceAsync(
         IReadOnlyList<UiElementCandidate> candidates,
         SystemContextSnapshot context,
-        long generation)
+        ObservationSnapshot snapshot,
+        long generation,
+        CancellationToken cancellationToken)
     {
         if (!OutlawModePolicy.Enabled ||
             !_sessionState.IsCurrent(generation) ||
@@ -86,16 +88,45 @@ public partial class MainWindow
             !string.IsNullOrWhiteSpace(x.Name) &&
             request.Contains(
                 Regex.Replace(x.Name, @"(?:\s*のプロフィールを開く|\s*profile.*)$", string.Empty, RegexOptions.IgnoreCase).Trim(),
-                StringComparison.OrdinalIgnoreCase))
-            ?? choices[0];
+                StringComparison.OrdinalIgnoreCase));
+
+        // Multiple identities without an explicit request match are ambiguous. Do not silently
+        // choose the first account merely because Quick observation found it first.
+        if (selected is null)
+        {
+            LocalLogService.Write(
+                "outlaw_identity_auto_select_skipped",
+                $"reason=no_explicit_identity_match;choices={choices.Length};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+            return false;
+        }
+
+        UiElementCandidate? fresh;
+        try
+        {
+            fresh = await _scanner.RevalidateCandidateAsync(
+                selected,
+                selected.ProcessId > 0 ? selected.ProcessId : context.ForegroundProcessId,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { fresh = null; }
+
+        if (!_sessionState.IsCurrent(generation)) return true;
+        if (fresh is null || !_observationBroker.IsCurrent(snapshot))
+        {
+            LocalLogService.Write(
+                "outlaw_local_fast_path_revalidation_failed",
+                $"reason=identity;target={selected.Id};fresh={(fresh is null ? "miss" : "hit")};snapshotCurrent={_observationBroker.IsCurrent(snapshot)}");
+            return false;
+        }
 
         if (!_sessionState.TryTransition(generation, GuidanceSessionState.Planning)) return false;
 
-        var label = DisplayName(selected.Name, selected.ControlType);
-        var instruction = $"候補が{choices.Length}つあります。今回は「{label}」を選びます。青い枠の項目を1回押してください。";
+        var label = DisplayName(fresh.Name, fresh.ControlType);
+        var instruction = $"候補が{choices.Length}つあります。依頼内容に一致する「{label}」を選びます。青い枠の項目を1回押してください。";
         var decision = new GuideDecision(
             "target",
-            selected.Id,
+            fresh.Id,
             "left_click",
             instruction,
             null,
@@ -104,9 +135,9 @@ public partial class MainWindow
 
         LocalLogService.Write(
             "outlaw_identity_auto_selected",
-            $"choices={choices.Length};selected={selected.Id};name={label};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+            $"choices={choices.Length};selected={fresh.Id};name={label};foreground={context.ForegroundProcess}/{context.ForegroundProcessId};revalidated=true");
 
-        ShowStructuredTarget(decision, selected, candidates, context, generation);
+        ShowStructuredTarget(decision, fresh, candidates, context, generation);
         return true;
     }
 
@@ -136,6 +167,26 @@ public partial class MainWindow
             .ToArray();
 
         if (choices.Length < 2) return false;
+
+        // Identity/account selectors are not generic low-risk choices. If multiple profiles or
+        // accounts are visible, never let the generic auto-selector pick one by layout/score.
+        // The dedicated identity fast path handles explicit request matches earlier; otherwise
+        // the caller must present the visible choice UI to the user.
+        var identityLikeChoices = choices
+            .Where(x =>
+                x.AutomationId.Equals("profileCardButton", StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(
+                    x.Name ?? string.Empty,
+                    @"(?:アカウント|プロフィール|プロファイル|account|profile)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .ToArray();
+        if (identityLikeChoices.Length >= 2)
+        {
+            LocalLogService.Write(
+                "outlaw_visible_choice_auto_select_skipped",
+                $"reason=multiple_identity_choices;choices={identityLikeChoices.Length};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+            return false;
+        }
 
         var combined = string.Join(" ", choices.Select(x => x.Name));
         if (Regex.IsMatch(
