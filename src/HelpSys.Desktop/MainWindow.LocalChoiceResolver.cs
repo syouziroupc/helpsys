@@ -168,6 +168,26 @@ public partial class MainWindow
 
         if (choices.Length < 2) return false;
 
+        // Identity/account selectors are not generic low-risk choices. If multiple profiles or
+        // accounts are visible, never let the generic auto-selector pick one by layout/score.
+        // The dedicated identity fast path handles explicit request matches earlier; otherwise
+        // the caller must present the visible choice UI to the user.
+        var identityLikeChoices = choices
+            .Where(x =>
+                x.AutomationId.Equals("profileCardButton", StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(
+                    x.Name ?? string.Empty,
+                    @"(?:アカウント|プロフィール|プロファイル|account|profile)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            .ToArray();
+        if (identityLikeChoices.Length >= 2)
+        {
+            LocalLogService.Write(
+                "outlaw_visible_choice_auto_select_skipped",
+                $"reason=multiple_identity_choices;choices={identityLikeChoices.Length};foreground={context.ForegroundProcess}/{context.ForegroundProcessId}");
+            return false;
+        }
+
         var combined = string.Join(" ", choices.Select(x => x.Name));
         if (Regex.IsMatch(
             combined,
