@@ -45,6 +45,12 @@ need(quality, 'allowAbsenceBasedPaths: false',
   'Quick observation must not make absence-based application-launch decisions');
 need(quality, 'allowAbsenceBasedPaths: true',
   'Deep observation may use the existing absence-based application-launch path');
+need(quality, 'TryAutoSelectOutlawIdentityChoiceAsync(',
+  'Local identity Fast Path must use the revalidating async path');
+need(quality, 'TryOutlawBrowserSearchFastPathAsync(',
+  'Local browser Fast Path must use the revalidating async path');
+need(quality, '_observationBroker.IsCurrent(localSnapshot)',
+  'Absence-based keyboard guidance must require a current observation');
 need(quality, 'phase=after_screenshot;discarding planner observation because foreground identity changed',
   'Outlaw must discard an observation when foreground identity changes after screenshot capture');
 need(quality, 'phase=after_planner;discarding planner result because foreground identity changed',
