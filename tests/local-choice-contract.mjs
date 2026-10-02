@@ -98,5 +98,7 @@ if (!local.includes('TryAutoSelectOutlawVisibleChoice'))
   throw new Error('Outlaw low-risk visible choices must be auto-selected instead of asked back to the user');
 if (!local.includes('outlaw_visible_choice_auto_selected'))
   throw new Error('Outlaw low-risk visible auto-selection must be logged');
+if (!local.includes('multiple_identity_choices') || !local.includes('outlaw_visible_choice_auto_select_skipped'))
+  throw new Error('generic visible-choice auto-selection must refuse ambiguous multi-profile/account surfaces');
 if (!quality.includes('TryPresentOutlawVisibleChoiceButtons(candidates, systemContext, generation)'))
   throw new Error('Outlaw must retain explicit choice UI as a fallback for high-impact branches');
