@@ -85,12 +85,14 @@ const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
 if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
   throw new Error('Pilot Outlaw provider selector must visibly default to GLM');
 
-if (!local.includes('TryAutoSelectOutlawIdentityChoice'))
-  throw new Error('Outlaw must locally auto-resolve visible low-risk identity/profile choices before cloud planning');
+if (!local.includes('TryAutoSelectOutlawIdentityChoiceAsync'))
+  throw new Error('Outlaw must locally resolve explicitly matched identity/profile choices through the fresh-target path');
 if (!local.includes('profileCardButton') || !local.includes('outlaw_identity_choice'))
   throw new Error('Outlaw identity-choice fast path must specifically recognize profile-card choices and log them');
-if (!quality.includes('TryAutoSelectOutlawIdentityChoice(candidates, systemContext, generation)'))
-  throw new Error('Outlaw must run identity auto-selection before screenshot/cloud planning');
+if (!quality.includes('TryAutoSelectOutlawIdentityChoiceAsync('))
+  throw new Error('Outlaw must run fresh-target identity auto-selection before screenshot/cloud planning');
+if (!local.includes('RevalidateCandidateAsync(') || !local.includes('no_explicit_identity_match'))
+  throw new Error('identity auto-selection must revalidate the target and refuse arbitrary first-profile fallback');
 
 if (!local.includes('TryAutoSelectOutlawVisibleChoice'))
   throw new Error('Outlaw low-risk visible choices must be auto-selected instead of asked back to the user');
