@@ -45,35 +45,49 @@ public partial class MainWindow
                 (string.IsNullOrWhiteSpace(detail) ? string.Empty : $";{detail}"));
         }
 
-        bool TryOutlawLocalFastPaths(
+        async Task<bool> TryOutlawLocalFastPathsAsync(
             IReadOnlyList<UiElementCandidate> localCandidates,
             SystemContextSnapshot localContext,
+            ObservationSnapshot localSnapshot,
             string observationMode,
             bool allowAbsenceBasedPaths)
         {
             if (!OutlawModePolicy.Enabled) return false;
 
-            if (TryAutoSelectOutlawIdentityChoice(localCandidates, localContext, generation))
+            if (await TryAutoSelectOutlawIdentityChoiceAsync(
+                    localCandidates,
+                    localContext,
+                    localSnapshot,
+                    generation,
+                    cancellationToken))
             {
-                LocalLogService.Write("outlaw_local_fast_path", $"reason=identity_auto_select;observation={observationMode}");
-                LogOutlawPhase("local_identity", $"observation={observationMode}");
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=identity_auto_select;observation={observationMode};revalidated=true");
+                LogOutlawPhase("local_identity", $"observation={observationMode};revalidated=true");
                 return true;
             }
 
             // Application launch infers that a requested icon/result is absent. A bounded Quick
             // observation is intentionally incomplete, so absence-based routing is Deep-only.
+            // It has no target bounds to revalidate, therefore require the entire observation
+            // itself to remain current immediately before presenting the keyboard instruction.
             if (allowAbsenceBasedPaths &&
+                _observationBroker.IsCurrent(localSnapshot) &&
                 TryOutlawApplicationLaunchFastPath(localCandidates, localContext, generation))
             {
-                LocalLogService.Write("outlaw_local_fast_path", $"reason=application_launch_via_start;observation={observationMode}");
-                LogOutlawPhase("local_application_launch", $"observation={observationMode}");
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=application_launch_via_start;observation={observationMode};snapshotCurrent=true");
+                LogOutlawPhase("local_application_launch", $"observation={observationMode};snapshotCurrent=true");
                 return true;
             }
 
-            if (TryOutlawBrowserSearchFastPath(localCandidates, localContext, generation))
+            if (await TryOutlawBrowserSearchFastPathAsync(
+                    localCandidates,
+                    localContext,
+                    localSnapshot,
+                    generation,
+                    cancellationToken))
             {
-                LocalLogService.Write("outlaw_local_fast_path", $"reason=browser_search;observation={observationMode}");
-                LogOutlawPhase("local_browser_search", $"observation={observationMode}");
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=browser_search;observation={observationMode};revalidated=true");
+                LogOutlawPhase("local_browser_search", $"observation={observationMode};revalidated=true");
                 return true;
             }
 
@@ -138,9 +152,10 @@ public partial class MainWindow
                         quickContext);
                     SetState(GuidanceEvidenceService.BuildProgressText(quickEvidence), speak: false);
 
-                    if (TryOutlawLocalFastPaths(
+                    if (await TryOutlawLocalFastPathsAsync(
                             quickCandidates,
                             quickContext,
+                            quickSnapshot,
                             "quick",
                             allowAbsenceBasedPaths: false))
                         return;
@@ -193,9 +208,10 @@ public partial class MainWindow
             var structuralEvidence = GuidanceEvidenceService.Build(false, candidates, _history, systemContext);
             SetState(GuidanceEvidenceService.BuildProgressText(structuralEvidence), speak: false);
 
-            if (TryOutlawLocalFastPaths(
+            if (await TryOutlawLocalFastPathsAsync(
                     candidates,
                     systemContext,
+                    snapshot,
                     reuseOutlawObservation ? "reused" : "deep",
                     allowAbsenceBasedPaths: true))
                 return;
