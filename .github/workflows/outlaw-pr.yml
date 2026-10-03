@@ -9,6 +9,7 @@ on:
       - "tests/outlaw-*.mjs"
       - "tests/current-state-replan-contract.mjs"
       - ".github/workflows/outlaw-pr.yml"
+      - ".github/workflows/outlaw-release.yml"
 
 jobs:
   validate:
@@ -32,6 +33,7 @@ jobs:
           node tests/local-choice-contract.mjs
           node tests/outlaw-repeat-guard-contract.mjs
           node tests/current-state-replan-contract.mjs
+          node tests/outlaw-update-contract.mjs
           node tests/outlaw-3.2.0-grounding-contract.mjs
           node tests/outlaw-3.2.1-shell-surface-contract.mjs
           node tests/outlaw-3.2.2-launch-replan-contract.mjs
