@@ -62,7 +62,6 @@ jobs:
           node tests/local-choice-contract.mjs
 
       - name: Verify Outlaw updater contract
-        continue-on-error: true
         run: node tests/outlaw-update-contract.mjs
 
       - name: Verify Outlaw 3.2.0 grounding and transition contract
@@ -171,7 +170,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $out = Join-Path $PWD 'publish\outlaw-win-x64'
           $shortSha = $env:GITHUB_SHA.Substring(0, 8)
-          $version = '3.2.4'
+          $version = '3.2.5'
           $versionedName = "HelpSys-Outlaw-$version-$shortSha-win-x64.zip"
           $stableName = 'HelpSys-Outlaw-latest-win-x64.zip'
 
@@ -189,7 +188,7 @@ jobs:
           Copy-Item README.md (Join-Path $out 'README.md')
           @"
           HelpSys Outlaw
-          Version: 3.2.4
+          Version: 3.2.5
           Build: $shortSha
           Channel: outlaw-latest
           "@ | Set-Content -Encoding UTF8 (Join-Path $out 'VERSION.txt')
@@ -237,7 +236,9 @@ jobs:
           - Stale planner results and failed target revalidation trigger one bounded fresh observation instead of reusing stale coordinates
           - Active guidance blocks self-update instead of terminating the session
           - Exit reason and unhandled exceptions are written to the local HelpSys log
-          - Version 3.2.4 / build $($env:GITHUB_SHA.Substring(0, 8))
+          - Updater selects the package that matches outlaw-latest target commit and validates VERSION.txt Build ID
+          - GUI always shows the currently running build SHA
+          - Version 3.2.5 / build $($env:GITHUB_SHA.Substring(0, 8))
           - Windows 10 / 11 x64 self-contained
           "@
 

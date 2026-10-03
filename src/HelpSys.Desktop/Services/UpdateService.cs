@@ -89,8 +89,12 @@ public sealed class UpdateService : IDisposable
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException("更新ファイル一覧を確認できませんでした。");
 
+        var releaseTargetBuild = TryGetReleaseTargetBuildId(root);
+        UpdateInfo? targetMatched = null;
         UpdateInfo? latest = null;
         Version? latestVersion = null;
+        DateTimeOffset latestCreatedAt = DateTimeOffset.MinValue;
+
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
@@ -98,34 +102,63 @@ public sealed class UpdateService : IDisposable
             var match = VersionedAssetRegex.Match(name);
             if (!match.Success) continue;
             if (!Version.TryParse(match.Groups["version"].Value, out var candidateVersion)) continue;
-            if (latestVersion is not null && candidateVersion < latestVersion) continue;
 
             var url = asset.TryGetProperty("browser_download_url", out var urlElement) ? urlElement.GetString() : null;
             var digest = asset.TryGetProperty("digest", out var digestElement) ? digestElement.GetString() : null;
             var size = asset.TryGetProperty("size", out var sizeElement) && sizeElement.TryGetInt64(out var parsedSize)
                 ? parsedSize
                 : -1;
+            var createdAt = asset.TryGetProperty("created_at", out var createdAtElement) &&
+                            DateTimeOffset.TryParse(createdAtElement.GetString(), out var parsedCreatedAt)
+                ? parsedCreatedAt
+                : DateTimeOffset.MinValue;
 
             if (!Uri.TryCreate(url, UriKind.Absolute, out var downloadUri) || !IsAllowedDownloadUri(downloadUri))
                 continue;
             if (!TryParseSha256(digest, out var sha256)) continue;
             if (size <= 0 || size > MaximumPackageBytes) continue;
 
-            latest = new UpdateInfo(
+            var candidate = new UpdateInfo(
                 match.Groups["build"].Value.ToLowerInvariant(),
                 name,
                 downloadUri,
                 sha256,
                 size);
+
+            // outlaw-latest is explicitly retargeted to the published commit. Prefer the asset
+            // whose embedded build ID matches that release target instead of trusting asset array
+            // order when several packages share the same semantic version.
+            if (!string.IsNullOrWhiteSpace(releaseTargetBuild) &&
+                string.Equals(candidate.BuildId, releaseTargetBuild, StringComparison.OrdinalIgnoreCase))
+            {
+                targetMatched = candidate;
+                continue;
+            }
+
+            if (latestVersion is not null)
+            {
+                var versionComparison = candidateVersion.CompareTo(latestVersion);
+                if (versionComparison < 0) continue;
+                if (versionComparison == 0 && createdAt <= latestCreatedAt) continue;
+            }
+
+            latest = candidate;
             latestVersion = candidateVersion;
+            latestCreatedAt = createdAt;
         }
 
+        latest = targetMatched ?? latest;
         if (latest is null)
             throw new InvalidOperationException("SHA-256付きHelpSys更新ファイルが見つかりませんでした。");
 
+        var currentBuild = CurrentBuildId;
+        LocalLogService.Write(
+            "update_channel",
+            $"current={currentBuild};releaseTarget={releaseTargetBuild ?? "unknown"};selected={latest.BuildId};asset={latest.AssetName}");
+
         return string.Equals(
                 NormalizeBuildId(latest.BuildId),
-                NormalizeBuildId(CurrentBuildId),
+                NormalizeBuildId(currentBuild),
                 StringComparison.OrdinalIgnoreCase)
             ? null
             : latest;
@@ -168,6 +201,17 @@ public sealed class UpdateService : IDisposable
             var versionText = await File.ReadAllTextAsync(versionFile, cancellationToken);
             if (!versionText.Contains("Channel: outlaw-latest", StringComparison.Ordinal))
                 throw new InvalidOperationException("無法者版以外の更新パッケージを検出したため更新を中止しました。");
+
+            var packageBuildMatch = Regex.Match(
+                versionText,
+                @"(?mi)^Build:\s*(?<build>[0-9a-f]{8})\s*$",
+                RegexOptions.CultureInvariant);
+            if (!packageBuildMatch.Success ||
+                !string.Equals(
+                    NormalizeBuildId(packageBuildMatch.Groups["build"].Value),
+                    NormalizeBuildId(update.BuildId),
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("更新パッケージのBuild IDが公開された更新対象と一致しません。更新を中止しました。");
 
             var scriptPath = CreateReplacementScript(
                 updateRoot,
@@ -365,6 +409,16 @@ public sealed class UpdateService : IDisposable
     private static bool IsRedirect(HttpStatusCode status)
         => status is HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect or HttpStatusCode.RedirectMethod or
            HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
+
+    private static string? TryGetReleaseTargetBuildId(JsonElement root)
+    {
+        var target = root.TryGetProperty("target_commitish", out var targetElement)
+            ? NormalizeBuildId(targetElement.GetString() ?? string.Empty)
+            : string.Empty;
+        if (target.Length < 8) return null;
+        var shortTarget = target[..8];
+        return shortTarget.All(Uri.IsHexDigit) ? shortTarget : null;
+    }
 
     private static string GetCurrentBuildId()
     {

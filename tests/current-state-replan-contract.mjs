@@ -98,5 +98,5 @@ if (!observationBroker.includes('outlaw_background_uia_filtered') ||
     !observationBroker.includes('KeepForegroundProcessEvidence'))
   throw new Error('Outlaw observation must remove background-process UIA before planning');
 if (!observationBroker.includes('outlaw_observation_rebound') ||
-    !observationBroker.includes('observation.rescan'))
+    !observationBroker.includes('${scanPhase}.rescan'))
   throw new Error('Outlaw must rescan once when the same process recreates its foreground HWND');

@@ -29,6 +29,7 @@ public partial class MainWindow
     private void ScheduleInitialUpdateCheck()
     {
         _ = UpdateLoadedHandlerRegistered;
+        RefreshBuildIdentityDisplay();
         if (Interlocked.Exchange(ref _updateInitialCheckScheduled, 1) != 0) return;
         if (UpdateButton is null) return;
 
@@ -42,6 +43,29 @@ public partial class MainWindow
             }
             catch { }
         }));
+    }
+
+    private void RefreshBuildIdentityDisplay()
+    {
+        if (VersionLabel is null) return;
+        var version = typeof(MainWindow).Assembly.GetName().Version;
+        var versionText = version is null
+            ? "dev"
+            : $"{version.Major}.{version.Minor}.{version.Build}";
+        var currentBuild = _updateService.CurrentBuildId;
+        var sha = DisplayBuildId(currentBuild);
+        VersionLabel.Text = $"Outlaw {versionText} ・ SHA {sha} ・ PC操作案内";
+        VersionLabel.ToolTip = $"実行中ビルド: {currentBuild}";
+        LocalLogService.Write("build_identity", $"version={versionText};build={currentBuild};sha={sha}");
+    }
+
+    private static string DisplayBuildId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "unknown";
+        var normalized = value.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("outlaw-", StringComparison.Ordinal))
+            normalized = normalized["outlaw-".Length..];
+        return normalized.Length > 8 ? normalized[..8] : normalized;
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
