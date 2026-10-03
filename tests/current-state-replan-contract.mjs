@@ -53,9 +53,11 @@ if (!quality.includes('_observationBroker.CaptureAsync(4000, cancellationToken)'
 if (!quality.includes('outlaw_visual_capture_stale') || !quality.includes('outlaw_stale_vision_target'))
   throw new Error('Outlaw visual targets must discard stale screenshot coordinates after same-window UI changes');
 if (quality.includes('outlaw_visual_capture_changed_ignored') || quality.includes('outlaw_post_capture_change_ignored'))
-  throw new Error('Outlaw 3.2.0 must not keep visual coordinates after capture-time or post-capture UI changes');
-if (!quality.includes('outlaw_target_revalidation_fallback'))
-  throw new Error('Outlaw must retain immutable first-observation target bounds when same-window revalidation is transiently unavailable');
+  throw new Error('Outlaw must not keep visual coordinates after capture-time or post-capture UI changes');
+if (quality.includes('outlaw_target_revalidation_fallback'))
+  throw new Error('Outlaw must not fall back to immutable stale target bounds after revalidation failure');
+if (!quality.includes('outlaw_target_revalidation_failed'))
+  throw new Error('Outlaw must log target revalidation failure before fresh-state replanning');
 
 const captureService = fs.readFileSync('src/HelpSys.Desktop/ScreenCaptureService.cs', 'utf8');
 const scanner = fs.readFileSync('src/HelpSys.Desktop/Services/UiAutomationScanner.cs', 'utf8');
@@ -73,12 +75,12 @@ if (!xaml.includes('AI: Gemini (未設定)') || !xaml.includes('Tag="gemini" IsE
 const fastPath = fs.readFileSync('src/HelpSys.Desktop/MainWindow.OutlawFastPath.cs', 'utf8');
 if (!quality.includes('outlaw_phase_timing'))
   throw new Error('Outlaw must log phase timing for observation/screenshot/planner/presentation');
-if (!quality.includes('TryOutlawBrowserSearchFastPath(candidates, systemContext, generation)'))
-  throw new Error('Outlaw must try the local browser-search fast path before screenshot/cloud planning');
+if (!quality.includes('TryOutlawBrowserSearchFastPathAsync('))
+  throw new Error('Outlaw must try the local browser/search navigator before screenshot/cloud planning');
 if (!fastPath.includes('ResolveBeginnerWebSearchText') || !fastPath.includes('outlaw_local_browser_search'))
-  throw new Error('Outlaw browser-search fast path must use simple service names and log its local decision');
-if (!fastPath.includes('x.Y >= 220') || !fastPath.includes('x.Width >= 220'))
-  throw new Error('Outlaw browser-search fast path must prefer a large visible page search field over the top omnibox');
+  throw new Error('Outlaw browser-search fast path must preserve simple service-name acceleration and log its local decision');
+if (!fastPath.includes('HasSemanticRole(x, "web_search")') || !fastPath.includes('x.Width >= 220'))
+  throw new Error('Outlaw browser-search fast path must ground a large visible page-search field using semantic/current UI evidence');
 
 const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
 const mainCode = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml.cs', 'utf8');
@@ -88,8 +90,10 @@ if (!mainXaml.includes('x:Name="VersionLabel"') || mainXaml.includes('Outlaw 3.1
   throw new Error('Outlaw UI version must not be hardcoded to 3.1.0');
 if (!mainCode.includes('Assembly.GetName().Version') && !mainCode.includes('typeof(MainWindow).Assembly.GetName().Version'))
   throw new Error('Outlaw UI must derive its visible version from executable metadata');
-if (!fastPath.includes('query_already_submitted'))
-  throw new Error('Outlaw local browser-search fast path must not submit the same query twice');
+if (fastPath.includes('query_already_submitted'))
+  throw new Error('Outlaw browser-search state must not treat historical instructions as authoritative current query state');
+if (!fastPath.includes('navigator_postcondition') || !fastPath.includes('searchField.Value'))
+  throw new Error('Outlaw browser/search navigator must verify current query state from live evidence');
 if (!observationBroker.includes('outlaw_background_uia_filtered') ||
     !observationBroker.includes('KeepForegroundProcessEvidence'))
   throw new Error('Outlaw observation must remove background-process UIA before planning');
