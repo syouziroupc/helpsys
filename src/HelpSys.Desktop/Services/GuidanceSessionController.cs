@@ -122,7 +122,13 @@ public sealed class GuidanceSessionController
         return from switch
         {
             GuidanceSessionState.Idle => to == GuidanceSessionState.Capturing,
-            GuidanceSessionState.Capturing => to is GuidanceSessionState.Planning or GuidanceSessionState.Clarifying,
+
+            // Local Fast Lanes can resolve a deterministic keyboard instruction while still in
+            // Capturing.  Allow direct presentation so those paths do not silently fail merely
+            // because no cloud-planning phase was needed.  Structured target paths may still use
+            // Capturing -> Planning -> Presenting as before.
+            GuidanceSessionState.Capturing => to is GuidanceSessionState.Planning or GuidanceSessionState.Presenting or GuidanceSessionState.Clarifying,
+
             GuidanceSessionState.Planning => to is GuidanceSessionState.Presenting or GuidanceSessionState.Clarifying or GuidanceSessionState.Capturing,
             GuidanceSessionState.Presenting => to is GuidanceSessionState.AwaitingUserAction or GuidanceSessionState.Clarifying,
             GuidanceSessionState.AwaitingUserAction => to is GuidanceSessionState.Verifying or GuidanceSessionState.Capturing or GuidanceSessionState.Clarifying,

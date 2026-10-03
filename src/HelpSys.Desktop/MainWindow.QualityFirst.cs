@@ -66,19 +66,9 @@ public partial class MainWindow
                 return true;
             }
 
-            // Application launch infers that a requested icon/result is absent. A bounded Quick
-            // observation is intentionally incomplete, so absence-based routing is Deep-only.
-            // It has no target bounds to revalidate, therefore require the entire observation
-            // itself to remain current immediately before presenting the keyboard instruction.
-            if (allowAbsenceBasedPaths &&
-                _observationBroker.IsCurrent(localSnapshot) &&
-                TryOutlawApplicationLaunchFastPath(localCandidates, localContext, generation))
-            {
-                LocalLogService.Write("outlaw_local_fast_path", $"reason=application_launch_via_start;observation={observationMode};snapshotCurrent=true");
-                LogOutlawPhase("local_application_launch", $"observation={observationMode};snapshotCurrent=true");
-                return true;
-            }
-
+            // Verified navigation owns both browser and Windows-shell open/search goals first.
+            // This keeps Excel/Word/PowerPoint on the same state machine as unknown applications
+            // instead of letting the legacy known-app launcher silently report presentation success.
             if (await TryOutlawBrowserSearchFastPathAsync(
                     localCandidates,
                     localContext,
@@ -86,8 +76,19 @@ public partial class MainWindow
                     generation,
                     cancellationToken))
             {
-                LocalLogService.Write("outlaw_local_fast_path", $"reason=browser_search;observation={observationMode};revalidated=true");
-                LogOutlawPhase("local_browser_search", $"observation={observationMode};revalidated=true");
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=verified_navigation;observation={observationMode};revalidated=true");
+                LogOutlawPhase("local_verified_navigation", $"observation={observationMode};revalidated=true");
+                return true;
+            }
+
+            // Keep the old known-app route only as a Deep-observation fallback. It must never
+            // claim success unless the keyboard guidance was actually presented.
+            if (allowAbsenceBasedPaths &&
+                _observationBroker.IsCurrent(localSnapshot) &&
+                TryOutlawApplicationLaunchFastPath(localCandidates, localContext, generation))
+            {
+                LocalLogService.Write("outlaw_local_fast_path", $"reason=application_launch_via_start_fallback;observation={observationMode};snapshotCurrent=true");
+                LogOutlawPhase("local_application_launch_fallback", $"observation={observationMode};snapshotCurrent=true");
                 return true;
             }
 
@@ -619,7 +620,7 @@ public partial class MainWindow
             0.99);
 
         ShowKeyboardGuide(decision, candidates, systemContext, generation);
-        return true;
+        return _sessionState.State == GuidanceSessionState.AwaitingUserAction;
     }
 
     private static bool IsWindowsShellProcessName(string? processName)
