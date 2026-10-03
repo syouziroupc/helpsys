@@ -39,11 +39,11 @@ need(log, 'public static void WriteException(',
 need(log, 'shutdown\\treason={_exitReason}',
   'shutdown log must carry the final exit reason');
 
-need(project, '<Version>3.2.3</Version>',
-  'Outlaw project version must be 3.2.3');
-need(project, '<FileVersion>3.2.3.0</FileVersion>',
-  'Outlaw file version must be 3.2.3.0');
-need(release, "$version = '3.2.3'",
-  'release workflow must publish version 3.2.3');
+need(project, '<Version>3.2.4</Version>',
+  'Outlaw project version must be 3.2.4');
+need(project, '<FileVersion>3.2.4.0</FileVersion>',
+  'Outlaw file version must be 3.2.4.0');
+need(release, "$version = '3.2.4'",
+  'release workflow must publish version 3.2.4');
 
-console.log('HelpSys Outlaw 3.2.3 crash/update regression contract passed.');
+console.log('HelpSys Outlaw 3.2.4 crash/update regression contract passed.');
