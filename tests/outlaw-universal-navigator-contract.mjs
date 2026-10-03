@@ -39,6 +39,19 @@ reject(fast, 'reason=query_already_submitted',
   'Audit history must not be treated as authoritative query state');
 need(fast, 'return _sessionState.State == GuidanceSessionState.AwaitingUserAction;',
   'Fast Path success must require actual presentation into AwaitingUserAction');
+need(fast, 'ResolveBeginnerWebSearchText(_activeRequest) is not null',
+  'Known web destinations must bypass Windows application search while the shell is foreground');
+need(fast, 'navigator_defer_web_goal',
+  'Web-goal shell deferral must be observable in logs');
+need(fast, 'IsWindowsSearchSurfaceProcess(context.ForegroundProcess)',
+  'Windows Search must be recognized from the foreground process even when fused UIA candidates omit SearchHost');
+need(fast, '_outlawNavigatorStage is "open_search_surface" or "search_surface_unresolved"',
+  'Navigator must never present the Windows key repeatedly for the same transaction');
+const genericStart = fast.indexOf('private string? ResolveGenericOpenTarget(');
+const genericEnd = fast.indexOf('private static string? ResolveBeginnerWebSearchText(', genericStart);
+const genericMethod = genericStart >= 0 && genericEnd > genericStart ? fast.slice(genericStart, genericEnd) : '';
+reject(genericMethod, 'value.Contains("見たい"',
+  'Generic application launching must not interpret a bare Japanese viewing intent as an app launch');
 need(quality, 'reason=verified_navigation',
   'Verified universal navigation must be the primary local navigation path');
 need(quality, 'reason=application_launch_via_start_fallback',
