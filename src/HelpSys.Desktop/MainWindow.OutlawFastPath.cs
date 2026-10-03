@@ -146,15 +146,30 @@ public partial class MainWindow
         CancellationToken cancellationToken)
     {
         if (_activeRequest is null) return false;
+
+        // Website/content goals must not be reinterpreted as Windows applications simply because
+        // the desktop or taskbar currently owns the foreground.  Defer these goals to the normal
+        // structured/vision recovery path so an already-running browser can be foregrounded, after
+        // which the verified browser Fast Lane resumes.
+        if (ResolveBeginnerWebSearchText(_activeRequest) is not null)
+        {
+            LocalLogService.Write(
+                "navigator_defer_web_goal",
+                $"request={_activeRequest};foreground={context.ForegroundProcess};reason=preserve_browser_recovery");
+            return false;
+        }
+
         var targetText = ResolveGenericOpenTarget(_activeRequest);
         if (string.IsNullOrWhiteSpace(targetText)) return false;
         EnsureNavigatorTransaction(_activeRequest, targetText);
 
-        var searchSurfaceOpen = candidates.Any(x =>
-            x.ProcessName.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
-            x.ProcessName.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
-            x.ProcessName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase) ||
-            HasSemanticRole(x, "windows_search"));
+        var searchSurfaceOpen =
+            IsWindowsSearchSurfaceProcess(context.ForegroundProcess) ||
+            candidates.Any(x =>
+                x.ProcessName.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                x.ProcessName.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+                x.ProcessName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase) ||
+                HasSemanticRole(x, "windows_search"));
 
         // A currently visible desktop/taskbar/shell target has priority over opening Search.
         // Defer it to the normal structured/vision planner because activation semantics differ
@@ -260,6 +275,17 @@ public partial class MainWindow
             }
 
             SetNavigatorStage("search_surface_unresolved", $"surface=windows_search;target={targetText}");
+            return false;
+        }
+
+        // A transaction may ask for Search to be opened at most once.  If foreground/UIA sampling
+        // temporarily misses SearchHost after the user followed that instruction, falling back to
+        // another Win press would simply toggle Search closed and create the observed Win-key loop.
+        if (_outlawNavigatorStage is "open_search_surface" or "search_surface_unresolved")
+        {
+            SetNavigatorStage(
+                "search_surface_unresolved",
+                $"surface=windows_search;target={targetText};repeat_win_blocked=true");
             return false;
         }
 
@@ -431,7 +457,6 @@ public partial class MainWindow
         var looksLikeOpenGoal =
             value.Contains("開", StringComparison.OrdinalIgnoreCase) ||
             value.Contains("起動", StringComparison.OrdinalIgnoreCase) ||
-            value.Contains("見たい", StringComparison.OrdinalIgnoreCase) ||
             value.Contains("表示", StringComparison.OrdinalIgnoreCase) ||
             value.StartsWith("open ", StringComparison.OrdinalIgnoreCase) ||
             value.StartsWith("launch ", StringComparison.OrdinalIgnoreCase);
@@ -440,7 +465,7 @@ public partial class MainWindow
         value = Regex.Replace(value, @"^(?:please\s+)?(?:open|launch)\s+", string.Empty, RegexOptions.IgnoreCase);
         value = Regex.Replace(
             value,
-            @"(?:を|が)?(?:開いて(?:ください)?|開く|起動して(?:ください)?|起動する|見たい(?:です)?|表示して(?:ください)?)(?:。|！|!|\.)?$",
+            @"(?:を|が)?(?:開いて(?:ください)?|開く|起動して(?:ください)?|起動する|表示して(?:ください)?)(?:。|！|!|\.)?$",
             string.Empty,
             RegexOptions.IgnoreCase);
         value = value.Trim(' ', '　', '。', '！', '!', '.');
@@ -471,6 +496,12 @@ public partial class MainWindow
 
         return null;
     }
+
+    private static bool IsWindowsSearchSurfaceProcess(string? processName)
+        => processName is not null &&
+           (processName.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+            processName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsBrowserProcessForFastPath(string? processName)
         => processName is not null &&
