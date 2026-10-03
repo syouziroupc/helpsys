@@ -48,8 +48,10 @@ const legacyCall = quality.indexOf('TryOutlawApplicationLaunchFastPath(localCand
 if (universalCall < 0 || legacyCall < 0 || universalCall > legacyCall) {
   throw new Error('Universal verified navigation must run before the legacy known-app launcher');
 }
-need(quality,
-  'ShowKeyboardGuide(decision, candidates, systemContext, generation);\n        return _sessionState.State == GuidanceSessionState.AwaitingUserAction;',
+const legacyMethod = quality.slice(quality.indexOf('private bool TryOutlawApplicationLaunchFastPath('));
+need(legacyMethod, 'ShowKeyboardGuide(decision, candidates, systemContext, generation);',
+  'Legacy keyboard fallback must still present keyboard guidance');
+need(legacyMethod, 'return _sessionState.State == GuidanceSessionState.AwaitingUserAction;',
   'Legacy keyboard fallback must not report success unless presentation reached AwaitingUserAction');
 need(session, 'GuidanceSessionState.Presenting or GuidanceSessionState.Clarifying',
   'Deterministic local keyboard Fast Paths must be able to present directly from Capturing');
