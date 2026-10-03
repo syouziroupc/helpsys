@@ -87,8 +87,8 @@ if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
 
 if (!local.includes('TryAutoSelectOutlawIdentityChoiceAsync'))
   throw new Error('Outlaw must locally resolve explicitly matched identity/profile choices through the fresh-target path');
-if (!local.includes('profileCardButton') || !local.includes('outlaw_identity_choice'))
-  throw new Error('Outlaw identity-choice fast path must specifically recognize profile-card choices and log them');
+if (!local.includes('profileCardButton') || !local.includes('outlaw_identity_auto_selected'))
+  throw new Error('Outlaw identity-choice fast path must specifically recognize profile-card choices and log successful auto-selection');
 if (!quality.includes('TryAutoSelectOutlawIdentityChoiceAsync('))
   throw new Error('Outlaw must run fresh-target identity auto-selection before screenshot/cloud planning');
 if (!local.includes('RevalidateCandidateAsync(') || !local.includes('no_explicit_identity_match'))
