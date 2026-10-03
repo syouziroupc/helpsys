@@ -156,6 +156,26 @@ public partial class MainWindow
             x.ProcessName.Equals("TextInputHost", StringComparison.OrdinalIgnoreCase) ||
             HasSemanticRole(x, "windows_search"));
 
+        // A currently visible desktop/taskbar/shell target has priority over opening Search.
+        // Defer it to the normal structured/vision planner because activation semantics differ
+        // between surfaces (for example desktop icons usually need a double-click while taskbar
+        // buttons are single-click).  The navigator owns only the fallback when no visible target
+        // can be grounded on the current shell surface.
+        if (!searchSurfaceOpen)
+        {
+            var visibleTarget = FindVisibleShellTargetCandidate(candidates, targetText);
+            if (visibleTarget is not null)
+            {
+                SetNavigatorStage(
+                    "visible_shell_target",
+                    $"surface=windows_shell;target={targetText};candidate={visibleTarget.Name};defer=structured_planner");
+                LocalLogService.Write(
+                    "navigator_visible_target",
+                    $"target={targetText};candidate={visibleTarget.Id};name={visibleTarget.Name};process={visibleTarget.ProcessName}");
+                return false;
+            }
+        }
+
         // Only treat a visible name as a search result after Search/Start is actually open.  This
         // avoids turning a desktop shortcut into a single-click launch instruction.
         if (searchSurfaceOpen)
@@ -308,6 +328,27 @@ public partial class MainWindow
             .ThenByDescending(x => x.Focused)
             .ThenByDescending(x => x.Width * x.Height)
             .FirstOrDefault();
+
+    private static UiElementCandidate? FindVisibleShellTargetCandidate(
+        IReadOnlyList<UiElementCandidate> candidates,
+        string targetText)
+    {
+        var normalizedTarget = NormalizeNavigatorText(targetText);
+        if (string.IsNullOrWhiteSpace(normalizedTarget)) return null;
+
+        return candidates
+            .Where(x => x.Interactable && x.Enabled && !x.Bounds.IsEmpty)
+            .Where(x => !x.ControlType.Equals("Edit", StringComparison.OrdinalIgnoreCase) &&
+                        !x.ControlType.Equals("ComboBox", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) ||
+                        x.ProcessName.Contains("ShellExperienceHost", StringComparison.OrdinalIgnoreCase))
+            .Select(x => new { Candidate = x, Score = NavigatorMatchScore(x.Name, normalizedTarget) })
+            .Where(x => x.Score >= 600)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Candidate.Interactable)
+            .Select(x => x.Candidate)
+            .FirstOrDefault();
+    }
 
     private static UiElementCandidate? FindNavigatorResultCandidate(
         IReadOnlyList<UiElementCandidate> candidates,
