@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 const main = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml.cs', 'utf8');
+const app = fs.readFileSync('src/HelpSys.Desktop/App.xaml.cs', 'utf8');
 const live = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LiveGuidance.cs', 'utf8');
 const local = fs.readFileSync('src/HelpSys.Desktop/MainWindow.LocalChoiceResolver.cs', 'utf8');
 const facade = fs.readFileSync('src/HelpSys.Desktop/UiAutomationScanner.cs', 'utf8');
@@ -79,11 +80,17 @@ if (!quality.includes('高速構造判断が選択を要求したが現在画面
 if (!quality.includes('(!OutlawModePolicy.Enabled && quick.Confidence < 0.93)'))
   throw new Error('Outlaw fast structured fallback must not apply the normal confidence veto');
 
-if (!main.includes('HELPSYS_OUTLAW_AI_PROVIDER") ?? "glm"'))
-  throw new Error('Pilot Outlaw build must default to GLM unless the user explicitly selects another provider');
+if (!app.includes('HELPSYS_OUTLAW_AI_PROVIDER') || !app.includes('"auto"'))
+  throw new Error('Pilot Outlaw build must initialize Gemini-first Auto when no explicit provider override exists');
+if (!main.includes('"gemini" => "gemini"') || !main.includes('"glm" => "glm"'))
+  throw new Error('Outlaw must preserve strict Gemini and strict GLM provider selection');
 const mainXaml = fs.readFileSync('src/HelpSys.Desktop/MainWindow.xaml', 'utf8');
-if (!mainXaml.includes('Content="AI: GLM" Tag="glm" IsSelected="True"'))
-  throw new Error('Pilot Outlaw provider selector must visibly default to GLM');
+if (!mainXaml.includes('Content="AI: Auto (Gemini優先)" Tag="auto" IsSelected="True"'))
+  throw new Error('Pilot Outlaw provider selector must visibly default to Gemini-first Auto');
+if (!mainXaml.includes('Content="AI: Gemini" Tag="gemini"') || mainXaml.includes('AI: Gemini (未設定)'))
+  throw new Error('Gemini must remain selectable for strict provider comparison');
+if (!mainXaml.includes('Content="AI: GLM" Tag="glm"'))
+  throw new Error('GLM must remain selectable as an intact fallback/comparison path');
 
 if (!local.includes('TryAutoSelectOutlawIdentityChoiceAsync'))
   throw new Error('Outlaw must locally resolve explicitly matched identity/profile choices through the fresh-target path');
