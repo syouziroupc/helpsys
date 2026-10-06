@@ -236,7 +236,7 @@ async function runQualityInference(env, model, userPayload, image, provider = 'a
               maxOutputTokens: 700,
               thinkingConfig: { thinkingLevel: 'low' },
               responseMimeType: 'application/json',
-              responseSchema: qualityTool.parameters
+              responseJsonSchema: qualityTool.parameters
             }
           }),
           signal: controller.signal
