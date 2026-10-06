@@ -1,0 +1,49 @@
+name: Patch Gemini JSON Schema once
+
+on:
+  push:
+    branches: [fix/outlaw-gemini-json-schema-20261006]
+    paths:
+      - .github/workflows/patch-gemini-json-schema-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/outlaw-gemini-json-schema-20261006
+          fetch-depth: 0
+
+      - name: Patch Gemini response schema adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'worker/quality-guide.js';
+          let s = fs.readFileSync(p, 'utf8');
+          const before = 'responseSchema: qualityTool.parameters';
+          const after = 'responseJsonSchema: qualityTool.parameters';
+          if (!s.includes(before)) throw new Error('expected responseSchema adapter not found');
+          if (s.includes(after)) throw new Error('responseJsonSchema already present');
+          s = s.replace(before, after);
+          fs.writeFileSync(p, s);
+          NODE
+          node --check worker/quality-guide.js
+          git diff --check
+          git diff -- worker/quality-guide.js
+
+      - name: Commit one-line adapter fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add worker/quality-guide.js
+          git commit -m 'Fix Gemini JSON Schema response adapter'
+          git push origin HEAD:fix/outlaw-gemini-json-schema-20261006
