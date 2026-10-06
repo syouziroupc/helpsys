@@ -284,7 +284,7 @@ async function runGeminiGuidance(env, system, payload, image) {
             maxOutputTokens: 1800,
             thinkingConfig: { thinkingLevel: 'medium' },
             responseMimeType: 'application/json',
-            responseSchema: tool.parameters
+            responseJsonSchema: tool.parameters
           }
         }),
         signal: controller.signal
