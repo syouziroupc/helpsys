@@ -28,6 +28,19 @@ public partial class App : Application
         }
 
         LocalLogService.Initialize();
+
+        // Outlaw 3.2.4 keeps all provider routes intact but prefers the provider-agnostic Auto
+        // lane. The Worker interprets Auto as Gemini first and falls back to GLM only when Gemini
+        // is unavailable or fails. An explicitly supplied process environment variable still wins,
+        // so diagnostics can force strict Gemini or strict GLM without rebuilding the desktop app.
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER")))
+        {
+            Environment.SetEnvironmentVariable(
+                "HELPSYS_OUTLAW_AI_PROVIDER",
+                "auto",
+                EnvironmentVariableTarget.Process);
+        }
+
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         SessionEnding += OnSessionEnding;
         AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
