@@ -28,6 +28,18 @@ public partial class App : Application
         }
 
         LocalLogService.Initialize();
+
+        // Provider selection is deliberately independent from the navigation/runtime changes.
+        // Auto means Gemini-first on the Worker and preserves GLM as the fallback. Explicit
+        // HELPSYS_OUTLAW_AI_PROVIDER=gemini or =glm still forces either path for A/B diagnosis.
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HELPSYS_OUTLAW_AI_PROVIDER")))
+        {
+            Environment.SetEnvironmentVariable(
+                "HELPSYS_OUTLAW_AI_PROVIDER",
+                "auto",
+                EnvironmentVariableTarget.Process);
+        }
+
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         SessionEnding += OnSessionEnding;
         AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
