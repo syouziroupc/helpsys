@@ -30,6 +30,7 @@ jobs:
         run: |
           node tests/outlaw-observation-contract.mjs
           node tests/outlaw-universal-navigator-contract.mjs
+          node tests/outlaw-provider-contract.mjs
           node tests/local-choice-contract.mjs
           node tests/outlaw-repeat-guard-contract.mjs
           node tests/current-state-replan-contract.mjs
