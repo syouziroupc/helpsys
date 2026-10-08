@@ -1,0 +1,38 @@
+name: Cleanup old Outlaw releases
+
+on:
+  push:
+    branches:
+      - maintenance/helpsys-release-cleanup-20261009
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete Outlaw 3.2.0 through 3.2.4 assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_assets=(
+            'HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip'
+            'HelpSys-Outlaw-3.2.1-85956ddd-win-x64.zip'
+            'HelpSys-Outlaw-3.2.2-4905f758-win-x64.zip'
+            'HelpSys-Outlaw-3.2.3-ad3ee9b6-win-x64.zip'
+            'HelpSys-Outlaw-3.2.3-d16211b7-win-x64.zip'
+            'HelpSys-Outlaw-3.2.4-311b112e-win-x64.zip'
+            'HelpSys-Outlaw-3.2.4-1ba2111e-win-x64.zip'
+          )
+          published=$(gh release view outlaw-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          deleted=0
+          for asset in "${old_assets[@]}"; do
+            if grep -Fxq "$asset" <<<"$published"; then
+              gh release delete-asset outlaw-latest "$asset" --yes --repo "$GITHUB_REPOSITORY"
+              deleted=$((deleted + 1))
+            fi
+          done
+          echo "Deleted old Outlaw release assets: $deleted" >> "$GITHUB_STEP_SUMMARY"
