@@ -1,0 +1,81 @@
+name: Cleanup old HelpSys artifacts
+
+on:
+  push:
+    branches:
+      - maintenance/helpsys-cleanup-20261009
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old Actions artifacts and old Outlaw release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUTOFF: '2026-10-06T00:00:00Z'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          total_bytes=0
+          deleted_artifacts=0
+          page=1
+          tmp=$(mktemp)
+
+          while true; do
+            json=$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100&page=${page}")
+            count=$(jq '.artifacts | length' <<<"$json")
+            if [ "$count" -eq 0 ]; then
+              break
+            fi
+
+            jq -r --arg cutoff "$CUTOFF" '
+              .artifacts[]
+              | select(.expired == false and .created_at < $cutoff)
+              | [.id, .name, (.size_in_bytes|tostring), .created_at]
+              | @tsv
+            ' <<<"$json" >> "$tmp"
+
+            page=$((page + 1))
+          done
+
+          while IFS=$'\t' read -r id name size created; do
+            [ -n "${id:-}" ] || continue
+            echo "Deleting Actions artifact: $name ($size bytes, $created, id=$id)"
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}"
+            total_bytes=$((total_bytes + size))
+            deleted_artifacts=$((deleted_artifacts + 1))
+          done < "$tmp"
+
+          old_assets=(
+            'HelpSys-Outlaw-3.2.0-05078b0e-win-x64.zip'
+            'HelpSys-Outlaw-3.2.1-85956ddd-win-x64.zip'
+            'HelpSys-Outlaw-3.2.2-4905f758-win-x64.zip'
+            'HelpSys-Outlaw-3.2.3-ad3ee9b6-win-x64.zip'
+            'HelpSys-Outlaw-3.2.3-d16211b7-win-x64.zip'
+            'HelpSys-Outlaw-3.2.4-311b112e-win-x64.zip'
+            'HelpSys-Outlaw-3.2.4-1ba2111e-win-x64.zip'
+          )
+
+          deleted_release_assets=0
+          published=$(gh release view outlaw-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for asset in "${old_assets[@]}"; do
+            if grep -Fxq "$asset" <<<"$published"; then
+              echo "Deleting old Outlaw release asset: $asset"
+              gh release delete-asset outlaw-latest "$asset" --yes --repo "$GITHUB_REPOSITORY"
+              deleted_release_assets=$((deleted_release_assets + 1))
+            fi
+          done
+
+          {
+            echo "### HelpSys cleanup"
+            echo "- Deleted Actions artifacts: $deleted_artifacts"
+            echo "- Reclaimed Actions artifact bytes: $total_bytes"
+            echo "- Deleted old Outlaw release assets: $deleted_release_assets"
+            echo "- Preserved all artifacts created on/after $CUTOFF"
+            echo "- Preserved Standard A3.0001, Education v2.2, and Outlaw 3.2.5 release assets"
+          } >> "$GITHUB_STEP_SUMMARY"
